@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { formatUSD } from '@/lib/money'
 import { displayStatus, todayInChicago } from '@/lib/status'
@@ -63,7 +64,15 @@ export default async function InvoicesPage() {
 
       <section>
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-4">
-          <h2 className="eyebrow">All invoices</h2>
+          <div className="flex items-baseline gap-4">
+            <h2 className="eyebrow">All invoices</h2>
+            <Link
+              href="/invoices/new"
+              className="text-xs font-semibold uppercase tracking-wider text-accent hover:opacity-80"
+            >
+              + New invoice
+            </Link>
+          </div>
           <p className="tabular text-sm text-muted">
             {rows.length} total ·{' '}
             <span className="text-ink">

@@ -69,13 +69,21 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
 
   return (
     <AppShell current="invoices">
-      <Link
-        href="/invoices"
-        className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider
-                   text-muted hover:text-ink transition-colors mb-8"
-      >
-        ← All invoices
-      </Link>
+      <div className="flex items-center justify-between mb-8">
+        <Link
+          href="/invoices"
+          className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider
+                     text-muted hover:text-ink transition-colors"
+        >
+          ← All invoices
+        </Link>
+        <Link
+          href={`/invoices/${inv.id}/edit`}
+          className="text-xs font-semibold uppercase tracking-wider text-accent hover:opacity-80"
+        >
+          Edit
+        </Link>
+      </div>
 
       <header className="flex flex-wrap items-start justify-between gap-4 mb-8">
         <div className="min-w-0">

@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { formatUSD } from '@/lib/money'
 import { displayStatus, daysUntilDue, STATUS_META, type InvoiceLike } from '@/lib/status'
+import { formatDateShort } from '@/lib/dates'
 
 // A row restructures on a phone rather than shrinking: the client name is the
 // thing you scan for, so it keeps a full line of its own and never truncates
@@ -15,10 +16,6 @@ export type InvoiceRowData = InvoiceLike & {
   issue_date: string
   clients: { name: string } | null
 }
-
-const shortDate = (iso: string) =>
-  new Intl.DateTimeFormat('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' })
-    .format(new Date(iso + 'T00:00:00Z'))
 
 export default function InvoiceRow({
   invoice,
@@ -72,7 +69,7 @@ export default function InvoiceRow({
           </span>
 
           <span className="hidden sm:block tabular text-sm text-muted w-20 text-right shrink-0 sm:order-2">
-            {shortDate(invoice.issue_date)}
+            {formatDateShort(invoice.issue_date)}
           </span>
         </div>
       </Link>

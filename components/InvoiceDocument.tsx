@@ -1,5 +1,6 @@
 import Image from 'next/image'
 import { formatUSD, formatQty } from '@/lib/money'
+import { formatDateLong } from '@/lib/dates'
 
 // The invoice itself, on paper.
 //
@@ -46,10 +47,6 @@ export type DocumentData = {
     remit_to: string | null
   } | null
 }
-
-const longDate = (iso: string) =>
-  new Intl.DateTimeFormat('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' })
-    .format(new Date(iso + 'T00:00:00Z'))
 
 function Meta({ label, value }: { label: string; value: string }) {
   return (
@@ -109,9 +106,9 @@ export default function InvoiceDocument({ data }: { data: DocumentData }) {
 
           <dl className="sm:min-w-[15rem] sm:border-l sm:border-paper-line sm:pl-8">
             <Meta label="Invoice" value={`#${data.number}`} />
-            <Meta label="Date" value={longDate(data.issue_date)} />
+            <Meta label="Date" value={formatDateLong(data.issue_date)} />
             <Meta label="Terms" value={`Net ${data.terms_days}`} />
-            <Meta label="Due" value={longDate(data.due_date)} />
+            <Meta label="Due" value={formatDateLong(data.due_date)} />
           </dl>
         </div>
 

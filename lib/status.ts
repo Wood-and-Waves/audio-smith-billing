@@ -43,11 +43,4 @@ export const STATUS_META: Record<DisplayStatus, { label: string; bar: string; te
   void:    { label: 'Void',    bar: 'bg-transparent', text: 'text-muted' },
 }
 
-/** Today in a fixed timezone. Dan bills from Illinois; UTC would roll a day
- *  early every evening and make things look overdue before they are. */
-export function todayInChicago(): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Chicago',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date())
-}
+export { todayInChicago } from './dates'
