@@ -23,6 +23,12 @@ const read = (f) => JSON.parse(readFileSync(join(OUT, f), 'utf8'))
 const RESET = process.argv.includes('--reset')
 const UNPAID_FROM = 385 // Dan, 2026-08-09: "Invoice 385 and on are not paid yet."
 
+// 11 invoice numbers have line items in the sheet but no header row, so no
+// client and no date: 283 284 289 291 295 317 333 334 335 344 379, together
+// worth $26,237.57. Dan's call was to load them under a placeholder client he
+// can reassign on screen rather than lose them.
+const UNATTRIBUTED = 'Unattributed (spreadsheet)'
+
 const APP_TABLES = [
   'reminder_log', 'payments', 'invoice_lines', 'invoices',
   'client_rates', 'items', 'clients', 'settings',
@@ -87,10 +93,68 @@ function inferRates(lines) {
   return { day_rate_cents: day, ot_after_hours: hours }
 }
 
+/**
+ * Invoice numbers run chronologically, so an orphan's date sits between its
+ * neighbours'. Interpolating gives a defensible estimate instead of a null in
+ * a NOT NULL column — and every such invoice is flagged in `notes` so the
+ * estimate is never mistaken for a recorded fact.
+ */
+function estimateDate(number, known) {
+  const below = known.filter((k) => k.number < number).at(-1)
+  const above = known.find((k) => k.number > number)
+  if (below && above) {
+    const a = Date.parse(below.issue_date + 'T00:00:00Z')
+    const b = Date.parse(above.issue_date + 'T00:00:00Z')
+    const frac = (number - below.number) / (above.number - below.number)
+    return new Date(a + (b - a) * frac).toISOString().slice(0, 10)
+  }
+  return (below ?? above)?.issue_date ?? null
+}
+
+/** Build a synthetic invoice for each orphaned set of line items. */
+function buildOrphans(invoices, items) {
+  const known = [...invoices].sort((a, b) => a.number - b.number)
+  const have = new Set(known.map((i) => i.number))
+  const orphanNums = [...new Set(items.map((i) => i.invoice_number))]
+    .filter((n) => !have.has(n))
+    .sort((a, b) => a - b)
+
+  return orphanNums.map((number) => {
+    const lines = items.filter((l) => l.invoice_number === number)
+    const subtotal = lines.reduce((t, l) => t + l.line_total_cents, 0)
+    return {
+      number,
+      issue_date: estimateDate(number, known),
+      client_name: UNATTRIBUTED,
+      client_name_raw: '',
+      address_line1: '', address_line2: '', contact_line1: '', contact_line2: '',
+      subtotal_cents: subtotal,
+      tax_rate: '0.00%',
+      deposit_cents: 0,
+      total_cents: subtotal,
+      unattributed: true,
+    }
+  })
+}
+
 const run = async () => {
   const invoices = read('invoices.json')
   const items = read('items.json')
   const clients = read('clients.json')
+
+  const orphans = buildOrphans(invoices, items)
+  if (orphans.length) {
+    invoices.push(...orphans)
+    invoices.sort((a, b) => a.number - b.number)
+    clients.push({
+      name: UNATTRIBUTED,
+      aliases: [],
+      address_line1: '', address_line2: '',
+      billing_email: null,
+      invoice_count: orphans.length,
+      total_billed_cents: orphans.reduce((t, o) => t + o.total_cents, 0),
+    })
+  }
   let emails = { clients: [] }
   try { emails = read('client-emails.json') } catch { /* optional */ }
   const emailFor = new Map(emails.clients.map((c) => [c.name, c.billing_email]))
@@ -191,26 +255,36 @@ const run = async () => {
       const { rows: [row] } = await client.query(
         `insert into invoices (owner_id, client_id, number, issue_date, due_date,
            terms_days, status, bill_to_snapshot, subtotal_cents, tax_bp, tax_cents,
-           deposit_cents, total_cents, imported, sent_at)
-         values ($1,$2,$3,$4,$5,30,$6,$7,$8,0,0,$9,$10,true,$11) returning id`,
+           deposit_cents, total_cents, imported, sent_at, notes)
+         values ($1,$2,$3,$4,$5,30,$6,$7,$8,0,0,$9,$10,true,$11,$12) returning id`,
         [
           owner, clientIds.get(inv.client_name), inv.number, issue,
           due.toISOString().slice(0, 10), status,
           [inv.client_name, inv.address_line1, inv.address_line2].filter(Boolean).join('\n'),
           subtotal, inv.deposit_cents, inv.total_cents,
           status === 'draft' ? null : issue,
+          inv.unattributed
+            ? 'Imported from the spreadsheet with no header row: the client is unknown and this date is ESTIMATED from neighbouring invoice numbers. Reassign to the real client and correct the date.'
+            : null,
         ],
       )
 
-      for (const [pos, l] of lines.entries()) {
+      // One multi-row insert per invoice instead of one round trip per line.
+      if (lines.length) {
+        const params = [owner, row.id]
+        const values = lines.map((l, pos) => {
+          const i = params.length
+          params.push(l.description, pos, Math.round(l.qty * 100),
+                      l.unit_price_cents, l.line_total_cents)
+          return `($1,$2,$${i + 2},$${i + 1},$${i + 3},$${i + 4},$${i + 5})`
+        })
         await client.query(
           `insert into invoice_lines (owner_id, invoice_id, position, description,
              qty_hundredths, unit_price_cents, line_total_cents)
-           values ($1,$2,$3,$4,$5,$6,$7)`,
-          [owner, row.id, pos, l.description, Math.round(l.qty * 100),
-           l.unit_price_cents, l.line_total_cents],
+           values ${values.join(',')}`,
+          params,
         )
-        lineCount++
+        lineCount += lines.length
       }
     }
 
