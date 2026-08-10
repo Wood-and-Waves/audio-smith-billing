@@ -1,0 +1,26 @@
+node_modules/
+.next/
+out/
+build/
+.DS_Store
+*.pem
+
+# Env
+.env
+.env*.local
+!.env.example
+
+# Vercel / TS
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+
+# Database backups
+backups/
+
+# Migration source data.
+# The raw sheet export carries bank routing and account numbers in its Notes
+# column, and the extracted files carry real client names and billing history.
+# None of it belongs in the repo.
+scripts/import/raw/
+scripts/import/out/

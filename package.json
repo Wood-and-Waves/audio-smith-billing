@@ -1,0 +1,14 @@
+{
+  "name": "audio-smith-billing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test scripts/test/",
+    "test:money": "node --test scripts/test/money.test.ts",
+    "import:parse": "node scripts/import/parse-sheet.mjs"
+  },
+  "engines": {
+    "node": ">=22.6"
+  }
+}
