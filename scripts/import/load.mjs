@@ -60,15 +60,29 @@ function inferRates(lines) {
   for (const r of dayRates) freq.set(r, (freq.get(r) || 0) + 1)
   const day = [...freq.entries()].sort((a, b) => b[1] - a[1] || b[0] - a[0])[0][0]
 
-  const otRates = lines
-    .filter((l) => /overtime/i.test(l.description) && l.unit_price_cents > 0)
-    .map((l) => l.unit_price_cents)
-  let hours = 10
-  if (otRates.length) {
-    const ot = otRates.sort((a, b) => otRates.filter(v => v === a).length - otRates.filter(v => v === b).length).pop()
-    // ot = day / h * 1.5  ->  h = day * 1.5 / ot
-    const h = (day * 1.5) / ot
-    if (Number.isFinite(h) && h >= 6 && h <= 16) hours = Math.round(h * 2) / 2
+  // ot = day / h * 1.5  ->  h = day * 1.5 / ot
+  //
+  // Some clients show more than one overtime rate across their history
+  // (Willow Creek has both $75 and $60 against a $500 day rate, implying 10h
+  // and 12.5h). Where the evidence is ambiguous, fall back to 10 — the
+  // threshold every other client uses — rather than letting an arbitrary
+  // tie-break pick. Dan corrects it on the Clients screen if a client really
+  // is different.
+  const DEFAULT_HOURS = 10
+  const otFreq = new Map()
+  for (const l of lines) {
+    if (!/overtime/i.test(l.description) || l.unit_price_cents <= 0) continue
+    otFreq.set(l.unit_price_cents, (otFreq.get(l.unit_price_cents) || 0) + 1)
+  }
+
+  let hours = DEFAULT_HOURS
+  if (otFreq.size) {
+    const ranked = [...otFreq.entries()].sort((a, b) => b[1] - a[1])
+    const isTie = ranked.length > 1 && ranked[0][1] === ranked[1][1]
+    if (!isTie) {
+      const h = (day * 1.5) / ranked[0][0]
+      if (Number.isFinite(h) && h >= 6 && h <= 16) hours = Math.round(h * 2) / 2
+    }
   }
   return { day_rate_cents: day, ot_after_hours: hours }
 }
