@@ -24,3 +24,4 @@ backups/
 # None of it belongs in the repo.
 scripts/import/raw/
 scripts/import/out/
+.env*
