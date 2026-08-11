@@ -5,9 +5,10 @@ import Image from 'next/image'
 // Anyone who has seen theaudiosmith.com should recognise this immediately.
 
 const NAV = [
-  { key: 'invoices', href: '/invoices', label: 'Invoices' },
-  { key: 'clients', href: '/clients', label: 'Clients' },
-  { key: 'settings', href: '/settings', label: 'Settings' },
+  { href: '/invoices', label: 'Invoices', key: 'invoices' },
+  { href: '/shows', label: 'Shows', key: 'shows' },
+  { href: '/clients', label: 'Clients', key: 'clients' },
+  { href: '/settings', label: 'Settings', key: 'settings' },
 ] as const
 
 export default function AppShell({
