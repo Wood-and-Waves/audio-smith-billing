@@ -149,7 +149,7 @@ export default function UnbilledShows({ shows }: { shows: UnbilledShow[] }) {
           )}
         </p>
         <button type="button" onClick={bill} disabled={pending || selected.size === 0}
-                className="px-5 py-2.5 bg-accent text-accent-ink font-bold uppercase tracking-wider
+                className="px-5 py-2.5 bg-accent-surface text-accent-ink font-bold uppercase tracking-wider
                            text-sm rounded-field hover:opacity-90 disabled:opacity-50">
           {pending ? 'Billing…' : 'Bill selected'}
         </button>

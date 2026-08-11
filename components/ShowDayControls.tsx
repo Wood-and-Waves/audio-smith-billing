@@ -101,7 +101,7 @@ export default function ShowDayControls({
 
       <button type="button" onClick={bill}
               disabled={pending || !hasLines || incompleteDates.length > 0}
-              className="px-5 py-2.5 bg-accent text-accent-ink font-bold uppercase tracking-wider
+              className="px-5 py-2.5 bg-accent-surface text-accent-ink font-bold uppercase tracking-wider
                          text-sm rounded-field hover:opacity-90 disabled:opacity-50">
         {pending ? 'Billing…' : 'Bill this show'}
       </button>

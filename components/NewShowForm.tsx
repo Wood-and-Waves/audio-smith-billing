@@ -75,7 +75,7 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
       )}
 
       <button type="button" onClick={submit} disabled={pending || noDayRate}
-              className="px-5 py-2.5 bg-accent text-accent-ink font-bold uppercase tracking-wider
+              className="px-5 py-2.5 bg-accent-surface text-accent-ink font-bold uppercase tracking-wider
                          text-sm rounded-field cursor-pointer hover:opacity-90 disabled:opacity-50">
         {pending ? 'Creating…' : 'Create show'}
       </button>

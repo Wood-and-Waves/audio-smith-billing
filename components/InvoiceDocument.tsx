@@ -59,6 +59,9 @@ function Meta({ label, value }: { label: string; value: string }) {
   )
 }
 
+// The sheet's border uses --paper-line, not --line: the paper's own edge
+// belongs to the paper and must not flip with the theme. On charcoal the
+// shadow alone defines the sheet; on a light ground it needs the hairline.
 export default function InvoiceDocument({ data }: { data: DocumentData }) {
   const s = data.settings
   const billTo =
@@ -68,9 +71,9 @@ export default function InvoiceDocument({ data }: { data: DocumentData }) {
       .join('\n')
 
   return (
-    <article className="bg-paper text-paper-ink rounded-card overflow-hidden shadow-lg">
+    <article className="bg-paper text-paper-ink rounded-card overflow-hidden shadow-lg border border-paper-line">
       {/* Amber rule, the way the site closes its header. */}
-      <div className="h-1.5 bg-accent" />
+      <div className="h-1.5 bg-accent-surface" />
 
       <div className="p-8 sm:p-12">
         <header className="flex flex-wrap items-start justify-between gap-6 pb-8 border-b-2 border-paper-ink">

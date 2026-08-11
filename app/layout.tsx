@@ -16,8 +16,13 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 }
 
+// Tints the browser chrome on mobile. Both values must stay in sync with
+// --bg in globals.css, or the chrome fights the app it frames.
 export const viewport: Viewport = {
-  themeColor: '#121212', // keep in sync with --bg
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#f1f5f9' },
+    { media: '(prefers-color-scheme: dark)', color: '#121212' },
+  ],
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

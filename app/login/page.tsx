@@ -76,7 +76,7 @@ function LoginForm() {
       <button
         type="submit"
         disabled={busy}
-        className="w-full py-3 bg-accent text-accent-ink font-bold uppercase tracking-wider
+        className="w-full py-3 bg-accent-surface text-accent-ink font-bold uppercase tracking-wider
                    rounded-field cursor-pointer transition-opacity hover:opacity-90
                    disabled:opacity-50 disabled:cursor-not-allowed"
       >

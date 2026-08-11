@@ -75,7 +75,7 @@ export default function PunchClock({
               onClick={() => punch(type)}
               className={
                 isNext
-                  ? 'px-3 py-1.5 text-xs font-bold uppercase tracking-wider rounded-field bg-accent text-accent-ink disabled:opacity-50'
+                  ? 'px-3 py-1.5 text-xs font-bold uppercase tracking-wider rounded-field bg-accent-surface text-accent-ink disabled:opacity-50'
                   : 'px-3 py-1.5 text-xs font-semibold uppercase tracking-wider rounded-field border border-line text-muted hover:text-ink disabled:opacity-40'
               }
             >

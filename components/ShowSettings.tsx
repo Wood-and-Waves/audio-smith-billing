@@ -217,7 +217,7 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
         )}
 
         <button type="button" onClick={submit} disabled={locked || pending}
-                className="px-5 py-2.5 bg-accent text-accent-ink font-bold uppercase tracking-wider
+                className="px-5 py-2.5 bg-accent-surface text-accent-ink font-bold uppercase tracking-wider
                            text-sm rounded-field cursor-pointer hover:opacity-90 transition-opacity
                            disabled:opacity-50 disabled:cursor-not-allowed">
           {pending ? 'Saving…' : 'Save changes'}
