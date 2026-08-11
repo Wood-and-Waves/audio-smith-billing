@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { chronologyError, isIncompleteDay } from '@/lib/chronology'
-import { travelRateFrom, overtimeRateFrom, doubleTimeRateFrom } from '@/lib/money'
+import { travelRateFrom, overtimeRateFrom, doubleTimeRateFrom, parseUSD } from '@/lib/money'
 import { todayInChicago } from '@/lib/dates'
 import { computeShowLines, mergeLines, type ShowRates, type BucketLine } from '@/lib/showBuckets'
 import type { ShowDayLike, ShowRuleset } from '@/lib/payroll'
@@ -271,6 +271,177 @@ export async function unlinkShow(showId: string): Promise<Fail | { ok: true }> {
   if (!data || data.length === 0) return { error: 'That show could not be unlinked.' }
 
   revalidatePath('/shows')
+  revalidatePath(`/shows/${showId}`)
+  return { ok: true }
+}
+
+export type UpdateShowInput = {
+  id: string
+  name: string
+  venue: string
+  notes: string
+  day_rate: string             // raw USD input, e.g. "780" or "$780.00"
+  travel_rate: string          // raw USD input
+  pm_rate: string               // raw USD input
+  ot_after_hours: number
+  // Raw string, not a number: an empty box must become NULL ("no double
+  // time"), and Number('') is 0 — which would mean "every hour is double
+  // time" instead. Keep this a string all the way to the parse below so
+  // "nothing entered" and "entered zero" stay distinguishable.
+  dt_after_hours: string
+  minimum_meal_break_minutes: number
+  meal_break_deduction_cap: number
+  meal_penalty_grace_hours: number
+  meal_penalty: string          // raw USD input; 0/"" -> meal penalties disabled (see billShows)
+  short_turn_rest_hours: number
+  continuous_time_enabled: boolean
+}
+
+/**
+ * Edits the rate card and rules a show already froze onto itself at
+ * `createShow` time (migration 0003). This is the only path that can ever
+ * turn on double time, meal penalties, or half-days for a show after the
+ * fact, so every check here is load-bearing — get one wrong and an invoice
+ * is wrong.
+ */
+export async function updateShow(input: UpdateShowInput): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  // Derive the lock from the row being touched, never trust a caller flag.
+  const { data: show } = await supabase.from('shows').select('status').eq('id', input.id).maybeSingle()
+  if (!show) return { error: 'That show no longer exists.' }
+  if (show.status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
+
+  if (!input.name.trim()) return { error: 'Give the show a name.' }
+
+  // Money fields: parseUSD returns null on junk and 0 on empty input. These
+  // columns are NOT NULL (default 0) on `shows`, so an empty box is a
+  // legitimate zero, not "leave unset" — only reject text that doesn't parse.
+  const dayRate = parseUSD(input.day_rate)
+  if (dayRate === null) return { error: `Couldn't read "${input.day_rate}" as a day rate.` }
+  if (dayRate < 0) return { error: 'Day rate cannot be negative.' }
+
+  const travelRate = parseUSD(input.travel_rate)
+  if (travelRate === null) return { error: `Couldn't read "${input.travel_rate}" as a travel rate.` }
+  if (travelRate < 0) return { error: 'Travel rate cannot be negative.' }
+
+  const pmRate = parseUSD(input.pm_rate)
+  if (pmRate === null) return { error: `Couldn't read "${input.pm_rate}" as a PM rate.` }
+  if (pmRate < 0) return { error: 'PM rate cannot be negative.' }
+
+  // meal_penalty_cents at 0 is how billShows derives meal_penalty_enabled:
+  // false. That's intended and correct — 0 disables the rule, it does not
+  // mean "unset". Do not special-case it into null.
+  const mealPenaltyCents = parseUSD(input.meal_penalty)
+  if (mealPenaltyCents === null) return { error: `Couldn't read "${input.meal_penalty}" as a meal penalty.` }
+  if (mealPenaltyCents < 0) return { error: 'Meal penalty cannot be negative.' }
+
+  // ot_after_hours is the divisor for both the PM and overtime rates
+  // (lib/money.ts overtimeRateFrom/doubleTimeRateFrom); zero yields Infinity.
+  if (!Number.isFinite(input.ot_after_hours) || input.ot_after_hours <= 0) {
+    return { error: 'Overtime threshold must be more than zero hours.' }
+  }
+
+  // dt_after_hours: empty means "no double time" and must store NULL, never
+  // 0 — 0 would mean every hour past clock-in is double time.
+  const dtRaw = input.dt_after_hours.trim()
+  let dtAfterHours: number | null = null
+  if (dtRaw !== '') {
+    const parsed = Number(dtRaw)
+    if (!Number.isFinite(parsed)) {
+      return { error: `Couldn't read "${input.dt_after_hours}" as a double-time threshold.` }
+    }
+    dtAfterHours = parsed
+  }
+  // Double time starting at or before overtime is incoherent.
+  if (dtAfterHours !== null && dtAfterHours <= input.ot_after_hours) {
+    return { error: 'Double time must start after the overtime threshold.' }
+  }
+
+  if (!Number.isInteger(input.minimum_meal_break_minutes) || input.minimum_meal_break_minutes < 0) {
+    return { error: 'Minimum meal break must be zero minutes or more.' }
+  }
+  if (!Number.isInteger(input.meal_break_deduction_cap) || input.meal_break_deduction_cap < 0) {
+    return { error: 'Meal break deduction cap must be zero minutes or more.' }
+  }
+  if (!Number.isFinite(input.meal_penalty_grace_hours) || input.meal_penalty_grace_hours < 0) {
+    return { error: 'Meal penalty grace period must be zero hours or more.' }
+  }
+  if (!Number.isFinite(input.short_turn_rest_hours) || input.short_turn_rest_hours < 0) {
+    return { error: 'Short-turn rest hours must be zero or more.' }
+  }
+
+  const { error } = await supabase.from('shows').update({
+    name: input.name.trim(),
+    venue: input.venue.trim() || null,
+    notes: input.notes.trim() || null,
+    day_rate_cents: dayRate,
+    travel_rate_cents: travelRate,
+    pm_rate_cents: pmRate,
+    ot_after_hours: input.ot_after_hours,
+    dt_after_hours: dtAfterHours,
+    minimum_meal_break_minutes: input.minimum_meal_break_minutes,
+    meal_break_deduction_cap: input.meal_break_deduction_cap,
+    meal_penalty_grace_hours: input.meal_penalty_grace_hours,
+    meal_penalty_cents: mealPenaltyCents,
+    short_turn_rest_hours: input.short_turn_rest_hours,
+    continuous_time_enabled: input.continuous_time_enabled,
+  }).eq('id', input.id)
+  if (error) return { error: error.message }
+
+  revalidatePath(`/shows/${input.id}`)
+  revalidatePath('/shows')
+  return { ok: true }
+}
+
+/**
+ * Half-day is a negotiated call, not a computed one — see the UI in
+ * app/shows/[id]/page.tsx, which only offers the toggle under 5 net hours
+ * but always honours a stored value regardless of hours.
+ */
+export async function setDayHalfDay(showDayId: string, value: boolean): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  // Walk the day's own foreign keys for the lock, the same way deletePunch
+  // does for a punch: show_days.show_id -> shows.status. Never trust a
+  // caller-supplied id for the lock decision.
+  const { data: day } = await supabase
+    .from('show_days').select('show_id, shows(status)').eq('id', showDayId).maybeSingle()
+  if (!day) return { error: 'That day no longer exists.' }
+
+  const status = (day as unknown as { shows: { status: string } }).shows?.status
+  if (status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
+
+  const { error } = await supabase.from('show_days')
+    .update({ pay_as_half_day: value }).eq('id', showDayId)
+  if (error) return { error: error.message }
+
+  revalidatePath(`/shows/${(day as unknown as { show_id: string }).show_id}`)
+  return { ok: true }
+}
+
+export async function deleteShowDay(showDayId: string): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  // Same pattern as setDayHalfDay/deletePunch: derive the lock from the row
+  // being deleted, not from a caller-supplied id.
+  const { data: day } = await supabase
+    .from('show_days').select('show_id, shows(status)').eq('id', showDayId).maybeSingle()
+  if (!day) return { error: 'That day no longer exists.' }
+
+  const status = (day as unknown as { shows: { status: string } }).shows?.status
+  if (status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
+
+  const showId = (day as unknown as { show_id: string }).show_id
+  const { error } = await supabase.from('show_days').delete().eq('id', showDayId)
+  if (error) return { error: error.message }
+
   revalidatePath(`/shows/${showId}`)
   return { ok: true }
 }

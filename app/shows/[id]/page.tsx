@@ -4,10 +4,12 @@ import { isIncompleteDay } from '@/lib/chronology'
 import { formatDateLong, formatDateShort } from '@/lib/dates'
 import { formatUSD, formatQty, lineTotal, overtimeRateFrom, doubleTimeRateFrom } from '@/lib/money'
 import { computeShowLines, type ShowRates } from '@/lib/showBuckets'
-import type { ShowDayLike, ShowRuleset } from '@/lib/payroll'
+import { calculateNetHours, type ShowDayLike, type ShowRuleset } from '@/lib/payroll'
 import AppShell from '@/components/AppShell'
 import PunchClock from '@/components/PunchClock'
 import ShowDayControls from '@/components/ShowDayControls'
+import ShowSettings from '@/components/ShowSettings'
+import HalfDayToggle from '@/components/HalfDayToggle'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,7 +21,7 @@ type Day = {
   pay_as_half_day: boolean; punches: Punch[]
 }
 type ShowRow = {
-  id: string; name: string; venue: string | null; timezone: string
+  id: string; name: string; venue: string | null; notes: string | null; timezone: string
   status: string; invoice_id: string | null
   day_rate_cents: number; travel_rate_cents: number; pm_rate_cents: number
   ot_after_hours: number; dt_after_hours: number | null
@@ -36,7 +38,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
 
   const { data, error } = await supabase
     .from('shows')
-    .select(`id, name, venue, timezone, status, invoice_id,
+    .select(`id, name, venue, notes, timezone, status, invoice_id,
              day_rate_cents, travel_rate_cents, pm_rate_cents, ot_after_hours,
              dt_after_hours, minimum_meal_break_minutes, meal_break_deduction_cap,
              meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours,
@@ -107,6 +109,27 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
         </p>
       </div>
 
+      <ShowSettings
+        initial={{
+          id: s.id,
+          name: s.name,
+          venue: s.venue,
+          notes: s.notes,
+          day_rate_cents: s.day_rate_cents,
+          travel_rate_cents: s.travel_rate_cents,
+          pm_rate_cents: s.pm_rate_cents,
+          ot_after_hours: s.ot_after_hours,
+          dt_after_hours: s.dt_after_hours,
+          minimum_meal_break_minutes: s.minimum_meal_break_minutes,
+          meal_break_deduction_cap: s.meal_break_deduction_cap,
+          meal_penalty_grace_hours: s.meal_penalty_grace_hours,
+          meal_penalty_cents: s.meal_penalty_cents,
+          short_turn_rest_hours: s.short_turn_rest_hours,
+          continuous_time_enabled: s.continuous_time_enabled,
+        }}
+        locked={locked}
+      />
+
       <section className="mb-10">
         <h2 className="eyebrow mb-4">Days</h2>
         {days.length === 0 ? (
@@ -126,13 +149,29 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
                 {d.day_type === 'travel' ? (
                   <p className="text-xs text-muted">Travel day — billed by rate, no punches needed.</p>
                 ) : (
-                  <PunchClock
-                    showId={s.id}
-                    showDayId={d.id}
-                    timezone={s.timezone}
-                    punches={d.punches}
-                    locked={locked}
-                  />
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <PunchClock
+                      showId={s.id}
+                      showDayId={d.id}
+                      timezone={s.timezone}
+                      punches={d.punches}
+                      locked={locked}
+                    />
+                    {d.day_type === 'show' && (
+                      // The toggle only appears under 5 net hours — a half
+                      // day is meant for a short call, not a full one — but
+                      // a day that already has the flag stays visible so it
+                      // can always be cleared, even if it later grew past 5
+                      // hours (e.g. after adding punches).
+                      (calculateNetHours(d as unknown as ShowDayLike, rules) < 5 || d.pay_as_half_day) && (
+                        <HalfDayToggle
+                          showDayId={d.id}
+                          checked={d.pay_as_half_day}
+                          locked={locked}
+                        />
+                      )
+                    )}
+                  </div>
                 )}
               </li>
             ))}
