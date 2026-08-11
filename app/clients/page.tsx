@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { formatUSD, travelRateFrom, overtimeRateFrom } from '@/lib/money'
 import AppShell from '@/components/AppShell'
@@ -48,7 +49,15 @@ export default async function ClientsPage() {
   return (
     <AppShell current="clients">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-4">
-        <h2 className="eyebrow">Clients</h2>
+        <div className="flex items-baseline gap-4">
+          <h2 className="eyebrow">Clients</h2>
+          <Link
+            href="/clients/new"
+            className="text-xs font-semibold uppercase tracking-wider text-accent hover:opacity-80"
+          >
+            + New client
+          </Link>
+        </div>
         <p className="tabular text-sm text-muted">{clients.length} active</p>
       </div>
 
@@ -65,9 +74,10 @@ export default async function ClientsPage() {
           const day = c.day_rate_cents
           return (
             <li key={c.id}>
-              {/* Not a link yet — the client editor doesn't exist, and a row
-                  that 404s is worse than a row that doesn't move. */}
-              <div className="block border-b border-line py-4 px-2 -mx-2">
+              <Link
+                href={`/clients/${c.id}`}
+                className="block border-b border-line py-4 px-2 -mx-2 hover:bg-surface transition-colors"
+              >
                 <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                   <span className="font-semibold">{c.name}</span>
                   <span className="tabular text-sm">
@@ -95,7 +105,7 @@ export default async function ClientsPage() {
                     Also billed as {c.legacy_names.join(', ')}
                   </p>
                 )}
-              </div>
+              </Link>
             </li>
           )
         })}
