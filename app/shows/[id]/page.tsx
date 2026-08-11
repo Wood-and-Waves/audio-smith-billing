@@ -10,6 +10,7 @@ import PunchClock from '@/components/PunchClock'
 import ShowDayControls from '@/components/ShowDayControls'
 import ShowSettings from '@/components/ShowSettings'
 import HalfDayToggle from '@/components/HalfDayToggle'
+import RemoveDayButton from '@/components/RemoveDayButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -142,8 +143,11 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
               <li key={d.id} className="border-b border-line py-4">
                 <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-2">
                   <span className="font-semibold">{formatDateLong(d.date)}</span>
-                  <span className="eyebrow">
-                    {DAY_TYPE_LABEL[d.day_type]}{d.pay_as_half_day ? ' · half day' : ''}
+                  <span className="flex items-baseline gap-3">
+                    <span className="eyebrow">
+                      {DAY_TYPE_LABEL[d.day_type]}{d.pay_as_half_day ? ' · half day' : ''}
+                    </span>
+                    <RemoveDayButton showDayId={d.id} date={d.date} locked={locked} />
                   </span>
                 </div>
                 {d.day_type === 'travel' ? (
