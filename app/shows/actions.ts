@@ -32,8 +32,8 @@ export async function createShow(input: {
 
   if (client?.day_rate_cents == null) {
     return {
-      error: `${client?.name ?? 'This client'} has no day rate set. Add one on the Clients ` +
-        'screen first, so this show can freeze a rate card.',
+      error: `${client?.name ?? 'This client'} has no day rate on file, so there is no rate ` +
+        'card to freeze onto this show.',
     }
   }
 
@@ -106,11 +106,26 @@ export async function deletePunch(punchId: string, showId: string): Promise<Fail
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not signed in.' }
 
-  const { data: show } = await supabase.from('shows').select('status').eq('id', showId).maybeSingle()
-  if (show?.status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
+  // Do NOT trust the caller-supplied `showId` for the lock decision: a
+  // punch belongs to whichever show its own show_day points at, which may
+  // not be the show the caller named. Deriving status from an unrelated
+  // (open) show would let a billed show's punches be deleted anyway. Walk
+  // the punch's own foreign keys instead: punches.show_day_id -> show_days,
+  // show_days.show_id -> shows.
+  const { data: punch } = await supabase
+    .from('punches')
+    .select('show_day_id, show_days(show_id, shows(status))')
+    .eq('id', punchId).maybeSingle()
+  if (!punch) return { error: 'That punch no longer exists.' }
 
+  const showDay = (punch as unknown as { show_days: { show_id: string; shows: { status: string } } }).show_days
+  if (showDay?.shows?.status === 'billed') {
+    return { error: 'This show is billed. Unlink it before editing.' }
+  }
+
+  const derivedShowId = showDay?.show_id ?? showId
   const { error } = await supabase.from('punches').delete().eq('id', punchId)
   if (error) return { error: error.message }
-  revalidatePath(`/shows/${showId}`)
+  revalidatePath(`/shows/${derivedShowId}`)
   return { ok: true }
 }

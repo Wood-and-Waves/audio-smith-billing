@@ -23,3 +23,9 @@ test('a duplicate punch type is refused', () => {
   const existing = [{ punch_type: 'start', punched_at: at(13) }]
   assert.match(chronologyError('start', at(14), existing) ?? '', /already/i)
 })
+
+test('a punch cannot land after the one that follows it', () => {
+  const existing = [{ punch_type: 'end', punched_at: at(20) }]
+  assert.match(chronologyError('meal_in', at(21), existing) ?? '', /before/i)
+  assert.equal(chronologyError('meal_in', at(19), existing), null)
+})
