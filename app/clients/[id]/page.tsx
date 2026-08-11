@@ -12,16 +12,6 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
   const { id } = await params
   const supabase = await createClient()
 
-  // "new" is not a real id — it's the create route, kept on this same page so
-  // there's one editor rather than two near-identical forms.
-  if (id === 'new') {
-    return (
-      <AppShell current="clients">
-        <ClientEditor />
-      </AppShell>
-    )
-  }
-
   const [{ data: client, error }, { data: invoices }] = await Promise.all([
     supabase
       .from('clients')
