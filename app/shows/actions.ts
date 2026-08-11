@@ -3,10 +3,10 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { chronologyError, isIncompleteDay } from '@/lib/chronology'
-import { travelRateFrom, overtimeRateFrom, doubleTimeRateFrom, parseUSD } from '@/lib/money'
+import { travelRateFrom, parseUSD } from '@/lib/money'
 import { todayInChicago } from '@/lib/dates'
-import { computeShowLines, mergeLines, type ShowRates, type BucketLine } from '@/lib/showBuckets'
-import type { ShowDayLike, ShowRuleset } from '@/lib/payroll'
+import { computeShowLines, mergeLines, rulesetAndRatesFor, type BucketLine } from '@/lib/showBuckets'
+import type { ShowDayLike } from '@/lib/payroll'
 import type { PunchType, DayType } from '@/lib/punchTypes'
 
 type Fail = { error: string }
@@ -175,31 +175,16 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
 
   const perShow: BucketLine[][] = []
   for (const s of shows) {
-    const hours = Number(s.ot_after_hours)
-    const rules: ShowRuleset = {
-      overtime_after_hours: hours,
-      double_time_enabled: s.dt_after_hours != null,
-      double_time_after_hours: Number(s.dt_after_hours ?? 12),
-      meal_penalty_enabled: s.meal_penalty_cents > 0,
-      meal_penalty_grace_hours: Number(s.meal_penalty_grace_hours),
-      minimum_meal_break_enabled: s.minimum_meal_break_minutes > 0,
-      minimum_meal_break_minutes: s.minimum_meal_break_minutes,
-      meal_break_deduction_cap: s.meal_break_deduction_cap,
-      short_turn_penalty_enabled: true,
-      short_turn_rest_hours: Number(s.short_turn_rest_hours),
-      continuous_time_enabled: s.continuous_time_enabled,
-    }
-    const rates: ShowRates = {
-      day_rate_cents: s.day_rate_cents,
-      travel_rate_cents: s.travel_rate_cents,
-      pm_rate_cents: s.pm_rate_cents,
-      ot_rate_cents: overtimeRateFrom(s.day_rate_cents, hours),
-      dt_rate_cents: doubleTimeRateFrom(s.day_rate_cents, hours),
-      meal_penalty_cents: s.meal_penalty_cents,
-    }
+    const { rules, rates } = rulesetAndRatesFor(s)
     const days = ((s.show_days ?? []) as unknown as ShowDayLike[])
     perShow.push(computeShowLines(days, rates, rules))
   }
+  // Merge same-description/same-price lines across shows BEFORE rounding
+  // each to cents (mergeLines, then lineTotal inside saveInvoice) — never
+  // sum each show's already-rounded total. round(a) + round(b) is not
+  // always round(a + b), and the multi-show preview in UnbilledShows.tsx
+  // calls this same mergeLines-before-rounding order so it can never
+  // disagree with the invoice created here.
   const merged = mergeLines(perShow)
 
   if (merged.length === 0) return { error: 'Nothing to bill — those shows have no completed days.' }

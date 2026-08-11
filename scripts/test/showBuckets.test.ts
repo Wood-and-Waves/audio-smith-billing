@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { computeShowLines, mergeLines, type ShowRates } from '../../lib/showBuckets.ts'
+import { computeShowLines, mergeLines, type ShowRates, type BucketLine } from '../../lib/showBuckets.ts'
+import { lineTotal, overtimeRateFrom } from '../../lib/money.ts'
 import type { ShowRuleset, ShowDayLike } from '../../lib/payroll.ts'
 
 const RATES: ShowRates = {
@@ -207,4 +208,41 @@ test('the same description at different prices does not merge', () => {
   ])
   assert.equal(merged.length, 2)
   assert.deepEqual(merged.map((l) => l.unit_price_cents).sort((x, y) => x - y), [60000, 78000])
+})
+
+// The rounding disagreement this closes: a multi-show preview that sums each
+// show's already-rounded lineTotal can disagree, by a cent, with the invoice
+// billShows actually creates — because billShows merges quantities BEFORE
+// rounding (mergeLines, then lineTotal), and round(a) + round(b) is not
+// always round(a + b).
+//
+// Day rate $700, overtime after 9h: ot_rate_cents = overtimeRateFrom(70000, 9)
+// = round((70000 / 9) * 1.5) = round(11666.666...) = 11667 cents. Two visits
+// (church multi-visit billing, the scenario this merge exists for) each
+// carry 0.08h (8 hundredths) of overtime at that rate:
+//   per-show:  lineTotal(8, 11667)  = round(933.36)  = 933 each -> 933 + 933 = 1866
+//   merged:    lineTotal(16, 11667) = round(1866.72) = 1867
+test('merging two shows before rounding can bill a different total than summing each show\'s rounded total', () => {
+  const otRate = overtimeRateFrom(70000, 9)
+  assert.equal(otRate, 11667)
+
+  const showA: BucketLine[] = [{ description: 'Overtime', qty_hundredths: 8, unit_price_cents: otRate }]
+  const showB: BucketLine[] = [{ description: 'Overtime', qty_hundredths: 8, unit_price_cents: otRate }]
+
+  // What a preview must NOT do: sum each show's own already-rounded total.
+  const summedRoundedTotals =
+    lineTotal(showA[0].qty_hundredths, showA[0].unit_price_cents) +
+    lineTotal(showB[0].qty_hundredths, showB[0].unit_price_cents)
+  assert.equal(summedRoundedTotals, 1866)
+
+  // What billShows actually does, and what the fixed preview must match:
+  // merge quantities first, then round once.
+  const merged = mergeLines([showA, showB])
+  assert.deepEqual(merged, [{ description: 'Overtime', qty_hundredths: 16, unit_price_cents: otRate }])
+
+  const invoiceTotal = merged.reduce((sum, l) => sum + lineTotal(l.qty_hundredths, l.unit_price_cents), 0)
+  assert.equal(invoiceTotal, 1867)
+
+  // They disagree by exactly the one cent this fix closes.
+  assert.notEqual(summedRoundedTotals, invoiceTotal)
 })

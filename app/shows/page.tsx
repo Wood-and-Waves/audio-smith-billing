@@ -2,9 +2,9 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { isIncompleteDay } from '@/lib/chronology'
 import { formatDateShort } from '@/lib/dates'
-import { lineTotal, overtimeRateFrom, doubleTimeRateFrom } from '@/lib/money'
-import { computeShowLines, type ShowRates } from '@/lib/showBuckets'
-import type { ShowDayLike, ShowRuleset } from '@/lib/payroll'
+import { lineTotal } from '@/lib/money'
+import { computeShowLines, rulesetAndRatesFor } from '@/lib/showBuckets'
+import type { ShowDayLike } from '@/lib/payroll'
 import AppShell from '@/components/AppShell'
 import UnbilledShows, { type UnbilledShow } from '@/components/UnbilledShows'
 
@@ -49,33 +49,19 @@ export default async function ShowsPage() {
   const billed = rows.filter((r) => r.status === 'billed')
 
   // Money lives here, on the server, in integer cents — never in the client
-  // component. Each unbilled show gets its own computeShowLines pass, same
-  // rules/rates shape billShows and app/shows/[id]/page.tsx build, so the
-  // total shown here can never disagree with what billing would compute.
+  // component. Each unbilled show gets its own computeShowLines pass, built
+  // from the same rulesetAndRatesFor(show) that billShows and
+  // app/shows/[id]/page.tsx call, so the per-show lines below can never
+  // disagree with what billing would compute for that show.
+  //
+  // We hand the raw BucketLine[] down to UnbilledShows (not just a total):
+  // when several shows are selected together, the multi-show total must run
+  // those lines through the SAME mergeLines-then-lineTotal order billShows
+  // uses, or a preview built from per-show rounded totals can disagree with
+  // the invoice by a cent (round(a) + round(b) is not always round(a + b)).
   const unbilledShows: UnbilledShow[] = unbilled.map((s) => {
     const days = [...s.show_days].sort((a, b) => a.date.localeCompare(b.date))
-    const hours = Number(s.ot_after_hours)
-    const rules: ShowRuleset = {
-      overtime_after_hours: hours,
-      double_time_enabled: s.dt_after_hours != null,
-      double_time_after_hours: Number(s.dt_after_hours ?? 12),
-      meal_penalty_enabled: s.meal_penalty_cents > 0,
-      meal_penalty_grace_hours: Number(s.meal_penalty_grace_hours),
-      minimum_meal_break_enabled: s.minimum_meal_break_minutes > 0,
-      minimum_meal_break_minutes: s.minimum_meal_break_minutes,
-      meal_break_deduction_cap: s.meal_break_deduction_cap,
-      short_turn_penalty_enabled: true,
-      short_turn_rest_hours: Number(s.short_turn_rest_hours),
-      continuous_time_enabled: s.continuous_time_enabled,
-    }
-    const rates: ShowRates = {
-      day_rate_cents: s.day_rate_cents,
-      travel_rate_cents: s.travel_rate_cents,
-      pm_rate_cents: s.pm_rate_cents,
-      ot_rate_cents: overtimeRateFrom(s.day_rate_cents, hours),
-      dt_rate_cents: doubleTimeRateFrom(s.day_rate_cents, hours),
-      meal_penalty_cents: s.meal_penalty_cents,
-    }
+    const { rules, rates } = rulesetAndRatesFor(s)
     const lines = computeShowLines(days as unknown as ShowDayLike[], rates, rules)
     const totalCents = lines.reduce((t, l) => t + lineTotal(l.qty_hundredths, l.unit_price_cents), 0)
 
@@ -94,6 +80,7 @@ export default async function ShowsPage() {
       clientName: s.clients?.name ?? 'Unknown client',
       dates: days.map((d) => d.date),
       totalCents,
+      lines,
       incompleteDates,
     }
   })

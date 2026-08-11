@@ -7,15 +7,23 @@
 // disable with an inline reason, and a show with an incomplete day is never
 // selectable at all.
 //
-// Money is never computed here. The server page ran computeShowLines per show
-// and handed down `totalCents`; this component only sums the numbers it was
-// given, same rule as lib/money.ts's own header comment.
+// The server page ran computeShowLines per show and handed down each show's
+// raw BucketLine[] alongside its own already-rounded totalCents. Per-row
+// display uses totalCents (exact for a single show — computeShowLines never
+// emits two lines with the same description and price within one show, so
+// there is nothing to merge). The multi-show running total below is
+// different: it calls mergeLines and lineTotal, the SAME audited functions
+// billShows calls, rather than summing each show's rounded total, because
+// round(a) + round(b) is not always round(a + b) once two shows' lines merge.
+// That is calling the server's own money functions from the client bundle,
+// not reimplementing money math in the browser.
 
 import Link from 'next/link'
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { billShows } from '@/app/shows/actions'
-import { formatUSD } from '@/lib/money'
+import { formatUSD, lineTotal } from '@/lib/money'
+import { mergeLines, type BucketLine } from '@/lib/showBuckets'
 import { formatDateShort } from '@/lib/dates'
 
 export type UnbilledShow = {
@@ -26,6 +34,7 @@ export type UnbilledShow = {
   clientName: string
   dates: string[]
   totalCents: number
+  lines: BucketLine[]
   incompleteDates: string[]
 }
 
@@ -37,7 +46,14 @@ export default function UnbilledShows({ shows }: { shows: UnbilledShow[] }) {
 
   const selectedShows = shows.filter((s) => selected.has(s.id))
   const activeClientId = selectedShows[0]?.clientId ?? null
-  const total = selectedShows.reduce((sum, s) => sum + s.totalCents, 0)
+  // Merge across shows BEFORE rounding to cents, then round each merged
+  // line once — the exact order billShows uses server-side (mergeLines,
+  // then lineTotal inside saveInvoice). Summing each show's already-rounded
+  // totalCents instead can disagree with the invoice billShows actually
+  // creates by a cent, because round(a) + round(b) is not always
+  // round(a + b).
+  const mergedSelectedLines = mergeLines(selectedShows.map((s) => s.lines))
+  const total = mergedSelectedLines.reduce((sum, l) => sum + lineTotal(l.qty_hundredths, l.unit_price_cents), 0)
 
   function toggle(id: string) {
     setError(null)

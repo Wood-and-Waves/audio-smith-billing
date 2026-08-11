@@ -9,6 +9,7 @@ import {
   paidStraightTimeHours, paidOvertimeHours, paidDoubleTimeHours, mealPenaltyCount, pmHours,
   type ShowDayLike, type ShowRuleset,
 } from './payroll.ts'
+import { overtimeRateFrom, doubleTimeRateFrom } from './money.ts'
 
 export type ShowRates = {
   day_rate_cents: number
@@ -82,6 +83,63 @@ export function computeShowLines(
   if (rates.meal_penalty_cents > 0) push('Meal Penalty', penalties, rates.meal_penalty_cents)
 
   return lines
+}
+
+/**
+ * The frozen rate-card columns a show carries (migration 0003) — the inputs
+ * `rulesetAndRatesFor` needs to rebuild a ShowRuleset/ShowRates pair.
+ * Structural rather than a Supabase row type, so this file has no dependency
+ * on lib/supabase; it just needs something shaped like the columns
+ * app/shows/actions.ts, app/shows/[id]/page.tsx and app/shows/page.tsx all
+ * select off `shows`.
+ */
+export type FrozenShowColumns = {
+  day_rate_cents: number
+  travel_rate_cents: number
+  pm_rate_cents: number
+  ot_after_hours: number
+  dt_after_hours: number | null
+  minimum_meal_break_minutes: number
+  meal_break_deduction_cap: number
+  meal_penalty_grace_hours: number
+  meal_penalty_cents: number
+  short_turn_rest_hours: number
+  continuous_time_enabled: boolean
+}
+
+/**
+ * Builds the ShowRuleset/ShowRates pair `computeShowLines` needs, from a
+ * show's frozen rate-card columns. This ~20-line construction used to be
+ * copy-pasted in three places (billShows in app/shows/actions.ts,
+ * app/shows/[id]/page.tsx, and app/shows/page.tsx) — a future rule field
+ * would have had to be added in all three, and missing one would silently
+ * change what a client is charged without the preview and the invoice
+ * disagreeing loudly enough to notice.
+ */
+export function rulesetAndRatesFor(show: FrozenShowColumns): { rules: ShowRuleset; rates: ShowRates } {
+  const hours = Number(show.ot_after_hours)
+  const rules: ShowRuleset = {
+    overtime_after_hours: hours,
+    double_time_enabled: show.dt_after_hours != null,
+    double_time_after_hours: Number(show.dt_after_hours ?? 12),
+    meal_penalty_enabled: show.meal_penalty_cents > 0,
+    meal_penalty_grace_hours: Number(show.meal_penalty_grace_hours),
+    minimum_meal_break_enabled: show.minimum_meal_break_minutes > 0,
+    minimum_meal_break_minutes: show.minimum_meal_break_minutes,
+    meal_break_deduction_cap: show.meal_break_deduction_cap,
+    short_turn_penalty_enabled: true,
+    short_turn_rest_hours: Number(show.short_turn_rest_hours),
+    continuous_time_enabled: show.continuous_time_enabled,
+  }
+  const rates: ShowRates = {
+    day_rate_cents: show.day_rate_cents,
+    travel_rate_cents: show.travel_rate_cents,
+    pm_rate_cents: show.pm_rate_cents,
+    ot_rate_cents: overtimeRateFrom(show.day_rate_cents, hours),
+    dt_rate_cents: doubleTimeRateFrom(show.day_rate_cents, hours),
+    meal_penalty_cents: show.meal_penalty_cents,
+  }
+  return { rules, rates }
 }
 
 /**

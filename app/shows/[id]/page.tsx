@@ -2,9 +2,9 @@ import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { isIncompleteDay } from '@/lib/chronology'
 import { formatDateLong, formatDateShort } from '@/lib/dates'
-import { formatUSD, formatQty, lineTotal, overtimeRateFrom, doubleTimeRateFrom } from '@/lib/money'
-import { computeShowLines, type ShowRates } from '@/lib/showBuckets'
-import { calculateNetHours, type ShowDayLike, type ShowRuleset } from '@/lib/payroll'
+import { formatUSD, formatQty, lineTotal } from '@/lib/money'
+import { computeShowLines, rulesetAndRatesFor } from '@/lib/showBuckets'
+import { calculateNetHours, type ShowDayLike } from '@/lib/payroll'
 import AppShell from '@/components/AppShell'
 import PunchClock from '@/components/PunchClock'
 import ShowDayControls from '@/components/ShowDayControls'
@@ -64,28 +64,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
   const days = [...s.show_days].sort((a, b) => a.date.localeCompare(b.date))
   const locked = s.status === 'billed'
 
-  const hours = Number(s.ot_after_hours)
-  const rules: ShowRuleset = {
-    overtime_after_hours: hours,
-    double_time_enabled: s.dt_after_hours != null,
-    double_time_after_hours: Number(s.dt_after_hours ?? 12),
-    meal_penalty_enabled: s.meal_penalty_cents > 0,
-    meal_penalty_grace_hours: Number(s.meal_penalty_grace_hours),
-    minimum_meal_break_enabled: s.minimum_meal_break_minutes > 0,
-    minimum_meal_break_minutes: s.minimum_meal_break_minutes,
-    meal_break_deduction_cap: s.meal_break_deduction_cap,
-    short_turn_penalty_enabled: true,
-    short_turn_rest_hours: Number(s.short_turn_rest_hours),
-    continuous_time_enabled: s.continuous_time_enabled,
-  }
-  const rates: ShowRates = {
-    day_rate_cents: s.day_rate_cents,
-    travel_rate_cents: s.travel_rate_cents,
-    pm_rate_cents: s.pm_rate_cents,
-    ot_rate_cents: overtimeRateFrom(s.day_rate_cents, hours),
-    dt_rate_cents: doubleTimeRateFrom(s.day_rate_cents, hours),
-    meal_penalty_cents: s.meal_penalty_cents,
-  }
+  const { rules, rates } = rulesetAndRatesFor(s)
   // Pure function — safe to call straight from a server component to render
   // a live preview of what this show would bill if billed right now.
   const lines = computeShowLines(days as unknown as ShowDayLike[], rates, rules)
