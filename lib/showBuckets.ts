@@ -61,8 +61,12 @@ export function computeShowLines(
 
   const lines: BucketLine[] = []
   const push = (description: string, qty: number, unit_price_cents: number) => {
-    if (qty > 0 && unit_price_cents >= 0) {
-      lines.push({ description, qty_hundredths: toHundredths(qty), unit_price_cents })
+    const qty_hundredths = toHundredths(qty)
+    // Guard on the rounded quantity, not the pre-rounded value, to ensure we never
+    // emit a line with qty_hundredths: 0. A value like 1e-13 hours passes qty > 0
+    // but rounds to zero hundredths; we must test the value that actually gets pushed.
+    if (qty_hundredths > 0 && unit_price_cents >= 0) {
+      lines.push({ description, qty_hundredths, unit_price_cents })
     }
   }
 

@@ -81,3 +81,33 @@ test('PM hours bill actual time with no day-rate minimum', () => {
 test('zero buckets produce no lines', () => {
   assert.deepEqual(computeShowLines([], RATES, RULES), [])
 })
+
+test('a bucket that rounds to zero hundredths produces no line', () => {
+  // PM hours directly return the output of calculateNetHours, which can be
+  // fractional. A very short PM day may produce hours that round to less than
+  // 0.005 (which is 0.5 hundredths, rounded down to 0). The guard must test
+  // the rounded quantity, not the pre-rounded float.
+  //
+  // With a 3ms punch difference:
+  // - netSeconds = 0.003
+  // - netMinutes = Math.round(0.003 / 60) = 0
+  // - pmHours returns 0 / 60 = 0 (no line expected)
+  //
+  // Verify the invariant: no line ever has qty_hundredths: 0
+  const minimalPM: ShowDayLike = {
+    id: 'p_min', date: '2026-07-10', day_type: 'pm', pay_as_half_day: false,
+    punches: [
+      { punch_type: 'start', punched_at: '2026-07-10T14:00:00.000Z' },
+      { punch_type: 'end', punched_at: '2026-07-10T14:00:00.003Z' },   // 3ms
+    ],
+  }
+  const lines = computeShowLines([minimalPM], RATES, RULES)
+
+  // No lines should be produced for a 3ms PM day
+  assert.deepEqual(lines, [])
+
+  // Verify the invariant across all returned lines: qty_hundredths > 0
+  for (const line of lines) {
+    assert(line.qty_hundredths > 0, `Line "${line.description}" has qty_hundredths: ${line.qty_hundredths}`)
+  }
+})
