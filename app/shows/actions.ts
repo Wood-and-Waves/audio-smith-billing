@@ -217,11 +217,41 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
   })
   if ('error' in result) return result
 
-  const { error: linkError } = await supabase
+  // saveInvoice only hands back the id, but the error messages below need
+  // to point the user at the invoice by the number they'll actually see.
+  const { data: invoiceRow } = await supabase
+    .from('invoices').select('number').eq('id', result.id).maybeSingle()
+  const invoiceNumber = invoiceRow?.number ?? result.id
+
+  // The `.eq('status', 'open')` below — not the `shows.some(status ===
+  // 'billed')` check earlier — is what actually prevents a double-click (or
+  // any two overlapping calls) from billing the same shows twice. Both
+  // calls can pass that earlier read-time check before either has written
+  // anything; only one update can flip a given row from 'open' to 'billed'.
+  // Whichever call's update touches fewer rows than it asked for lost the
+  // race and must say so instead of reporting success.
+  const { data: linked, error: linkError } = await supabase
     .from('shows')
     .update({ status: 'billed', invoice_id: result.id })
     .in('id', showIds)
-  if (linkError) return { error: linkError.message }
+    .eq('status', 'open')
+    .select('id')
+
+  if (linkError) {
+    // The invoice already consumed a number; don't try to auto-delete a
+    // financial record. Tell the user exactly what happened instead.
+    return {
+      error: `Draft invoice #${invoiceNumber} was created but could not be linked to these ` +
+        `shows (${linkError.message}). Review or delete that draft invoice manually.`,
+    }
+  }
+
+  if (!linked || linked.length < showIds.length) {
+    return {
+      error: `These shows were already billed by another action. Draft invoice #${invoiceNumber} ` +
+        'was created but is not linked to any shows — find and delete it manually.',
+    }
+  }
 
   revalidatePath('/shows')
   revalidatePath('/invoices')
@@ -231,9 +261,15 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
 /** Returns a show to unbilled so its punches can be edited again. */
 export async function unlinkShow(showId: string): Promise<Fail | { ok: true }> {
   const supabase = await createClient()
-  const { error } = await supabase
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const { data, error } = await supabase
     .from('shows').update({ status: 'open', invoice_id: null }).eq('id', showId)
+    .select('id')
   if (error) return { error: error.message }
+  if (!data || data.length === 0) return { error: 'That show could not be unlinked.' }
+
   revalidatePath('/shows')
   revalidatePath(`/shows/${showId}`)
   return { ok: true }
