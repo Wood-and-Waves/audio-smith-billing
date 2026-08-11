@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { computeShowLines, type ShowRates } from '../../lib/showBuckets.ts'
+import { computeShowLines, mergeLines, type ShowRates } from '../../lib/showBuckets.ts'
 import type { ShowRuleset, ShowDayLike } from '../../lib/payroll.ts'
 
 const RATES: ShowRates = {
@@ -110,4 +110,37 @@ test('a bucket that rounds to zero hundredths produces no line', () => {
   for (const line of lines) {
     assert(line.qty_hundredths > 0, `Line "${line.description}" has qty_hundredths: ${line.qty_hundredths}`)
   }
+})
+
+test('lines from several shows combine by bucket', () => {
+  const mk = (id: string, date: string): ShowDayLike => ({
+    id, date, day_type: 'show', pay_as_half_day: false,
+    punches: [
+      { punch_type: 'start', punched_at: `${date}T13:00:00Z` },
+      { punch_type: 'end', punched_at: `${date}T23:00:00Z` },
+    ],
+  })
+  const a = computeShowLines([mk('a', '2026-07-01')], RATES, RULES)
+  const b = computeShowLines([mk('b', '2026-07-08')], RATES, RULES)
+
+  assert.deepEqual(mergeLines([a, b]), [
+    { description: 'Day Rate', qty_hundredths: 200, unit_price_cents: 78000 },
+  ])
+})
+
+test('the same description at different prices does not merge', () => {
+  const cheap: ShowRates = { ...RATES, day_rate_cents: 60000 }
+  const mk = (id: string, date: string): ShowDayLike => ({
+    id, date, day_type: 'show', pay_as_half_day: false,
+    punches: [
+      { punch_type: 'start', punched_at: `${date}T13:00:00Z` },
+      { punch_type: 'end', punched_at: `${date}T23:00:00Z` },
+    ],
+  })
+  const merged = mergeLines([
+    computeShowLines([mk('a', '2026-07-01')], RATES, RULES),
+    computeShowLines([mk('b', '2026-07-08')], cheap, RULES),
+  ])
+  assert.equal(merged.length, 2)
+  assert.deepEqual(merged.map((l) => l.unit_price_cents).sort((x, y) => x - y), [60000, 78000])
 })

@@ -3,7 +3,10 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { chronologyError } from '@/lib/chronology'
-import { travelRateFrom } from '@/lib/money'
+import { travelRateFrom, overtimeRateFrom, doubleTimeRateFrom } from '@/lib/money'
+import { todayInChicago } from '@/lib/dates'
+import { computeShowLines, mergeLines, type ShowRates, type BucketLine } from '@/lib/showBuckets'
+import type { ShowDayLike, ShowRuleset } from '@/lib/payroll'
 import type { PunchType, DayType } from '@/lib/punchTypes'
 
 type Fail = { error: string }
@@ -127,5 +130,111 @@ export async function deletePunch(punchId: string, showId: string): Promise<Fail
   const { error } = await supabase.from('punches').delete().eq('id', punchId)
   if (error) return { error: error.message }
   revalidatePath(`/shows/${derivedShowId}`)
+  return { ok: true }
+}
+
+/**
+ * Generates a DRAFT invoice from one or more unbilled shows for the same
+ * client, then locks those shows. The lines are a snapshot: editing punches
+ * afterwards cannot change an invoice a client already holds.
+ */
+export async function billShows(showIds: string[]): Promise<Fail | { ok: true; invoiceId: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+  if (showIds.length === 0) return { error: 'Select at least one show.' }
+
+  const { data: shows, error } = await supabase
+    .from('shows')
+    .select(`id, name, client_id, status,
+             day_rate_cents, travel_rate_cents, pm_rate_cents, ot_after_hours,
+             dt_after_hours, minimum_meal_break_minutes, meal_break_deduction_cap,
+             meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours,
+             continuous_time_enabled,
+             show_days(id, date, day_type, pay_as_half_day, punches(punch_type, punched_at))`)
+    .in('id', showIds)
+  if (error) return { error: error.message }
+  if (!shows?.length) return { error: 'Those shows no longer exist.' }
+
+  if (shows.some((s) => s.status === 'billed')) return { error: 'One of those shows is already billed.' }
+  const clientId = shows[0].client_id
+  if (shows.some((s) => s.client_id !== clientId)) {
+    return { error: 'All shows on one invoice must be for the same client.' }
+  }
+
+  // An incomplete day would silently bill zero hours, so refuse instead.
+  for (const s of shows) {
+    for (const d of (s.show_days ?? []) as { date: string; day_type: string; punches: { punch_type: string }[] }[]) {
+      if (d.day_type === 'travel') continue
+      const types = new Set(d.punches.map((p) => p.punch_type))
+      if (types.has('start') !== types.has('end')) {
+        return { error: `${s.name}: ${d.date} has an unfinished punch. Complete or remove it first.` }
+      }
+    }
+  }
+
+  const perShow: BucketLine[][] = []
+  for (const s of shows) {
+    const hours = Number(s.ot_after_hours)
+    const rules: ShowRuleset = {
+      overtime_after_hours: hours,
+      double_time_enabled: s.dt_after_hours != null,
+      double_time_after_hours: Number(s.dt_after_hours ?? 12),
+      meal_penalty_enabled: s.meal_penalty_cents > 0,
+      meal_penalty_grace_hours: Number(s.meal_penalty_grace_hours),
+      minimum_meal_break_enabled: s.minimum_meal_break_minutes > 0,
+      minimum_meal_break_minutes: s.minimum_meal_break_minutes,
+      meal_break_deduction_cap: s.meal_break_deduction_cap,
+      short_turn_penalty_enabled: true,
+      short_turn_rest_hours: Number(s.short_turn_rest_hours),
+      continuous_time_enabled: s.continuous_time_enabled,
+    }
+    const rates: ShowRates = {
+      day_rate_cents: s.day_rate_cents,
+      travel_rate_cents: s.travel_rate_cents,
+      pm_rate_cents: s.pm_rate_cents,
+      ot_rate_cents: overtimeRateFrom(s.day_rate_cents, hours),
+      dt_rate_cents: doubleTimeRateFrom(s.day_rate_cents, hours),
+      meal_penalty_cents: s.meal_penalty_cents,
+    }
+    const days = ((s.show_days ?? []) as unknown as ShowDayLike[])
+    perShow.push(computeShowLines(days, rates, rules))
+  }
+  const merged = mergeLines(perShow)
+
+  if (merged.length === 0) return { error: 'Nothing to bill — those shows have no completed days.' }
+
+  const { saveInvoice } = await import('@/app/invoices/actions')
+  const issue = todayInChicago()
+  const result = await saveInvoice({
+    client_id: clientId,
+    issue_date: issue,
+    terms_days: 30,
+    deposit_cents: 0,
+    tax_bp: 0,
+    notes: shows.map((s) => s.name).join(', '),
+    lines: merged,
+  })
+  if ('error' in result) return result
+
+  const { error: linkError } = await supabase
+    .from('shows')
+    .update({ status: 'billed', invoice_id: result.id })
+    .in('id', showIds)
+  if (linkError) return { error: linkError.message }
+
+  revalidatePath('/shows')
+  revalidatePath('/invoices')
+  return { ok: true, invoiceId: result.id }
+}
+
+/** Returns a show to unbilled so its punches can be edited again. */
+export async function unlinkShow(showId: string): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from('shows').update({ status: 'open', invoice_id: null }).eq('id', showId)
+  if (error) return { error: error.message }
+  revalidatePath('/shows')
+  revalidatePath(`/shows/${showId}`)
   return { ok: true }
 }
