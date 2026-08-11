@@ -52,7 +52,6 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
         {noDayRate && (
           <p role="alert" className="text-xs text-danger mt-1.5 border-l-2 border-danger pl-3 py-1">
             {client!.name} has no day rate on file, so a show can&rsquo;t be tracked for them yet.
-            Set a day rate on this client first.
           </p>
         )}
       </div>

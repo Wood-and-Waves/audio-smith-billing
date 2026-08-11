@@ -12,12 +12,13 @@ const field =
   'focus:border-accent focus:outline-none'
 
 export default function ShowDayControls({
-  showId, status, invoiceId, hasLines,
+  showId, status, invoiceId, hasLines, incompleteDates,
 }: {
   showId: string
   status: string
   invoiceId: string | null
   hasLines: boolean
+  incompleteDates: string[]
 }) {
   const router = useRouter()
   const [pending, start] = useTransition()
@@ -98,16 +99,21 @@ export default function ShowDayControls({
         </button>
       </div>
 
-      <button type="button" onClick={bill} disabled={pending || !hasLines}
+      <button type="button" onClick={bill}
+              disabled={pending || !hasLines || incompleteDates.length > 0}
               className="px-5 py-2.5 bg-accent text-accent-ink font-bold uppercase tracking-wider
                          text-sm rounded-field hover:opacity-90 disabled:opacity-50">
         {pending ? 'Billing…' : 'Bill this show'}
       </button>
-      {!hasLines && (
+      {incompleteDates.length > 0 ? (
+        <p className="text-xs text-accent mt-2">
+          Finish punches for {incompleteDates.join(', ')} before billing.
+        </p>
+      ) : !hasLines ? (
         <p className="text-xs text-muted mt-2">
           Complete at least one day&rsquo;s punches before billing.
         </p>
-      )}
+      ) : null}
 
       {error && <p role="alert" className="mt-3 text-xs text-danger">{error}</p>}
     </div>

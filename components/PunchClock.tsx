@@ -3,14 +3,15 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { PUNCH_ORDER, PUNCH_LABELS, type PunchType } from '@/lib/punchTypes'
-import { recordPunch } from '@/app/shows/actions'
+import { recordPunch, deletePunch } from '@/app/shows/actions'
 
 // One row per day. The next expected punch is the prominent button; the rest
 // stay available because a real show floor doesn't run in order.
 
 export default function PunchClock({
-  showDayId, timezone, punches, locked,
+  showId, showDayId, timezone, punches, locked,
 }: {
+  showId: string
   showDayId: string
   timezone: string
   punches: { id: string; punch_type: string; punched_at: string }[]
@@ -37,6 +38,15 @@ export default function PunchClock({
     })
   }
 
+  function remove(punchId: string) {
+    setError(null)
+    start(async () => {
+      const result = await deletePunch(punchId, showId)
+      if ('error' in result) { setError(result.error); return }
+      router.refresh()
+    })
+  }
+
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2">
@@ -44,8 +54,17 @@ export default function PunchClock({
           const hit = punches.find((p) => p.punch_type === type)
           if (hit) {
             return (
-              <span key={type} className="tabular text-sm text-muted">
+              <span key={type} className="inline-flex items-center gap-1 tabular text-sm text-muted">
                 {PUNCH_LABELS[type]} {fmt(hit.punched_at)}
+                <button
+                  type="button"
+                  disabled={locked || pending}
+                  onClick={() => remove(hit.id)}
+                  aria-label={`Remove ${PUNCH_LABELS[type]}`}
+                  className="text-muted hover:text-danger transition-colors text-sm leading-none disabled:opacity-40"
+                >
+                  ×
+                </button>
               </span>
             )
           }

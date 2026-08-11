@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { formatDateLong } from '@/lib/dates'
+import { formatDateLong, formatDateShort } from '@/lib/dates'
 import { formatUSD, formatQty, lineTotal, overtimeRateFrom, doubleTimeRateFrom } from '@/lib/money'
 import { computeShowLines, type ShowRates } from '@/lib/showBuckets'
 import type { ShowDayLike, ShowRuleset } from '@/lib/payroll'
@@ -87,6 +87,18 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
   const lines = computeShowLines(days as unknown as ShowDayLike[], rates, rules)
   const previewTotal = lines.reduce((t, l) => t + lineTotal(l.qty_hundredths, l.unit_price_cents), 0)
 
+  // Mirrors the check in billShows (app/shows/actions.ts): a day with a
+  // start punch and no end punch (or vice versa) would silently bill zero
+  // hours, so billShows refuses it. Travel days legitimately have no
+  // punches at all and are not "incomplete".
+  const incompleteDates = days
+    .filter((d) => d.day_type !== 'travel')
+    .filter((d) => {
+      const types = new Set(d.punches.map((p) => p.punch_type))
+      return types.has('start') !== types.has('end')
+    })
+    .map((d) => formatDateShort(d.date))
+
   return (
     <AppShell current="shows">
       <div className="mb-8">
@@ -116,6 +128,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
                   <p className="text-xs text-muted">Travel day — billed by rate, no punches needed.</p>
                 ) : (
                   <PunchClock
+                    showId={s.id}
                     showDayId={d.id}
                     timezone={s.timezone}
                     punches={d.punches}
@@ -165,6 +178,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
           status={s.status}
           invoiceId={s.invoice_id}
           hasLines={lines.length > 0}
+          incompleteDates={incompleteDates}
         />
       </section>
     </AppShell>
