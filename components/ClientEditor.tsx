@@ -60,7 +60,10 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
         phone,
         address_line1: addressLine1,
         address_line2: addressLine2,
-        terms_days: Number(termsDays),
+        // A cleared box is not "Net 0" — Number('') is 0, which would make
+        // the due date equal to the issue date. Blank means "use the
+        // default" the way it already does for ShowSettings' dt_after_hours.
+        terms_days: termsDays.trim() === '' ? 30 : Number(termsDays),
         day_rate: dayRate,
         ot_after_hours: Number(otAfterHours),
         notes,
@@ -125,6 +128,7 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
           <label className="eyebrow block mb-2" htmlFor="terms">Terms (days)</label>
           <input id="terms" type="number" min={0} className={field} value={termsDays}
                  onChange={(e) => setTermsDays(e.target.value)} />
+          <p className="text-xs text-muted mt-1.5">Leave blank for the default of 30 days.</p>
         </div>
 
         <div>

@@ -26,6 +26,7 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
   const router = useRouter()
   const [pending, start] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
 
   const [businessName, setBusinessName] = useState(initial.business_name)
   const [legalName, setLegalName] = useState(initial.legal_name)
@@ -45,6 +46,7 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
 
   function submit() {
     setError(null)
+    setSaved(false)
     start(async () => {
       const result = await saveSettings({
         business_name: businessName,
@@ -60,6 +62,7 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
         next_invoice_number: Number(nextInvoiceNumber),
       })
       if ('error' in result) { setError(result.error); return }
+      setSaved(true)
       router.refresh()
     })
   }
@@ -160,6 +163,9 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
           {error}
         </p>
       )}
+      {saved && !error && (
+        <p className="mb-5 text-sm text-good">Saved.</p>
+      )}
 
       <div className="flex items-center gap-3">
         <button type="button" onClick={submit} disabled={pending}
@@ -167,6 +173,11 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
                            text-sm rounded-field cursor-pointer hover:opacity-90 transition-opacity
                            disabled:opacity-50 disabled:cursor-not-allowed">
           {pending ? 'Saving…' : 'Save changes'}
+        </button>
+        <button type="button" onClick={() => router.back()} disabled={pending}
+                className="px-5 py-2.5 border border-line text-muted font-bold uppercase tracking-wider
+                           text-sm rounded-field cursor-pointer hover:text-ink transition-colors">
+          Cancel
         </button>
       </div>
     </div>

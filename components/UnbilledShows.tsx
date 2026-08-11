@@ -80,9 +80,15 @@ export default function UnbilledShows({ shows }: { shows: UnbilledShow[] }) {
       <ul className="border-t border-line mb-4">
         {shows.map((s) => {
           const incomplete = s.incompleteDates.length > 0
+          // A day with no punches isn't "incomplete" (isIncompleteDay([]) is
+          // false), so a show whose days are all punchless would otherwise
+          // stay selectable at $0.00. Mirror ShowDayControls' !hasLines gate
+          // so an empty show can never ride along on someone else's invoice
+          // and get silently marked billed.
+          const empty = s.lines.length === 0
           const checked = selected.has(s.id)
           const wrongClient = activeClientId !== null && s.clientId !== activeClientId && !checked
-          const disabled = incomplete || wrongClient
+          const disabled = incomplete || empty || wrongClient
 
           // The show name stays a real Link to /shows/id (e.g. to finish an
           // incomplete punch) so it lives outside the <label> below — a link
@@ -117,6 +123,8 @@ export default function UnbilledShows({ shows }: { shows: UnbilledShow[] }) {
                     <p className="text-xs text-accent mt-1">
                       Finish punches for {s.incompleteDates.join(', ')} before this can be billed.
                     </p>
+                  ) : empty ? (
+                    <p className="text-xs text-muted mt-1">Nothing to bill yet.</p>
                   ) : wrongClient ? (
                     <p className="text-xs text-muted mt-1">
                       Different client — one invoice can only bill one client at a time.

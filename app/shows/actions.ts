@@ -189,14 +189,27 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
 
   if (merged.length === 0) return { error: 'Nothing to bill — those shows have no completed days.' }
 
+  // Terms and tax must match what a client invoiced through InvoiceEditor
+  // would get: InvoiceEditor always overwrites its terms field with the
+  // chosen client's own terms_days (see the client <select> onChange there),
+  // so client.terms_days takes precedence here too. Clients carry no tax
+  // override, so tax_bp comes from the settings row's default.
+  const { data: clientRow } = await supabase
+    .from('clients').select('terms_days').eq('id', clientId).maybeSingle()
+  const termsDays = clientRow?.terms_days ?? 30
+
+  const { data: settingsRow } = await supabase
+    .from('settings').select('default_tax_bp').eq('id', 1).maybeSingle()
+  const taxBp = settingsRow?.default_tax_bp ?? 0
+
   const { saveInvoice } = await import('@/app/invoices/actions')
   const issue = todayInChicago()
   const result = await saveInvoice({
     client_id: clientId,
     issue_date: issue,
-    terms_days: 30,
+    terms_days: termsDays,
     deposit_cents: 0,
-    tax_bp: 0,
+    tax_bp: taxBp,
     notes: shows.map((s) => s.name).join(', '),
     lines: merged,
   })
@@ -306,7 +319,11 @@ export async function updateShow(input: UpdateShowInput): Promise<Fail | { ok: t
   // legitimate zero, not "leave unset" — only reject text that doesn't parse.
   const dayRate = parseUSD(input.day_rate)
   if (dayRate === null) return { error: `Couldn't read "${input.day_rate}" as a day rate.` }
-  if (dayRate < 0) return { error: 'Day rate cannot be negative.' }
+  // A show must always carry a usable rate card — that is the point of
+  // freezing one at creation (see createShow above). A day rate of $0.00
+  // would let computeShowLines emit a real "Day Rate x1 @ $0.00" line (and
+  // zero the derived OT/DT rates), billing nothing for a day that was worked.
+  if (dayRate <= 0) return { error: 'Day rate must be more than $0.00 — a show needs a usable rate card.' }
 
   const travelRate = parseUSD(input.travel_rate)
   if (travelRate === null) return { error: `Couldn't read "${input.travel_rate}" as a travel rate.` }

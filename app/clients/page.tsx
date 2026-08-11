@@ -46,6 +46,16 @@ export default async function ClientsPage() {
 
   const missingEmail = clients.filter((c) => !c.billing_email)
 
+  // Archiving is otherwise a one-way door: nothing else links to
+  // /clients/[id] once a client is filtered out of the active list above, so
+  // this collapsed section is the only way back in to un-archive one.
+  const { data: archivedData } = await supabase
+    .from('clients')
+    .select('id, name')
+    .eq('archived', true)
+    .order('name')
+  const archivedClients = (archivedData ?? []) as { id: string; name: string }[]
+
   return (
     <AppShell current="clients">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-4">
@@ -110,6 +120,28 @@ export default async function ClientsPage() {
           )
         })}
       </ul>
+
+      {archivedClients.length > 0 && (
+        <details className="mt-8 group">
+          <summary className="eyebrow cursor-pointer select-none list-none flex items-center gap-2">
+            <span className="transition-transform group-open:rotate-90">›</span>
+            Archived ({archivedClients.length})
+          </summary>
+          <ul className="border-t border-line mt-4">
+            {archivedClients.map((c) => (
+              <li key={c.id}>
+                <Link
+                  href={`/clients/${c.id}`}
+                  className="block border-b border-line py-3 px-2 -mx-2 text-sm text-muted
+                             hover:bg-surface hover:text-ink transition-colors"
+                >
+                  {c.name}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </AppShell>
   )
 }
