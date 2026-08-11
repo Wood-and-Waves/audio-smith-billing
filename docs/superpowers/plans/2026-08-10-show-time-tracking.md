@@ -360,12 +360,13 @@ const RULES: ShowRuleset = {
   short_turn_rest_hours: 10, continuous_time_enabled: false,
 }
 
-// 8am-7pm Chicago = 11 hours, exactly at the threshold: no overtime.
+// 13:00Z to 23:00Z is 10 hours — under Streamline's 11-hour threshold, so a
+// plain day rate with no overtime.
 const showDay = (id: string, date: string): ShowDayLike => ({
   id, date, day_type: 'show', pay_as_half_day: false,
   punches: [
     { punch_type: 'start', punched_at: `${date}T13:00:00Z` },
-    { punch_type: 'end', punched_at: `${date}T24:00:00Z`.replace('T24', 'T23') },
+    { punch_type: 'end', punched_at: `${date}T23:00:00Z` },
   ],
 })
 
@@ -507,6 +508,23 @@ export function computeShowLines(
   if (rates.meal_penalty_cents > 0) push('Meal Penalty', penalties, rates.meal_penalty_cents)
 
   return lines
+}
+
+/**
+ * Combines lines from several shows onto one invoice. Two Streamline day-rate
+ * lines at the same price become one line with double the quantity, which is
+ * how Dan's invoices read today. Lines only merge when BOTH the description
+ * and the unit price match — a $780 day rate and a $600 day rate stay apart.
+ */
+export function mergeLines(groups: BucketLine[][]): BucketLine[] {
+  const merged: BucketLine[] = []
+  for (const line of groups.flat()) {
+    const hit = merged.find(
+      (x) => x.description === line.description && x.unit_price_cents === line.unit_price_cents)
+    if (hit) hit.qty_hundredths += line.qty_hundredths
+    else merged.push({ ...line })
+  }
+  return merged
 }
 ```
 
@@ -762,7 +780,7 @@ Mirror the structure of `app/invoices/actions.ts`: `'use server'`, `createClient
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { chronologyError } from '@/lib/chronology'
-import { computeShowLines, type ShowRates } from '@/lib/showBuckets'
+import { computeShowLines, mergeLines, type ShowRates, type BucketLine } from '@/lib/showBuckets'
 import { travelRateFrom, overtimeRateFrom, doubleTimeRateFrom } from '@/lib/money'
 import { addDays, todayInChicago } from '@/lib/dates'
 import type { PunchType, DayType } from '@/lib/punchTypes'
@@ -879,9 +897,14 @@ git commit -m "Add show actions and punch chronology validation."
 - Consumes: `computeShowLines`, `saveInvoice` from `app/invoices/actions.ts`.
 - Produces: `billShows(showIds: string[]): Fail | { ok: true; invoiceId: string }`.
 
-- [ ] **Step 1: Write the failing test for combining shows**
+- [ ] **Step 1: Write the failing test for `mergeLines`**
 
-Append to `scripts/test/showBuckets.test.ts`:
+This tests the exported `mergeLines` from Task 2 — the same function `billShows`
+calls. Do not reimplement the merge inside the test; a test that reimplements
+its subject proves only that you can write the same bug twice.
+
+Append to `scripts/test/showBuckets.test.ts`, and add `mergeLines` to the import
+at the top of the file:
 
 ```ts
 test('lines from several shows combine by bucket', () => {
@@ -894,23 +917,35 @@ test('lines from several shows combine by bucket', () => {
   })
   const a = computeShowLines([mk('a', '2026-07-01')], RATES, RULES)
   const b = computeShowLines([mk('b', '2026-07-08')], RATES, RULES)
-  // Two separate single-day shows, billed together, must read as Day Rate x2.
-  const merged = [...a, ...b].reduce<typeof a>((acc, l) => {
-    const hit = acc.find((x) => x.description === l.description && x.unit_price_cents === l.unit_price_cents)
-    if (hit) hit.qty_hundredths += l.qty_hundredths
-    else acc.push({ ...l })
-    return acc
-  }, [])
-  assert.deepEqual(merged, [
+
+  assert.deepEqual(mergeLines([a, b]), [
     { description: 'Day Rate', qty_hundredths: 200, unit_price_cents: 78000 },
   ])
 })
+
+test('the same description at different prices does not merge', () => {
+  const cheap: ShowRates = { ...RATES, day_rate_cents: 60000 }
+  const mk = (id: string, date: string): ShowDayLike => ({
+    id, date, day_type: 'show', pay_as_half_day: false,
+    punches: [
+      { punch_type: 'start', punched_at: `${date}T13:00:00Z` },
+      { punch_type: 'end', punched_at: `${date}T23:00:00Z` },
+    ],
+  })
+  const merged = mergeLines([
+    computeShowLines([mk('a', '2026-07-01')], RATES, RULES),
+    computeShowLines([mk('b', '2026-07-08')], cheap, RULES),
+  ])
+  assert.equal(merged.length, 2)
+  assert.deepEqual(merged.map((l) => l.unit_price_cents).sort((x, y) => x - y), [60000, 78000])
+})
 ```
 
-- [ ] **Step 2: Run test to verify it passes**
+- [ ] **Step 2: Run test to verify it fails, then passes**
 
 Run: `npm test`
-Expected: PASS. This test documents the merge rule that `billShows` implements; it uses only Task 2's code.
+Expected: FAIL if `mergeLines` was not exported in Task 2 — `mergeLines is not a function`.
+Export it, re-run, expect PASS.
 
 - [ ] **Step 3: Append `billShows` to `app/shows/actions.ts`**
 
@@ -955,7 +990,7 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
     }
   }
 
-  const merged: { description: string; qty_hundredths: number; unit_price_cents: number }[] = []
+  const perShow: BucketLine[][] = []
   for (const s of shows) {
     const hours = Number(s.ot_after_hours)
     const rules: ShowRuleset = {
@@ -980,13 +1015,9 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
       meal_penalty_cents: s.meal_penalty_cents,
     }
     const days = ((s.show_days ?? []) as unknown as ShowDayLike[])
-    for (const line of computeShowLines(days, rates, rules)) {
-      const hit = merged.find(
-        (x) => x.description === line.description && x.unit_price_cents === line.unit_price_cents)
-      if (hit) hit.qty_hundredths += line.qty_hundredths
-      else merged.push({ ...line })
-    }
+    perShow.push(computeShowLines(days, rates, rules))
   }
+  const merged = mergeLines(perShow)
 
   if (merged.length === 0) return { error: 'Nothing to bill — those shows have no completed days.' }
 
@@ -1226,11 +1257,123 @@ export default async function ShowsPage() {
 }
 ```
 
-- [ ] **Step 4: Write `app/shows/[id]/page.tsx` and `app/shows/new/page.tsx`**
+- [ ] **Step 4: Write `app/shows/new/page.tsx`**
 
-`app/shows/new/page.tsx` is a client form calling `createShow` — one select for client, one text input for name, one for venue, mirroring the field styling in `components/InvoiceEditor.tsx`.
+A server page loading clients, wrapping a client component that calls `createShow`.
 
-`app/shows/[id]/page.tsx` loads the show with `show_days(*, punches(*))`, renders one `<PunchClock>` per day sorted by date, an "Add day" control offering `show | travel | pm`, a live preview of the lines `computeShowLines` would produce, and a **Bill this show** button calling `billShows([id])`. When `status === 'billed'` it shows a link to the invoice and an **Unlink** button calling `unlinkShow`, and passes `locked` to every `PunchClock`.
+```tsx
+import { createClient } from '@/lib/supabase/server'
+import AppShell from '@/components/AppShell'
+import NewShowForm from '@/components/NewShowForm'
+
+export const dynamic = 'force-dynamic'
+
+export default async function NewShowPage() {
+  const supabase = await createClient()
+  const { data } = await supabase
+    .from('clients').select('id, name').eq('archived', false).order('name')
+  return (
+    <AppShell current="shows">
+      <NewShowForm clients={(data ?? []) as { id: string; name: string }[]} />
+    </AppShell>
+  )
+}
+```
+
+Create `components/NewShowForm.tsx`:
+
+```tsx
+'use client'
+
+import { useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
+import { createShow } from '@/app/shows/actions'
+
+const field =
+  'w-full px-3 py-2 bg-surface border border-line rounded-field text-ink text-sm ' +
+  'focus:border-accent focus:outline-none'
+
+export default function NewShowForm({ clients }: { clients: { id: string; name: string }[] }) {
+  const router = useRouter()
+  const [pending, start] = useTransition()
+  const [error, setError] = useState<string | null>(null)
+  const [clientId, setClientId] = useState('')
+  const [name, setName] = useState('')
+  const [venue, setVenue] = useState('')
+
+  function submit() {
+    setError(null)
+    start(async () => {
+      const result = await createShow({ client_id: clientId, name, venue })
+      if ('error' in result) { setError(result.error); return }
+      router.push(`/shows/${result.id}`)
+      router.refresh()
+    })
+  }
+
+  return (
+    <div className="max-w-xl">
+      <h1 className="display text-3xl font-bold mb-8">New show</h1>
+
+      <div className="mb-4">
+        <label className="eyebrow block mb-2" htmlFor="client">Client</label>
+        <select id="client" className={field} value={clientId}
+                onChange={(e) => setClientId(e.target.value)}>
+          <option value="">Choose a client…</option>
+          {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <p className="text-xs text-muted mt-1.5">
+          Their rate card is copied onto this show, so a later rate change
+          won&rsquo;t alter what you bill here.
+        </p>
+      </div>
+
+      <div className="mb-4">
+        <label className="eyebrow block mb-2" htmlFor="name">Name</label>
+        <input id="name" className={field} value={name} placeholder="GLS 2026"
+               onChange={(e) => setName(e.target.value)} />
+      </div>
+
+      <div className="mb-8">
+        <label className="eyebrow block mb-2" htmlFor="venue">Venue (optional)</label>
+        <input id="venue" className={field} value={venue}
+               onChange={(e) => setVenue(e.target.value)} />
+      </div>
+
+      {error && (
+        <p role="alert" className="mb-5 text-sm text-danger border-l-2 border-danger pl-3 py-1">
+          {error}
+        </p>
+      )}
+
+      <button type="button" onClick={submit} disabled={pending}
+              className="px-5 py-2.5 bg-accent text-accent-ink font-bold uppercase tracking-wider
+                         text-sm rounded-field cursor-pointer hover:opacity-90 disabled:opacity-50">
+        {pending ? 'Creating…' : 'Create show'}
+      </button>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 4b: Write `app/shows/[id]/page.tsx`**
+
+A server page that loads the show with its days and punches, renders one
+`<PunchClock>` per day sorted by date, an Add-day control offering
+`show | travel | pm`, a live preview of the lines `computeShowLines` would
+produce for this show (call it directly — it is a pure function), and a
+**Bill this show** button calling `billShows([id])`.
+
+When `status === 'billed'`: render a link to `/invoices/{invoice_id}`, an
+**Unlink** button calling `unlinkShow(id)`, and pass `locked={true}` to every
+`PunchClock` so its buttons disable.
+
+Use `formatDateLong` from `@/lib/dates` for day headings — never `new Date()`
+formatting, which shifts a plain date backwards west of UTC.
+
+The Add-day and Bill controls need a small client component
+(`components/ShowDayControls.tsx`) since they call server actions; follow the
+`useTransition` + `{error}` pattern in `components/NewShowForm.tsx` above.
 
 - [ ] **Step 5: Verify in a browser**
 
