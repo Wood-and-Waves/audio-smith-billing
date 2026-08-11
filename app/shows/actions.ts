@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { chronologyError } from '@/lib/chronology'
+import { chronologyError, isIncompleteDay } from '@/lib/chronology'
 import { travelRateFrom, overtimeRateFrom, doubleTimeRateFrom } from '@/lib/money'
 import { todayInChicago } from '@/lib/dates'
 import { computeShowLines, mergeLines, type ShowRates, type BucketLine } from '@/lib/showBuckets'
@@ -33,10 +33,10 @@ export async function createShow(input: {
     .from('clients').select('name, day_rate_cents, ot_after_hours')
     .eq('id', input.client_id).maybeSingle()
 
-  if (client?.day_rate_cents == null) {
+  if (client?.day_rate_cents == null || client.day_rate_cents <= 0) {
     return {
-      error: `${client?.name ?? 'This client'} has no day rate on file, so there is no rate ` +
-        'card to freeze onto this show.',
+      error: `${client?.name ?? 'This client'} has no billable day rate on file, so there is no ` +
+        'rate card to freeze onto this show.',
     }
   }
 
@@ -162,12 +162,12 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
     return { error: 'All shows on one invoice must be for the same client.' }
   }
 
-  // An incomplete day would silently bill zero hours, so refuse instead.
+  // An incomplete day would silently bill zero hours — or, for an unpaired
+  // meal punch, silently bill the break as worked time — so refuse instead.
   for (const s of shows) {
     for (const d of (s.show_days ?? []) as { date: string; day_type: string; punches: { punch_type: string }[] }[]) {
       if (d.day_type === 'travel') continue
-      const types = new Set(d.punches.map((p) => p.punch_type))
-      if (types.has('start') !== types.has('end')) {
+      if (isIncompleteDay(d.punches)) {
         return { error: `${s.name}: ${d.date} has an unfinished punch. Complete or remove it first.` }
       }
     }

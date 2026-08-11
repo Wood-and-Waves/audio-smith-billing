@@ -128,6 +128,70 @@ test('lines from several shows combine by bucket', () => {
   ])
 })
 
+// Streamline rate card with the short-turnaround penalty on: rest under 10
+// hours between yesterday's out punch and today's in punch bills the whole
+// day at double time instead of a day rate.
+const STA_RULES: ShowRuleset = {
+  ...RULES,
+  short_turn_penalty_enabled: true,
+  short_turn_rest_hours: 10,
+}
+
+test('a short-turnaround day bills no day rate and double time with the guarantee, not both', () => {
+  const day1: ShowDayLike = {
+    id: 'd1', date: '2026-07-14', day_type: 'show', pay_as_half_day: false,
+    punches: [
+      { punch_type: 'start', punched_at: '2026-07-14T13:00:00Z' },
+      { punch_type: 'end', punched_at: '2026-07-14T23:00:00Z' },     // 10h — plain day rate
+    ],
+  }
+  // Only 6 hours of rest before this day's start (under the 10-hour minimum),
+  // so day 2 is a short-turnaround day even though it's only worked 5 hours.
+  const day2: ShowDayLike = {
+    id: 'd2', date: '2026-07-15', day_type: 'show', pay_as_half_day: false,
+    punches: [
+      { punch_type: 'start', punched_at: '2026-07-15T05:00:00Z' },   // 6h rest since day1's end
+      { punch_type: 'end', punched_at: '2026-07-15T10:00:00Z' },     // 5h worked
+    ],
+  }
+
+  const lines = computeShowLines([day1, day2], RATES, STA_RULES)
+
+  // Day 2 must NOT add a second Day Rate line, and its 5 worked hours must
+  // bill as 11 hours of Double Time — the overtime_after_hours guarantee —
+  // not the bare 5 actually worked.
+  assert.deepEqual(lines, [
+    { description: 'Day Rate', qty_hundredths: 100, unit_price_cents: 78000 },
+    { description: 'Double Time', qty_hundredths: 1100, unit_price_cents: 14182 },
+  ])
+})
+
+test('the same two days bill normally when rest clears the short-turnaround threshold', () => {
+  const day1: ShowDayLike = {
+    id: 'd1', date: '2026-07-14', day_type: 'show', pay_as_half_day: false,
+    punches: [
+      { punch_type: 'start', punched_at: '2026-07-14T13:00:00Z' },
+      { punch_type: 'end', punched_at: '2026-07-14T23:00:00Z' },     // 10h
+    ],
+  }
+  // 11 hours of rest before this day's start — clears the 10-hour minimum,
+  // so the short-turnaround rule must not fire.
+  const day2: ShowDayLike = {
+    id: 'd2', date: '2026-07-15', day_type: 'show', pay_as_half_day: false,
+    punches: [
+      { punch_type: 'start', punched_at: '2026-07-15T10:00:00Z' },   // 11h rest since day1's end
+      { punch_type: 'end', punched_at: '2026-07-15T15:00:00Z' },     // 5h worked
+    ],
+  }
+
+  const lines = computeShowLines([day1, day2], RATES, STA_RULES)
+
+  // Two ordinary day-rate days, no double time.
+  assert.deepEqual(lines, [
+    { description: 'Day Rate', qty_hundredths: 200, unit_price_cents: 78000 },
+  ])
+})
+
 test('the same description at different prices does not merge', () => {
   const cheap: ShowRates = { ...RATES, day_rate_cents: 60000 }
   const mk = (id: string, date: string): ShowDayLike => ({

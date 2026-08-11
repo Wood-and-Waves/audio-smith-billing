@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { isIncompleteDay } from '@/lib/chronology'
 import { formatDateLong, formatDateShort } from '@/lib/dates'
 import { formatUSD, formatQty, lineTotal, overtimeRateFrom, doubleTimeRateFrom } from '@/lib/money'
 import { computeShowLines, type ShowRates } from '@/lib/showBuckets'
@@ -87,16 +88,14 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
   const lines = computeShowLines(days as unknown as ShowDayLike[], rates, rules)
   const previewTotal = lines.reduce((t, l) => t + lineTotal(l.qty_hundredths, l.unit_price_cents), 0)
 
-  // Mirrors the check in billShows (app/shows/actions.ts): a day with a
-  // start punch and no end punch (or vice versa) would silently bill zero
-  // hours, so billShows refuses it. Travel days legitimately have no
-  // punches at all and are not "incomplete".
+  // Shares isIncompleteDay with billShows (app/shows/actions.ts) so this
+  // banner and the billing gate can never disagree about what's billable.
+  // A day with a start punch and no end punch (or vice versa), or an
+  // unpaired meal punch, would otherwise silently bill wrong hours. Travel
+  // days legitimately have no punches at all and are not "incomplete".
   const incompleteDates = days
     .filter((d) => d.day_type !== 'travel')
-    .filter((d) => {
-      const types = new Set(d.punches.map((p) => p.punch_type))
-      return types.has('start') !== types.has('end')
-    })
+    .filter((d) => isIncompleteDay(d.punches))
     .map((d) => formatDateShort(d.date))
 
   return (

@@ -136,7 +136,14 @@ export function paidOvertimeHours(d: ShowDayLike, allDays: ShowDayLike[], rules:
 export function paidDoubleTimeHours(d: ShowDayLike, allDays: ShowDayLike[], rules: ShowRuleset, roundingMinutes = 1): number {
   if (!isWorkDay(d) || !hasBothEnds(d)) return 0
   const paidNet = paidNetHours(d, rules, roundingMinutes)
-  if (isShortTurnaround(d, allDays, rules)) return paidNet
+  if (isShortTurnaround(d, allDays, rules)) {
+    // A short-turnaround day carries no day rate — computeShowLines only
+    // emits one when straight time is nonzero, and straight time is zeroed
+    // above — and bills its whole net day at double time, but never less
+    // than the overtime threshold. Matches CrewTracker's totalPay guarantee:
+    // actualDTHours = Math.max(paidNet, guaranteeHours).
+    return Math.max(paidNet, rules.overtime_after_hours)
+  }
   if (!rules.double_time_enabled) return 0
   return Math.max(0, paidNet - rules.double_time_after_hours)
 }

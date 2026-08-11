@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chronologyError } from '../../lib/chronology.ts'
+import { chronologyError, isIncompleteDay } from '../../lib/chronology.ts'
 
 const at = (h: number) => `2026-08-10T${String(h).padStart(2, '0')}:00:00Z`
 
@@ -28,4 +28,38 @@ test('a punch cannot land after the one that follows it', () => {
   const existing = [{ punch_type: 'end', punched_at: at(20) }]
   assert.match(chronologyError('meal_in', at(21), existing) ?? '', /before/i)
   assert.equal(chronologyError('meal_in', at(19), existing), null)
+})
+
+test('a complete day with paired meals is not incomplete', () => {
+  const punches = [
+    { punch_type: 'start' }, { punch_type: 'meal_out' }, { punch_type: 'meal_in' },
+    { punch_type: 'end' },
+  ]
+  assert.equal(isIncompleteDay(punches), false)
+})
+
+test('a day with no punches at all is not incomplete', () => {
+  assert.equal(isIncompleteDay([]), false)
+})
+
+test('an unfinished start/end pair is incomplete', () => {
+  assert.equal(isIncompleteDay([{ punch_type: 'start' }]), true)
+})
+
+// This is the bug from the finding: punching out for a meal and forgetting
+// to punch back in must be caught even though start/end are both present —
+// otherwise the break silently bills as worked time.
+test('an unpaired meal punch is incomplete even with both start and end present', () => {
+  const punches = [
+    { punch_type: 'start' }, { punch_type: 'meal_out' }, { punch_type: 'end' },
+  ]
+  assert.equal(isIncompleteDay(punches), true)
+})
+
+test('an unpaired second meal punch is incomplete too', () => {
+  const punches = [
+    { punch_type: 'start' }, { punch_type: 'meal_out' }, { punch_type: 'meal_in' },
+    { punch_type: 'meal2_out' }, { punch_type: 'end' },
+  ]
+  assert.equal(isIncompleteDay(punches), true)
 })

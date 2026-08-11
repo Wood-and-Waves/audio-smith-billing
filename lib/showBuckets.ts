@@ -50,7 +50,10 @@ export function computeShowLines(
     const dt = paidDoubleTimeHours(d, days, rules)
 
     // A show day with no punches bills nothing; the day rate is earned by working.
-    if (st > 0 || ot > 0 || dt > 0) {
+    // Gating on st alone (rather than st || ot || dt) is deliberate: paidStraightTimeHours
+    // is zeroed on a short-turnaround day (see lib/payroll.ts), so that day contributes no
+    // Day Rate line — it bills entirely as Double Time instead, never both.
+    if (st > 0) {
       if (d.pay_as_half_day) halfDays += 1
       else dayRateDays += 1
     }
