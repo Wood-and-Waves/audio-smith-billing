@@ -1,7 +1,35 @@
-# Travel legs and bulk day entry
+# Travel legs, bulk day entry, and the PM log
 
-**Status:** approved 2026-08-10
-**Supersedes:** the `day_type = 'travel'` decision in `2026-08-10-show-time-tracking-design.md`
+**Status:** approved 2026-08-10, amended 2026-08-13
+**Supersedes:** the `day_type` decision in `2026-08-10-show-time-tracking-design.md` entirely —
+both `travel` and `pm` leave, and the column goes with them
+
+## Amendment, 2026-08-13
+
+Using the tracker for real produced two more changes, and together they simplify the model further
+than the original amendment did.
+
+**PM work becomes a log, not punched days.** The original spec had Dan punching in and out for prep
+work, chosen deliberately over a duration log for accuracy. Real use overturned it: prep happens in
+sporadic 30- and 60-minute pieces, and clocking in for half an hour of email is friction nobody
+sustains. PM time is now logged as a duration against the show.
+
+**PM totals round up per show.** Sessions are recorded in 15-minute increments, summed across the
+whole show, then rounded **up to the next whole hour, once**. Four 30-minute sessions are exactly 2
+hours and bill 2. A fifth makes 2.5 and bills 3. Rounding each session separately would bill those
+four sessions as 4 hours, more than doubling their worth, so the ceiling is applied to the total
+and only to the total.
+
+**Therefore `day_type` is dropped.** With travel as a flag and PM as a log, every `show_days` row
+is a work day and the column has one possible value. Removing it makes the unique constraint
+`(show_id, date)` — one row per date — which in turn means the "two rows on one date could both
+claim the same travel leg" problem cannot occur, so the guard the original amendment proposed is
+deleted rather than built.
+
+**Deleting a show** is also added: it destroys the show, its days, its punches and its PM log, so it
+requires confirmation and is refused while the show is billed.
+
+Everything below stands except where this amendment overrides it.
 
 ## Context
 
