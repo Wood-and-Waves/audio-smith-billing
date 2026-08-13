@@ -33,7 +33,10 @@ export default function DownloadInvoiceButton({ data }: { data: DocumentData }) 
       a.href = url
       a.download = invoiceFilename(data)
       a.click()
-      URL.revokeObjectURL(url)
+      // Deferred, not inline: Firefox and some WebViews abort an in-flight
+      // download if its blob URL is revoked before the click finishes
+      // dispatching. The timeout still frees the memory, just not too early.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not build the PDF.')
     } finally {
