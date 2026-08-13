@@ -5,6 +5,7 @@ import { formatUSD } from '@/lib/money'
 import { displayStatus, daysUntilDue, STATUS_META, todayInChicago } from '@/lib/status'
 import AppShell from '@/components/AppShell'
 import InvoiceDocument, { type DocumentData } from '@/components/InvoiceDocument'
+import DownloadInvoiceButton from '@/components/DownloadInvoiceButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -67,6 +68,24 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
     (a, b) => (a as { position: number }).position - (b as { position: number }).position,
   )
 
+  const docData: DocumentData = {
+    number: inv.number,
+    issue_date: inv.issue_date,
+    due_date: inv.due_date,
+    terms_days: inv.terms_days,
+    bill_to_snapshot: inv.bill_to_snapshot,
+    subtotal_cents: inv.subtotal_cents,
+    tax_bp: inv.tax_bp,
+    tax_cents: inv.tax_cents,
+    deposit_cents: inv.deposit_cents,
+    total_cents: inv.total_cents,
+    // The import note belongs above the document, not printed on it.
+    notes: inv.imported ? null : inv.notes,
+    client: inv.clients,
+    lines,
+    settings: settings ?? null,
+  }
+
   return (
     <AppShell current="invoices">
       <div className="flex items-center justify-between mb-8">
@@ -77,12 +96,15 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
         >
           ← All invoices
         </Link>
-        <Link
-          href={`/invoices/${inv.id}/edit`}
-          className="text-xs font-semibold uppercase tracking-wider text-accent hover:opacity-80"
-        >
-          Edit
-        </Link>
+        <div className="flex items-center gap-5">
+          <DownloadInvoiceButton data={docData} />
+          <Link
+            href={`/invoices/${inv.id}/edit`}
+            className="text-xs font-semibold uppercase tracking-wider text-accent hover:opacity-80"
+          >
+            Edit
+          </Link>
+        </div>
       </div>
 
       <header className="flex flex-wrap items-start justify-between gap-4 mb-8">
@@ -110,25 +132,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
         <p className="mb-8 text-sm text-muted border-l-2 border-accent pl-4 py-1">{inv.notes}</p>
       )}
 
-      <InvoiceDocument
-        data={{
-          number: inv.number,
-          issue_date: inv.issue_date,
-          due_date: inv.due_date,
-          terms_days: inv.terms_days,
-          bill_to_snapshot: inv.bill_to_snapshot,
-          subtotal_cents: inv.subtotal_cents,
-          tax_bp: inv.tax_bp,
-          tax_cents: inv.tax_cents,
-          deposit_cents: inv.deposit_cents,
-          total_cents: inv.total_cents,
-          // The import note belongs above the document, not printed on it.
-          notes: inv.imported ? null : inv.notes,
-          client: inv.clients,
-          lines,
-          settings: settings ?? null,
-        }}
-      />
+      <InvoiceDocument data={docData} />
     </AppShell>
   )
 }
