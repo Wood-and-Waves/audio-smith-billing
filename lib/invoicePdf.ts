@@ -220,6 +220,10 @@ export function buildInvoicePdf(parts: PdfParts, data: DocumentData, assets: Pdf
                   ? V(s.footerCol, [
                       T(s.eyebrow, 'PAYMENT'),
                       ...set.remit_to.split('\n').map((l) => T(s.footerText, l)),
+                      // The INVITATION to ask about ACH, not the ACH details
+                      // themselves. InvoiceDocument.tsx prints this same line;
+                      // the bank routing/account numbers never print anywhere.
+                      T(s.ask, 'Paying by ACH? Ask and I’ll send the transfer details.'),
                     ])
                   : null,
                 data.notes

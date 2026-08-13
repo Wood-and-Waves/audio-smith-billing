@@ -136,7 +136,7 @@ test('lines print in order, one row each', () => {
   assert.ok(all.includes('6'), 'quantity 6 prints via formatQty')
 })
 
-test('ACH details can never reach the document', () => {
+test('bank details can never reach the document', () => {
   // ach_details is not part of DocumentData. This attaches it the way a
   // careless future widening of the type would, and proves the builder still
   // does not print it. The type is the real guard; this catches its removal.
@@ -147,7 +147,9 @@ test('ACH details can never reach the document', () => {
   const all = joined(leaky)
   assert.ok(!all.includes('071000013'), 'no routing number')
   assert.ok(!all.includes('1234567890'), 'no account number')
-  assert.ok(!/ach/i.test(all), 'no ACH label')
+  // The INVITATION to ask about ACH is not the ACH details, and it must print —
+  // InvoiceDocument shows it, and the PDF mirrors that component exactly.
+  assert.ok(all.includes('Paying by ACH?'), 'the invitation to ask still prints')
 })
 
 test('the closing line always prints', () => {
