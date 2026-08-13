@@ -11,7 +11,10 @@ import { NextResponse, type NextRequest } from 'next/server'
 // /api/dev is the dev-login route, which by definition has no session yet —
 // it is the thing that creates one. It guards itself (404s unless NODE_ENV is
 // development AND the secret matches), so allowlisting it here is safe.
-const PUBLIC_PREFIXES = ['/login', '/auth', '/api/dev']
+// /i is the public invoice link. It is a single page that reads through the
+// public_invoice() function (migration 0006), which returns one invoice by
+// unguessable token and nothing else — anon holds no table privileges.
+const PUBLIC_PREFIXES = ['/login', '/auth', '/api/dev', '/i']
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request })
