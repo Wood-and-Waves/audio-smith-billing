@@ -7,7 +7,9 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatDateShort, formatDateLong, addDays, todayInChicago } from '../../lib/dates.ts'
+import {
+  formatDateShort, formatDateLong, addDays, todayInChicago, isPlainDate,
+} from '../../lib/dates.ts'
 
 test('a plain date renders as the date it is, west of UTC', () => {
   // The original bug, verbatim.
@@ -46,4 +48,30 @@ test('todayInChicago returns a well-formed plain date', () => {
   assert.equal(formatDateLong(today), new Intl.DateTimeFormat('en-US', {
     month: 'numeric', day: 'numeric', year: 'numeric', timeZone: 'UTC',
   }).format(new Date(today + 'T00:00:00Z')))
+})
+
+// A cleared <input type="date"> submits "". Every helper here builds
+// new Date(iso + 'T00:00:00Z'), and for "" that is an Invalid Date whose
+// toISOString() THROWS — so addShowDays walking a range crashed with a
+// RangeError instead of returning a message. isPlainDate is the guard.
+test('isPlainDate rejects everything addDays cannot handle', () => {
+  // These crash addDays outright.
+  for (const bad of ['', '   ', '08/10/2026', 'today', '2026-8-10']) {
+    assert.equal(isPlainDate(bad), false, `${JSON.stringify(bad)} should be rejected`)
+    assert.throws(() => addDays(bad, 1))
+  }
+
+  // A partial date is worse than a crash: '2026-08' parses to Aug 1 and
+  // returns a real-looking date, so a half-typed year-month would have
+  // silently created days on dates nobody asked for. Shape is checked up
+  // front for this reason, rather than catching what throws.
+  assert.equal(isPlainDate('2026-08'), false)
+  assert.equal(addDays('2026-08', 1), '2026-08-02')
+
+  // Well-shaped but not a real date — why a regex alone is not enough.
+  assert.equal(isPlainDate('2026-02-31'), false)
+  assert.equal(isPlainDate('2026-13-01'), false)
+
+  assert.equal(isPlainDate('2026-08-10'), true)
+  assert.equal(isPlainDate('2024-02-29'), true)   // a real leap day
 })

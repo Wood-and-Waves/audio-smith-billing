@@ -111,7 +111,9 @@ export default function ShowDayControls({
             <input id="showDayEnd" type="date" className={field} value={endDate}
                    onChange={(e) => setEndDate(e.target.value)} />
           </div>
-          <button type="button" onClick={addDayRange} disabled={pending}
+          {/* A date input can be cleared, which submits "". The action refuses
+              that too — this just stops the pointless round trip. */}
+          <button type="button" onClick={addDayRange} disabled={pending || !startDate || !endDate}
                   className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
                              border border-line text-muted hover:text-ink disabled:opacity-50">
             {pending ? 'Adding…' : '+ Add days'}

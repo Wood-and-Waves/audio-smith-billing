@@ -36,6 +36,24 @@ export function todayInChicago(): string {
   }).format(new Date())
 }
 
+/**
+ * Is this a real YYYY-MM-DD date?
+ *
+ * A cleared `<input type="date">` submits an empty string, and every date
+ * helper here builds `new Date(iso + 'T00:00:00Z')` — which for "" is an
+ * Invalid Date whose `toISOString()` THROWS. A server action that walks a
+ * range would crash with a RangeError instead of returning a message, so
+ * actions taking a date from a request check it here first.
+ *
+ * The shape test alone would accept 2026-02-31, so the parsed date is
+ * round-tripped back to a string and compared.
+ */
+export function isPlainDate(iso: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false
+  const d = asUTC(iso)
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso
+}
+
 /** Add whole days to a plain date, staying in plain-date space. */
 export function addDays(iso: string, days: number): string {
   const d = asUTC(iso)

@@ -20,8 +20,9 @@ const RULES: ShowRuleset = {
 const day = (punches: Record<string, string>, over: Partial<ShowDayLike> = {}): ShowDayLike => ({
   id: 'd1',
   date: '2026-08-10',
-  day_type: 'show',
   pay_as_half_day: false,
+  travel_in: false,
+  travel_out: false,
   punches: Object.entries(punches).map(([punch_type, punched_at]) => ({ punch_type, punched_at })),
   ...over,
 })

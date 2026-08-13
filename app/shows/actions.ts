@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { chronologyError, isIncompleteDay } from '@/lib/chronology'
 import { travelRateFrom, parseUSD } from '@/lib/money'
-import { todayInChicago, addDays } from '@/lib/dates'
+import { todayInChicago, addDays, isPlainDate } from '@/lib/dates'
 import {
   computeShowLines, mergeLines, rulesetAndRatesFor, type BucketLine, type PmEntryLike,
 } from '@/lib/showBuckets'
@@ -79,6 +79,13 @@ export async function addShowDays(
   const { data: show } = await supabase.from('shows').select('status').eq('id', showId).maybeSingle()
   if (!show) return { error: 'That show no longer exists.' }
   if (show.status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
+
+  // Before any date arithmetic: a cleared date input submits "", and addDays("")
+  // throws rather than returning, which would surface as a crash instead of this
+  // message.
+  if (!isPlainDate(startDate) || !isPlainDate(endDate)) {
+    return { error: 'Enter both a start and an end date.' }
+  }
 
   if (endDate < startDate) return { error: 'End date must be on or after the start date.' }
 
@@ -157,6 +164,8 @@ export async function addPmEntry(
   const { data: show } = await supabase.from('shows').select('status').eq('id', showId).maybeSingle()
   if (!show) return { error: 'That show no longer exists.' }
   if (show.status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
+
+  if (!isPlainDate(workedOn)) return { error: 'Pick the date you did the work.' }
 
   // The UI offers 15-minute presets, but the action is the boundary that
   // actually has to hold — a value typed straight into a request cannot

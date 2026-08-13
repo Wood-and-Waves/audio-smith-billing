@@ -260,3 +260,25 @@ test('PM minutes sum then round UP to the next whole hour, once', () => {
   ])
   assert.deepEqual(computeShowLines([], [], RATES, RULES), [])
 })
+
+// The zero-quantity invariant. `push()` drops any line whose quantity rounds
+// to zero, so a "Day Rate x 0 @ $780.00" can never reach a client. Today no
+// input can produce one — every quantity is either an integer counter or an
+// integer hour count minus a numeric(4,1) threshold, so the smallest positive
+// value is 0.1, far above the 0.005 rounding floor. That makes this a guard on
+// a DB column's decimal scale rather than on code, which is exactly why it is
+// asserted here: widen ot_after_hours past one decimal and this fails loudly
+// instead of printing a zero line on an invoice.
+test('no line ever carries a zero quantity', () => {
+  const cases: BucketLine[][] = [
+    computeShowLines([showDay('a', '2026-08-10')], [], RATES, RULES),
+    computeShowLines([travelDay('b', '2026-08-11')], [], RATES, RULES),
+    computeShowLines([showDay('c', '2026-08-12')], [{ minutes: 15 }], RATES, RULES),
+    computeShowLines([], [{ minutes: 30 }], RATES, RULES),
+  ]
+  for (const lines of cases) {
+    for (const l of lines) {
+      assert.ok(l.qty_hundredths > 0, `${l.description} carries qty 0`)
+    }
+  }
+})
