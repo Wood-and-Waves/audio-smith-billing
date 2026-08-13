@@ -45,6 +45,7 @@ const INVOICE: DocumentData = {
 const BASE: InvoiceEmailInput = {
   to: 'accounts@journey.example',
   invoice: INVOICE,
+  status: 'sent',
   publicUrl: 'https://billing.theaudiosmith.com/i/11111111-2222-3333-4444-555555555555',
   note: null,
   replyTo: 'dan@theaudiosmith.com',
@@ -62,6 +63,45 @@ test('both bodies carry the amount, the due date and the link', () => {
     assert.ok(body.includes(formatUSD(50000)), `${name} carries $500.00`)
     assert.ok(body.includes('9/6/2026'), `${name} carries the due date`)
     assert.ok(body.includes(BASE.publicUrl), `${name} carries the link`)
+  }
+})
+
+test('a paid invoice reads as a receipt, never a demand for money already received', () => {
+  // The design deliberately allows resending a paid invoice, and the panel
+  // offers the button on every non-void invoice. A paid invoice must not
+  // say "Amount due" with a due date in the past — this is the case that
+  // burned invoice #384 (paid, $2,731.01, due 2026-07-14): resending it as
+  // written before this fix would have emailed the client a demand for
+  // money already paid, with a due date a month in the past.
+  const paid: InvoiceEmailInput = { ...BASE, status: 'paid' }
+  const { subject, text, html } = buildInvoiceEmail(paid)
+
+  assert.ok(subject.startsWith('Receipt for invoice'), 'the subject reads as a receipt')
+  assert.ok(subject.includes('386'), 'the invoice number is still in the subject')
+
+  for (const [name, body] of [['text', text], ['html', html]] as const) {
+    assert.ok(body.includes('Paid in full'), `${name} says Paid in full`)
+    assert.ok(body.includes(formatUSD(50000)), `${name} still carries the amount`)
+    assert.ok(!body.includes('Amount due'), `${name} does not demand payment`)
+    assert.ok(!body.includes('Due:'), `${name} has no due date line`)
+    assert.ok(!body.includes('9/6/2026'), `${name} does not print the due date at all`)
+    assert.ok(!body.includes('Payment'), `${name} carries no Payment/remit-to block`)
+    assert.ok(!body.includes(SETTINGS.remit_to!), `${name} does not print remit-to text`)
+  }
+})
+
+test('a sent or draft invoice keeps the original demand wording', () => {
+  // Unchanged behavior, pinned explicitly now that the body branches on
+  // status: neither "sent" (the normal case, and a resend of it) nor
+  // "draft" should ever read as a receipt.
+  for (const status of ['sent', 'draft'] as const) {
+    const { subject, text, html } = buildInvoiceEmail({ ...BASE, status })
+    assert.ok(!subject.startsWith('Receipt'), `${status}: subject is not a receipt subject`)
+    for (const [name, body] of [['text', text], ['html', html]] as const) {
+      assert.ok(body.includes('Amount due'), `${status} ${name} still demands payment`)
+      assert.ok(body.includes('9/6/2026'), `${status} ${name} still carries the due date`)
+      assert.ok(body.includes('Payment'), `${status} ${name} still carries the Payment block`)
+    }
   }
 })
 
@@ -124,10 +164,30 @@ test('a malformed date makes the send return an error, never throw', async () =>
   // failed send never loses the record of what was being sent. formatDateLong
   // throws a RangeError on an unparseable date, so building the body has to
   // happen inside the try — this pins that.
+  //
+  // This test passes today only because that RangeError fires before
+  // `new Resend(key).emails.send(...)` is ever reached. That is incidental,
+  // not structural — if formatDateLong (or anything upstream of it) ever
+  // became lenient about bad dates, this same test would silently start
+  // making a real POST to api.resend.com using a fake key, on every `npm
+  // test`. Two independent guards against that, so a refactor upstream
+  // can't turn this into a live network call:
+  //   1. global.fetch is replaced with a function that throws — Resend's SDK
+  //      sends over fetch, so this makes an actual network attempt fail
+  //      loudly and immediately rather than silently succeed or hang.
+  //   2. the assertion below checks the error is the exact RangeError text
+  //      from Intl.DateTimeFormat, not merely "an error of some kind" — a
+  //      fetch failure or a Resend auth error would read differently, so the
+  //      assertion would fail (not pass for the wrong reason) if the code
+  //      ever got that far.
   const prevKey = process.env.RESEND_API_KEY
   const prevFrom = process.env.INVOICE_FROM_EMAIL
+  const prevFetch = globalThis.fetch
   process.env.RESEND_API_KEY = 'dummy-test-key'
-  process.env.INVOICE_FROM_EMAIL = 'dan@theaudiosmith.com'
+  process.env.INVOICE_FROM_EMAIL = 'test@example.invalid'
+  globalThis.fetch = (() => {
+    throw new Error('network call attempted in invoiceEmail.test.ts — this test must never reach the network')
+  }) as typeof fetch
   try {
     const broken = {
       ...BASE,
@@ -136,10 +196,16 @@ test('a malformed date makes the send return an error, never throw', async () =>
     }
     const result = await sendInvoiceEmail(broken)
     assert.ok(result.error, 'it returned an error instead of throwing')
+    assert.equal(
+      result.error,
+      'Invalid time value',
+      'the error is the RangeError from formatting the date, not a network or SDK result',
+    )
   } finally {
     if (prevKey === undefined) delete process.env.RESEND_API_KEY
     else process.env.RESEND_API_KEY = prevKey
     if (prevFrom === undefined) delete process.env.INVOICE_FROM_EMAIL
     else process.env.INVOICE_FROM_EMAIL = prevFrom
+    globalThis.fetch = prevFetch
   }
 })

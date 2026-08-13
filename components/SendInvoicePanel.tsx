@@ -12,13 +12,23 @@ import type { DocumentData } from '@/components/InvoiceDocument'
 //
 // buildInvoiceEmail is imported for the PREVIEW only — it is a pure function
 // with no key and no network. The send itself happens in the server action.
+//
+// Honesty about that guarantee: `to`, `data` and `status` are all page-load
+// state, passed down as props from app/invoices/[id]/page.tsx. The server
+// action re-reads the invoice, the client and settings fresh at send time. If
+// someone edits the client's billing email, the invoice, or Settings in
+// another tab between opening this panel and pressing Send, the preview here
+// and the email that actually goes out can differ. That window is not
+// synchronised — doing so would mean re-fetching on every keystroke in the
+// note field for a case that in practice means re-opening the invoice.
 
 export default function SendInvoicePanel({
-  invoiceId, data, to, publicUrlBase,
+  invoiceId, data, to, status, publicUrlBase,
 }: {
   invoiceId: string
   data: DocumentData
   to: string | null
+  status: 'draft' | 'sent' | 'paid' | 'void'
   publicUrlBase: string
 }) {
   const router = useRouter()
@@ -43,6 +53,7 @@ export default function SendInvoicePanel({
   const preview = buildInvoiceEmail({
     to,
     invoice: data,
+    status,
     publicUrl: `${publicUrlBase}/i/[link generated when you send]`,
     note,
     replyTo: data.settings?.email ?? 'dan@theaudiosmith.com',
@@ -51,11 +62,20 @@ export default function SendInvoicePanel({
   function send() {
     setError(null)
     start(async () => {
-      const result = await sendInvoice(invoiceId, note)
-      if ('error' in result) { setError(result.error); return }
-      setSent(true)
-      setOpen(false)
-      router.refresh()
+      // sendInvoice's own contract is to return { error }, never throw — but
+      // nothing enforces that at the type level, and a throw here would
+      // reject the transition and hand it to the nearest error boundary,
+      // replacing this whole page and losing sent/error state. Belt and
+      // braces.
+      try {
+        const result = await sendInvoice(invoiceId, note)
+        if ('error' in result) { setError(result.error); return }
+        setSent(true)
+        setOpen(false)
+        router.refresh()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'The invoice could not be sent.')
+      }
     })
   }
 

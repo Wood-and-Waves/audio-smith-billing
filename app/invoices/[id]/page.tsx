@@ -120,8 +120,14 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           <SendInvoicePanel
             invoiceId={inv.id}
             data={docData}
-            to={inv.clients?.billing_email ?? null}
-            publicUrlBase={process.env.NEXT_PUBLIC_APP_URL ?? ''}
+            // .trim()'d the same way app/invoices/actions.ts trims it at send
+            // time, so a whitespace-only billing_email renders the "no
+            // billing email" state here too, rather than a blank "To" and a
+            // "Send to    " button that would then be refused server-side
+            // anyway.
+            to={inv.clients?.billing_email?.trim() || null}
+            status={inv.status}
+            publicUrlBase={process.env.APP_URL ?? ''}
           />
           <DownloadInvoiceButton data={docData} />
           <Link

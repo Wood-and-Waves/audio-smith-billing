@@ -156,10 +156,10 @@ export async function sendInvoice(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not signed in.' }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL
-  if (!appUrl) return { error: 'Email is not configured yet (NEXT_PUBLIC_APP_URL is missing).' }
+  const appUrl = process.env.APP_URL
+  if (!appUrl) return { error: 'Email is not configured yet (APP_URL is missing).' }
 
-  const [{ data: invoice }, { data: settings }] = await Promise.all([
+  const [{ data: invoice, error: invoiceError }, { data: settings, error: settingsError }] = await Promise.all([
     supabase
       .from('invoices')
       .select(
@@ -180,7 +180,28 @@ export async function sendInvoice(
       .maybeSingle(),
   ])
 
+  if (invoiceError) return { error: invoiceError.message }
   if (!invoice) return { error: 'That invoice no longer exists.' }
+
+  // A degraded document reaching a client is worse than a refusal Dan can
+  // retry. If settings failed to load (transient DB error) or came back
+  // empty, the PDF would render with no business address, no phone, no
+  // email and no Payment footer, and the email would silently fall back to
+  // a hardcoded reply-to — a letterhead-less invoice mailed without Dan ever
+  // knowing it went out that way. Refuse instead: nothing is sent, nothing
+  // is marked sent, and Dan can just try again.
+  if (settingsError) {
+    return {
+      error: 'Business details could not be loaded, so the invoice was not sent: ' +
+        `${settingsError.message}`,
+    }
+  }
+  if (!settings) {
+    return {
+      error: 'Business details could not be loaded, so the invoice was not sent. ' +
+        'The settings row is missing.',
+    }
+  }
 
   const inv = invoice as unknown as {
     id: string; number: number; issue_date: string; due_date: string; terms_days: number
@@ -247,25 +268,41 @@ export async function sendInvoice(
   // relative path depends on a working directory nobody controls. next.config
   // must also trace them into this route's bundle — Vercel serves public/ from
   // the CDN and does not otherwise put it in the function.
-  const { join } = await import('node:path')
-  const { Document, Page, Text, View, Image, Font, renderToBuffer } =
-    await import('@react-pdf/renderer')
-  Font.register({
-    family: 'Oswald',
-    src: join(process.cwd(), 'public', 'fonts', 'Oswald-Bold.ttf'),
-    fontWeight: 700,
-  })
-  const pdf = await renderToBuffer(
-    buildInvoicePdf(
-      { Document, Page, Text, View, Image },
-      data,
-      { logoSrc: join(process.cwd(), 'public', 'logo.png') },
-    ),
-  )
+  // lib/invoiceEmail.ts goes to real trouble to never throw and always
+  // return { error }. A dynamic import, Font.register or renderToBuffer that
+  // throws here — a missing font in the deployed bundle, an unreadable row,
+  // OOM — would reject this action outright; React 19 hands a rejected
+  // transition to the error boundary, which replaces the whole page and
+  // loses the panel's error/sent state. This try/catch keeps that contract
+  // intact all the way from the PDF render to the caller.
+  let pdf: Buffer
+  try {
+    const { join } = await import('node:path')
+    const { Document, Page, Text, View, Image, Font, renderToBuffer } =
+      await import('@react-pdf/renderer')
+    Font.register({
+      family: 'Oswald',
+      src: join(process.cwd(), 'public', 'fonts', 'Oswald-Bold.ttf'),
+      fontWeight: 700,
+    })
+    pdf = await renderToBuffer(
+      buildInvoicePdf(
+        { Document, Page, Text, View, Image },
+        data,
+        { logoSrc: join(process.cwd(), 'public', 'logo.png') },
+      ),
+    )
+  } catch (e) {
+    return {
+      error: 'The invoice PDF could not be rendered: ' +
+        (e instanceof Error ? e.message : 'unknown error.'),
+    }
+  }
 
   const result = await sendInvoiceEmail({
     to,
     invoice: data,
+    status: inv.status,
     publicUrl: `${appUrl.replace(/\/+$/, '')}/i/${token}`,
     note,
     // From Settings, not hardcoded — it is already editable there, and a

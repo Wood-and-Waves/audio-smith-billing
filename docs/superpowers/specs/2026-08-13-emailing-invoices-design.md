@@ -44,13 +44,13 @@ The feature cannot send until these exist. They are independent of the build.
    |---|---|---|
    | `RESEND_API_KEY` | `re_…` | Secret. |
    | `INVOICE_FROM_EMAIL` | `invoices@mail.theaudiosmith.com` | The subdomain is not chosen until Resend is set up, and it must never be guessed in code. |
-   | `NEXT_PUBLIC_APP_URL` | `https://billing.theaudiosmith.com` | The public link must be absolute in an email. Deriving it from request headers is wrong for a server-side send, which has no request. |
+   | `APP_URL` | `https://billing.theaudiosmith.com` | The public link must be absolute in an email. Deriving it from request headers is wrong for a server-side send, which has no request. |
 
 Until `RESEND_API_KEY` is present, `sendInvoiceEmail` returns an error saying
 email is not configured. Nothing crashes and nothing else in the app degrades —
 the download button, the tracker and the invoice screens are untouched.
 
-`INVOICE_FROM_EMAIL` and `NEXT_PUBLIC_APP_URL` are read at send time, not at
+`INVOICE_FROM_EMAIL` and `APP_URL` are read at send time, not at
 module scope, for the same reason the Resend client is: a missing value must
 produce a message, not a failed build.
 

@@ -21,7 +21,7 @@ first try; if it does not, suspect the environment before the SQL.
 ## Blocked, and what that means
 
 **Resend is not configured yet.** `RESEND_API_KEY`, `INVOICE_FROM_EMAIL` and
-`NEXT_PUBLIC_APP_URL` do not exist. Every task below is buildable and testable
+`APP_URL` do not exist. Every task below is buildable and testable
 without them: the email body is built by a pure function, and the send path is
 tested for its refusal when the key is absent.
 
@@ -814,8 +814,8 @@ export async function sendInvoice(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not signed in.' }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL
-  if (!appUrl) return { error: 'Email is not configured yet (NEXT_PUBLIC_APP_URL is missing).' }
+  const appUrl = process.env.APP_URL
+  if (!appUrl) return { error: 'Email is not configured yet (APP_URL is missing).' }
 
   const [{ data: invoice }, { data: settings }] = await Promise.all([
     supabase
@@ -1155,7 +1155,7 @@ Edit link, add the panel's trigger alongside them:
             invoiceId={inv.id}
             data={docData}
             to={(inv.clients as { billing_email?: string | null } | null)?.billing_email ?? null}
-            publicUrlBase={process.env.NEXT_PUBLIC_APP_URL ?? ''}
+            publicUrlBase={process.env.APP_URL ?? ''}
           />
           <DownloadInvoiceButton data={docData} />
           <Link
@@ -1213,7 +1213,7 @@ git commit -m "Preview and send an invoice by email."
 ## Verification when Resend is configured
 
 **Not part of any task.** Run this by hand once `RESEND_API_KEY`,
-`INVOICE_FROM_EMAIL` and `NEXT_PUBLIC_APP_URL` exist in Vercel.
+`INVOICE_FROM_EMAIL` and `APP_URL` exist in Vercel.
 
 1. **Temporarily point a client's billing email at Dan's own address** — or use
    an invoice for a client whose billing email is already his. **The first live
@@ -1230,6 +1230,10 @@ git commit -m "Preview and send an invoice by email."
    that the page then reads "Paid — thank you".
 6. Void a test invoice and confirm its public link 404s.
 7. **Restore the client's real billing email** if it was changed in step 1.
+8. `APP_URL` has no `NEXT_PUBLIC_` prefix, so — unlike the other two — adding
+   or changing it in Vercel does not take effect for existing deployments.
+   **Redeploy after setting it**, or the running instance keeps using
+   whatever value (or absence of one) it was built with.
 
 ## Verification
 

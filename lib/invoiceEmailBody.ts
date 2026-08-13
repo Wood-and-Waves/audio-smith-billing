@@ -19,6 +19,14 @@ import type { DocumentData } from '../components/InvoiceDocument.tsx'
 export type InvoiceEmailInput = {
   to: string
   invoice: DocumentData
+  /**
+   * DocumentData carries no status — it's what the page and the PDF render,
+   * and neither needs to know. The email body does: the design deliberately
+   * allows resending a paid invoice, and a paid invoice must read as a
+   * receipt, not as a demand for money already received. Every caller reads
+   * this off the real row, never assumes it.
+   */
+  status: 'draft' | 'sent' | 'paid' | 'void'
   /** Absolute URL of the public copy. Must be absolute — this is an email. */
   publicUrl: string
   /** Dan's per-send message. May be null, empty, or whitespace. */
@@ -36,25 +44,32 @@ export function escapeHtml(s: string): string {
 }
 
 export function buildInvoiceEmail(input: InvoiceEmailInput) {
-  const { invoice, publicUrl } = input
+  const { invoice, publicUrl, status } = input
   const business = invoice.settings?.business_name ?? 'The Audio Smith'
   const amount = formatUSD(invoice.total_cents)
-  const due = formatDateLong(invoice.due_date)
   const note = input.note?.trim() || null
+  const isReceipt = status === 'paid'
 
-  const subject = `Invoice #${invoice.number} from ${business}`
+  const subject = isReceipt
+    ? `Receipt for invoice #${invoice.number} from ${business}`
+    : `Invoice #${invoice.number} from ${business}`
 
   // Deliberately NOT settings.ach_details. Bank numbers on a forwarded email
   // are the same exposure as bank numbers on a forwarded PDF; a client who
   // wants to pay by transfer asks, and gets them in a reply.
-  const remit = invoice.settings?.remit_to?.trim() || null
+  //
+  // Also deliberately withheld when this is a receipt: a document telling a
+  // client their invoice is paid in full has no business printing where to
+  // send payment.
+  const remit = !isReceipt && (invoice.settings?.remit_to?.trim() || null)
 
-  const textParts = [
-    `Invoice #${invoice.number} from ${business}`,
-    '',
-    `Amount due: ${amount}`,
-    `Due: ${due}`,
-  ]
+  const textParts = [`Invoice #${invoice.number} from ${business}`, '']
+  if (isReceipt) {
+    textParts.push(`Paid in full: ${amount}`)
+  } else {
+    const due = formatDateLong(invoice.due_date)
+    textParts.push(`Amount due: ${amount}`, `Due: ${due}`)
+  }
   if (note) textParts.push('', note)
   textParts.push('', `View it online: ${publicUrl}`, 'A PDF copy is attached.')
   if (remit) textParts.push('', 'Payment', remit)
@@ -63,9 +78,18 @@ export function buildInvoiceEmail(input: InvoiceEmailInput) {
 
   const htmlParts = [
     `<p style="margin:0 0 16px"><strong>Invoice #${invoice.number}</strong> from ${escapeHtml(business)}</p>`,
-    `<p style="margin:0 0 4px">Amount due: <strong>${amount}</strong></p>`,
-    `<p style="margin:0 0 16px">Due: ${due}</p>`,
   ]
+  if (isReceipt) {
+    htmlParts.push(
+      `<p style="margin:0 0 16px">Paid in full: <strong>${amount}</strong></p>`,
+    )
+  } else {
+    const due = formatDateLong(invoice.due_date)
+    htmlParts.push(
+      `<p style="margin:0 0 4px">Amount due: <strong>${amount}</strong></p>`,
+      `<p style="margin:0 0 16px">Due: ${due}</p>`,
+    )
+  }
   if (note) {
     htmlParts.push(
       `<p style="margin:0 0 16px;white-space:pre-line">${escapeHtml(note)}</p>`,
