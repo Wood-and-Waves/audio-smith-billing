@@ -177,7 +177,8 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
   for (const s of shows) {
     const { rules, rates } = rulesetAndRatesFor(s)
     const days = ((s.show_days ?? []) as unknown as ShowDayLike[])
-    perShow.push(computeShowLines(days, rates, rules))
+    // TODO(Task 3/4): pass this show's real pm_entries instead of [].
+    perShow.push(computeShowLines(days, [], rates, rules))
   }
   // Merge same-description/same-price lines across shows BEFORE rounding
   // each to cents (mergeLines, then lineTotal inside saveInvoice) — never

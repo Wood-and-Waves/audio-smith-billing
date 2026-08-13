@@ -7,7 +7,7 @@
 //
 // No 'use client'. Keep it that way.
 
-import { MEAL_PAIRS, type DayType } from './punchTypes.ts'
+import { MEAL_PAIRS } from './punchTypes.ts'
 
 export type PunchRecord = { punch_type: string; punched_at: string }
 
@@ -28,8 +28,9 @@ export type ShowRuleset = {
 export type ShowDayLike = {
   id: string
   date: string
-  day_type: DayType
   pay_as_half_day: boolean
+  travel_in: boolean
+  travel_out: boolean
   punches: PunchRecord[]
 }
 
@@ -50,7 +51,6 @@ function mealBreakPairs(d: ShowDayLike): [Date, Date][] {
   return pairs
 }
 
-const isWorkDay = (d: ShowDayLike) => d.day_type === 'show'
 const hasBothEnds = (d: ShowDayLike) =>
   !!punchTime(d.punches, 'start') && !!punchTime(d.punches, 'end')
 
@@ -112,18 +112,18 @@ export function isShortTurnaround(d: ShowDayLike, allDays: ShowDayLike[], rules:
 
 /** Ceiling-rounded per day before summing — Dan validated this against a real client spreadsheet. */
 export function paidNetHours(d: ShowDayLike, rules: ShowRuleset, roundingMinutes = 1): number {
-  if (!isWorkDay(d) || !hasBothEnds(d)) return 0
+  if (!hasBothEnds(d)) return 0
   return Math.ceil(calculateNetHours(d, rules, roundingMinutes))
 }
 
 export function paidStraightTimeHours(d: ShowDayLike, allDays: ShowDayLike[], rules: ShowRuleset, roundingMinutes = 1): number {
-  if (!isWorkDay(d) || !hasBothEnds(d)) return 0
+  if (!hasBothEnds(d)) return 0
   if (isShortTurnaround(d, allDays, rules)) return 0
   return Math.min(paidNetHours(d, rules, roundingMinutes), rules.overtime_after_hours)
 }
 
 export function paidOvertimeHours(d: ShowDayLike, allDays: ShowDayLike[], rules: ShowRuleset, roundingMinutes = 1): number {
-  if (!isWorkDay(d) || !hasBothEnds(d)) return 0
+  if (!hasBothEnds(d)) return 0
   if (isShortTurnaround(d, allDays, rules)) return 0
   const ot = paidNetHours(d, rules, roundingMinutes) - rules.overtime_after_hours
   if (ot <= 0) return 0
@@ -134,7 +134,7 @@ export function paidOvertimeHours(d: ShowDayLike, allDays: ShowDayLike[], rules:
 }
 
 export function paidDoubleTimeHours(d: ShowDayLike, allDays: ShowDayLike[], rules: ShowRuleset, roundingMinutes = 1): number {
-  if (!isWorkDay(d) || !hasBothEnds(d)) return 0
+  if (!hasBothEnds(d)) return 0
   const paidNet = paidNetHours(d, rules, roundingMinutes)
   if (isShortTurnaround(d, allDays, rules)) {
     // A short-turnaround day carries no day rate — computeShowLines only
@@ -150,7 +150,7 @@ export function paidDoubleTimeHours(d: ShowDayLike, allDays: ShowDayLike[], rule
 
 /** One penalty per stretch longer than the grace period without a break. */
 export function mealPenaltyCount(d: ShowDayLike, rules: ShowRuleset): number {
-  if (!isWorkDay(d) || !rules.meal_penalty_enabled) return 0
+  if (!rules.meal_penalty_enabled) return 0
   const start = punchTime(d.punches, 'start')
   if (!start) return 0
 
@@ -169,10 +169,4 @@ export function mealPenaltyCount(d: ShowDayLike, rules: ShowRuleset): number {
     segmentStart = punchTime(d.punches, inType)
   }
   return penalties
-}
-
-/** Actual hours for a PM day. No day-rate minimum: an hour of email bills as an hour. */
-export function pmHours(d: ShowDayLike, rules: ShowRuleset, roundingMinutes = 1): number {
-  if (d.day_type !== 'pm' || !hasBothEnds(d)) return 0
-  return calculateNetHours(d, rules, roundingMinutes)
 }

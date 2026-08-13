@@ -6,10 +6,12 @@
 // zero-value rows are noise.
 
 import {
-  paidStraightTimeHours, paidOvertimeHours, paidDoubleTimeHours, mealPenaltyCount, pmHours,
+  paidStraightTimeHours, paidOvertimeHours, paidDoubleTimeHours, mealPenaltyCount,
   type ShowDayLike, type ShowRuleset,
 } from './payroll.ts'
 import { overtimeRateFrom, doubleTimeRateFrom } from './money.ts'
+
+export type PmEntryLike = { minutes: number }
 
 export type ShowRates = {
   day_rate_cents: number
@@ -31,20 +33,19 @@ const toHundredths = (hours: number) => Math.round(hours * 100)
 
 export function computeShowLines(
   days: ShowDayLike[],
+  pmEntries: PmEntryLike[],
   rates: ShowRates,
   rules: ShowRuleset,
 ): BucketLine[] {
   let dayRateDays = 0
   let halfDays = 0
-  let travelDays = 0
+  let travelLegs = 0
   let otHours = 0
   let dtHours = 0
-  let pmTotal = 0
   let penalties = 0
 
   for (const d of days) {
-    if (d.day_type === 'travel') { travelDays += 1; continue }
-    if (d.day_type === 'pm') { pmTotal += pmHours(d, rules); continue }
+    travelLegs += (d.travel_in ? 1 : 0) + (d.travel_out ? 1 : 0)
 
     const st = paidStraightTimeHours(d, days, rules)
     const ot = paidOvertimeHours(d, days, rules)
@@ -63,6 +64,11 @@ export function computeShowLines(
     penalties += mealPenaltyCount(d, rules)
   }
 
+  // Sessions sum first, THEN round up — once, for the whole show. Rounding each
+  // session would bill four half-hours as four hours instead of two.
+  const pmMinutes = pmEntries.reduce((t, e) => t + e.minutes, 0)
+  const pmHours = pmMinutes > 0 ? Math.ceil(pmMinutes / 60) : 0
+
   const lines: BucketLine[] = []
   const push = (description: string, qty: number, unit_price_cents: number) => {
     const qty_hundredths = toHundredths(qty)
@@ -76,10 +82,10 @@ export function computeShowLines(
 
   push('Day Rate', dayRateDays, rates.day_rate_cents)
   push('Day Rate (half)', halfDays, Math.round(rates.day_rate_cents / 2))
-  push('Travel Rate', travelDays, rates.travel_rate_cents)
+  push('Travel Rate', travelLegs, rates.travel_rate_cents)
   push('Overtime', otHours, rates.ot_rate_cents)
   push('Double Time', dtHours, rates.dt_rate_cents)
-  push('PM Hours', pmTotal, rates.pm_rate_cents)
+  push('PM Hours', pmHours, rates.pm_rate_cents)
   if (rates.meal_penalty_cents > 0) push('Meal Penalty', penalties, rates.meal_penalty_cents)
 
   return lines

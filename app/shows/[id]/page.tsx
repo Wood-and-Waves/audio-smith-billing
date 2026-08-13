@@ -67,7 +67,8 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
   const { rules, rates } = rulesetAndRatesFor(s)
   // Pure function — safe to call straight from a server component to render
   // a live preview of what this show would bill if billed right now.
-  const lines = computeShowLines(days as unknown as ShowDayLike[], rates, rules)
+  // TODO(Task 3/4): pass this show's real pm_entries instead of [].
+  const lines = computeShowLines(days as unknown as ShowDayLike[], [], rates, rules)
   const previewTotal = lines.reduce((t, l) => t + lineTotal(l.qty_hundredths, l.unit_price_cents), 0)
 
   // Shares isIncompleteDay with billShows (app/shows/actions.ts) so this

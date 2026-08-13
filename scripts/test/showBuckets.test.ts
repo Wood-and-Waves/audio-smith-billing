@@ -24,25 +24,28 @@ const RULES: ShowRuleset = {
 // 13:00Z to 23:00Z is 10 hours — under Streamline's 11-hour threshold, so a
 // plain day rate with no overtime.
 const showDay = (id: string, date: string): ShowDayLike => ({
-  id, date, day_type: 'show', pay_as_half_day: false,
+  id, date, pay_as_half_day: false, travel_in: false, travel_out: false,
   punches: [
     { punch_type: 'start', punched_at: `${date}T13:00:00Z` },
     { punch_type: 'end', punched_at: `${date}T23:00:00Z` },
   ],
 })
 
-const travelDay = (id: string, date: string): ShowDayLike => ({
-  id, date, day_type: 'travel', pay_as_half_day: false, punches: [],
+// One leg per travel-only day: 'in' sets travel_in, 'out' sets travel_out.
+const travelDay = (id: string, date: string, leg: 'in' | 'out' = 'in'): ShowDayLike => ({
+  id, date, pay_as_half_day: false,
+  travel_in: leg === 'in', travel_out: leg === 'out',
+  punches: [],
 })
 
 test('day rates, travel and overtime become invoice lines', () => {
   const days: ShowDayLike[] = [
-    travelDay('t1', '2026-07-13'),
+    travelDay('t1', '2026-07-13', 'in'),
     showDay('s1', '2026-07-14'),
     showDay('s2', '2026-07-15'),
-    travelDay('t2', '2026-07-16'),
+    travelDay('t2', '2026-07-16', 'out'),
   ]
-  const lines = computeShowLines(days, RATES, RULES)
+  const lines = computeShowLines(days, [], RATES, RULES)
 
   assert.deepEqual(lines, [
     { description: 'Day Rate', qty_hundredths: 200, unit_price_cents: 78000 },
@@ -52,77 +55,33 @@ test('day rates, travel and overtime become invoice lines', () => {
 
 test('a long day produces an overtime line', () => {
   const long: ShowDayLike = {
-    id: 'l1', date: '2026-07-14', day_type: 'show', pay_as_half_day: false,
+    id: 'l1', date: '2026-07-14', pay_as_half_day: false, travel_in: false, travel_out: false,
     punches: [
       { punch_type: 'start', punched_at: '2026-07-14T13:00:00Z' },
       { punch_type: 'end', punched_at: '2026-07-15T02:00:00Z' },   // 13 hours
     ],
   }
-  const lines = computeShowLines([long], RATES, RULES)
+  const lines = computeShowLines([long], [], RATES, RULES)
   assert.deepEqual(lines, [
     { description: 'Day Rate', qty_hundredths: 100, unit_price_cents: 78000 },
     { description: 'Overtime', qty_hundredths: 200, unit_price_cents: 10636 },
   ])
 })
 
-test('PM hours bill actual time with no day-rate minimum', () => {
-  const pm: ShowDayLike = {
-    id: 'p1', date: '2026-07-10', day_type: 'pm', pay_as_half_day: false,
-    punches: [
-      { punch_type: 'start', punched_at: '2026-07-10T14:00:00Z' },
-      { punch_type: 'end', punched_at: '2026-07-10T18:00:00Z' },   // 4 hours
-    ],
-  }
-  const lines = computeShowLines([pm], RATES, RULES)
-  assert.deepEqual(lines, [
-    { description: 'PM Hours', qty_hundredths: 400, unit_price_cents: 7800 },
-  ])
-})
-
 test('zero buckets produce no lines', () => {
-  assert.deepEqual(computeShowLines([], RATES, RULES), [])
-})
-
-test('a bucket that rounds to zero hundredths produces no line', () => {
-  // PM hours directly return the output of calculateNetHours, which can be
-  // fractional. A very short PM day may produce hours that round to less than
-  // 0.005 (which is 0.5 hundredths, rounded down to 0). The guard must test
-  // the rounded quantity, not the pre-rounded float.
-  //
-  // With a 3ms punch difference:
-  // - netSeconds = 0.003
-  // - netMinutes = Math.round(0.003 / 60) = 0
-  // - pmHours returns 0 / 60 = 0 (no line expected)
-  //
-  // Verify the invariant: no line ever has qty_hundredths: 0
-  const minimalPM: ShowDayLike = {
-    id: 'p_min', date: '2026-07-10', day_type: 'pm', pay_as_half_day: false,
-    punches: [
-      { punch_type: 'start', punched_at: '2026-07-10T14:00:00.000Z' },
-      { punch_type: 'end', punched_at: '2026-07-10T14:00:00.003Z' },   // 3ms
-    ],
-  }
-  const lines = computeShowLines([minimalPM], RATES, RULES)
-
-  // No lines should be produced for a 3ms PM day
-  assert.deepEqual(lines, [])
-
-  // Verify the invariant across all returned lines: qty_hundredths > 0
-  for (const line of lines) {
-    assert(line.qty_hundredths > 0, `Line "${line.description}" has qty_hundredths: ${line.qty_hundredths}`)
-  }
+  assert.deepEqual(computeShowLines([], [], RATES, RULES), [])
 })
 
 test('lines from several shows combine by bucket', () => {
   const mk = (id: string, date: string): ShowDayLike => ({
-    id, date, day_type: 'show', pay_as_half_day: false,
+    id, date, pay_as_half_day: false, travel_in: false, travel_out: false,
     punches: [
       { punch_type: 'start', punched_at: `${date}T13:00:00Z` },
       { punch_type: 'end', punched_at: `${date}T23:00:00Z` },
     ],
   })
-  const a = computeShowLines([mk('a', '2026-07-01')], RATES, RULES)
-  const b = computeShowLines([mk('b', '2026-07-08')], RATES, RULES)
+  const a = computeShowLines([mk('a', '2026-07-01')], [], RATES, RULES)
+  const b = computeShowLines([mk('b', '2026-07-08')], [], RATES, RULES)
 
   assert.deepEqual(mergeLines([a, b]), [
     { description: 'Day Rate', qty_hundredths: 200, unit_price_cents: 78000 },
@@ -140,7 +99,7 @@ const STA_RULES: ShowRuleset = {
 
 test('a short-turnaround day bills no day rate and double time with the guarantee, not both', () => {
   const day1: ShowDayLike = {
-    id: 'd1', date: '2026-07-14', day_type: 'show', pay_as_half_day: false,
+    id: 'd1', date: '2026-07-14', pay_as_half_day: false, travel_in: false, travel_out: false,
     punches: [
       { punch_type: 'start', punched_at: '2026-07-14T13:00:00Z' },
       { punch_type: 'end', punched_at: '2026-07-14T23:00:00Z' },     // 10h — plain day rate
@@ -149,14 +108,14 @@ test('a short-turnaround day bills no day rate and double time with the guarante
   // Only 6 hours of rest before this day's start (under the 10-hour minimum),
   // so day 2 is a short-turnaround day even though it's only worked 5 hours.
   const day2: ShowDayLike = {
-    id: 'd2', date: '2026-07-15', day_type: 'show', pay_as_half_day: false,
+    id: 'd2', date: '2026-07-15', pay_as_half_day: false, travel_in: false, travel_out: false,
     punches: [
       { punch_type: 'start', punched_at: '2026-07-15T05:00:00Z' },   // 6h rest since day1's end
       { punch_type: 'end', punched_at: '2026-07-15T10:00:00Z' },     // 5h worked
     ],
   }
 
-  const lines = computeShowLines([day1, day2], RATES, STA_RULES)
+  const lines = computeShowLines([day1, day2], [], RATES, STA_RULES)
 
   // Day 2 must NOT add a second Day Rate line, and its 5 worked hours must
   // bill as 11 hours of Double Time — the overtime_after_hours guarantee —
@@ -169,7 +128,7 @@ test('a short-turnaround day bills no day rate and double time with the guarante
 
 test('the same two days bill normally when rest clears the short-turnaround threshold', () => {
   const day1: ShowDayLike = {
-    id: 'd1', date: '2026-07-14', day_type: 'show', pay_as_half_day: false,
+    id: 'd1', date: '2026-07-14', pay_as_half_day: false, travel_in: false, travel_out: false,
     punches: [
       { punch_type: 'start', punched_at: '2026-07-14T13:00:00Z' },
       { punch_type: 'end', punched_at: '2026-07-14T23:00:00Z' },     // 10h
@@ -178,14 +137,14 @@ test('the same two days bill normally when rest clears the short-turnaround thre
   // 11 hours of rest before this day's start — clears the 10-hour minimum,
   // so the short-turnaround rule must not fire.
   const day2: ShowDayLike = {
-    id: 'd2', date: '2026-07-15', day_type: 'show', pay_as_half_day: false,
+    id: 'd2', date: '2026-07-15', pay_as_half_day: false, travel_in: false, travel_out: false,
     punches: [
       { punch_type: 'start', punched_at: '2026-07-15T10:00:00Z' },   // 11h rest since day1's end
       { punch_type: 'end', punched_at: '2026-07-15T15:00:00Z' },     // 5h worked
     ],
   }
 
-  const lines = computeShowLines([day1, day2], RATES, STA_RULES)
+  const lines = computeShowLines([day1, day2], [], RATES, STA_RULES)
 
   // Two ordinary day-rate days, no double time.
   assert.deepEqual(lines, [
@@ -196,15 +155,15 @@ test('the same two days bill normally when rest clears the short-turnaround thre
 test('the same description at different prices does not merge', () => {
   const cheap: ShowRates = { ...RATES, day_rate_cents: 60000 }
   const mk = (id: string, date: string): ShowDayLike => ({
-    id, date, day_type: 'show', pay_as_half_day: false,
+    id, date, pay_as_half_day: false, travel_in: false, travel_out: false,
     punches: [
       { punch_type: 'start', punched_at: `${date}T13:00:00Z` },
       { punch_type: 'end', punched_at: `${date}T23:00:00Z` },
     ],
   })
   const merged = mergeLines([
-    computeShowLines([mk('a', '2026-07-01')], RATES, RULES),
-    computeShowLines([mk('b', '2026-07-08')], cheap, RULES),
+    computeShowLines([mk('a', '2026-07-01')], [], RATES, RULES),
+    computeShowLines([mk('b', '2026-07-08')], [], cheap, RULES),
   ])
   assert.equal(merged.length, 2)
   assert.deepEqual(merged.map((l) => l.unit_price_cents).sort((x, y) => x - y), [60000, 78000])
@@ -245,4 +204,59 @@ test('merging two shows before rounding can bill a different total than summing 
 
   // They disagree by exactly the one cent this fix closes.
   assert.notEqual(summedRoundedTotals, invoiceTotal)
+})
+
+test('travel legs bill per leg, not per day', () => {
+  const legDay = (id: string, date: string, over: Partial<ShowDayLike> = {}): ShowDayLike => ({
+    id, date, pay_as_half_day: false, travel_in: false, travel_out: false, punches: [], ...over,
+  })
+  // A trip: fly in, work two days, fly home. Two legs regardless of day count.
+  const days = [
+    legDay('a', '2026-07-13', { travel_in: true }),
+    legDay('b', '2026-07-14', { punches: [
+      { punch_type: 'start', punched_at: '2026-07-14T13:00:00Z' },
+      { punch_type: 'end',   punched_at: '2026-07-14T23:00:00Z' }] }),
+    legDay('c', '2026-07-15', { punches: [
+      { punch_type: 'start', punched_at: '2026-07-15T13:00:00Z' },
+      { punch_type: 'end',   punched_at: '2026-07-15T23:00:00Z' }] }),
+    legDay('d', '2026-07-16', { travel_out: true }),
+  ]
+  assert.deepEqual(computeShowLines(days, [], RATES, RULES), [
+    { description: 'Day Rate', qty_hundredths: 200, unit_price_cents: 78000 },
+    { description: 'Travel Rate', qty_hundredths: 200, unit_price_cents: 39000 },
+  ])
+})
+
+test('a day flown in AND worked bills the leg and the full day rate', () => {
+  // Invoice #384's shape: fly in, work a long day, fly home.
+  const day: ShowDayLike = {
+    id: 'x', date: '2026-07-14', pay_as_half_day: false,
+    travel_in: true, travel_out: true,
+    punches: [
+      { punch_type: 'start', punched_at: '2026-07-14T13:00:00Z' },
+      { punch_type: 'end',   punched_at: '2026-07-15T02:00:00Z' }],  // 13 hours
+  }
+  assert.deepEqual(computeShowLines([day], [], RATES, RULES), [
+    { description: 'Day Rate', qty_hundredths: 100, unit_price_cents: 78000 },
+    { description: 'Travel Rate', qty_hundredths: 200, unit_price_cents: 39000 },
+    { description: 'Overtime', qty_hundredths: 200, unit_price_cents: 10636 },
+  ])
+})
+
+test('PM minutes sum then round UP to the next whole hour, once', () => {
+  const pm = (minutes: number) => ({ minutes })
+  // Four 30-minute sessions are exactly 2 hours and bill 2 — NOT 4, which is
+  // what rounding each session separately would produce.
+  assert.deepEqual(computeShowLines([], [pm(30), pm(60), pm(30)], RATES, RULES), [
+    { description: 'PM Hours', qty_hundredths: 200, unit_price_cents: 7800 },
+  ])
+  // 2.5 hours bills 3.
+  assert.deepEqual(computeShowLines([], [pm(30), pm(60), pm(60)], RATES, RULES), [
+    { description: 'PM Hours', qty_hundredths: 300, unit_price_cents: 7800 },
+  ])
+  // A single 15-minute session still bills a whole hour.
+  assert.deepEqual(computeShowLines([], [pm(15)], RATES, RULES), [
+    { description: 'PM Hours', qty_hundredths: 100, unit_price_cents: 7800 },
+  ])
+  assert.deepEqual(computeShowLines([], [], RATES, RULES), [])
 })

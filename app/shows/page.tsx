@@ -62,7 +62,8 @@ export default async function ShowsPage() {
   const unbilledShows: UnbilledShow[] = unbilled.map((s) => {
     const days = [...s.show_days].sort((a, b) => a.date.localeCompare(b.date))
     const { rules, rates } = rulesetAndRatesFor(s)
-    const lines = computeShowLines(days as unknown as ShowDayLike[], rates, rules)
+    // TODO(Task 3/4): pass this show's real pm_entries instead of [].
+    const lines = computeShowLines(days as unknown as ShowDayLike[], [], rates, rules)
     const totalCents = lines.reduce((t, l) => t + lineTotal(l.qty_hundredths, l.unit_price_cents), 0)
 
     // Shares isIncompleteDay with billShows and the show detail page so this
