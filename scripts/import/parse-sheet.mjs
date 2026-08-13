@@ -9,6 +9,39 @@
 // The Notes column is DROPPED on purpose. Every historical note is the same
 // remit-to boilerplate containing routing/account numbers; in the new system
 // that lives in one settings row, not on 94 invoices.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// DO NOT RE-RUN THIS AGAINST A MARKDOWN EXPORT. It got four things wrong, all
+// found on 2026-08-13 by reconciling the database against CSV exports of the
+// two Database tabs. If the import is ever redone, drive it from CSV.
+//
+//   1. THE SOURCE READ WAS TRUNCATED. raw/…-sheet.json ends mid-row at 54,812
+//      characters, no trailing newline, on "| 387 | Saturday Services -
+//      8/8/26 ". That item row was simply absent, so invoice #387 was short a
+//      $360 line while its total still said $600. Nothing here checked that the
+//      input ended on a complete row.
+//
+//   2. HEADER ROWS WITH A BLANK DATE WERE SKIPPED. Eleven invoices (283, 284,
+//      289, 291, 295, 317, 333, 334, 335, 344, 379) have an empty Date cell.
+//      Dropping those rows cost them BOTH their customer — they landed in an
+//      "Unattributed (spreadsheet)" bucket even though the sheet named the
+//      client — and their deposit. #333, #334 and #344 each carried one, so
+//      their totals were overstated by $3,120, $3,120 and $4,680.
+//
+//   3. ITEM DESCRIPTIONS CONTAINING "|" WERE DROPPED. The export is a markdown
+//      table split on the pipe character, so "Lyft | Omni -> DFW" and
+//      "Lyft | Home -> ORD" on #289 had the wrong field count and vanished —
+//      $136.86 off a real invoice.
+//
+//   4. MARKDOWN ESCAPES SURVIVED INTO THE DATA. One description was stored as
+//      …Thanks Dave\!) with a literal backslash.
+//
+// The aggregate check run at import time — invoice numbers present, per-year
+// totals — passed anyway, because those totals came from header rows that were
+// themselves correct. The check that catches all four is per-invoice internal
+// consistency: sum(line_total) == subtotal, and subtotal - deposit == total.
+// Run that first next time.
+// ─────────────────────────────────────────────────────────────────────────────
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
