@@ -25,3 +25,5 @@ backups/
 scripts/import/raw/
 scripts/import/out/
 .env*
+
+tmp/
