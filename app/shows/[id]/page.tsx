@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { isIncompleteDay } from '@/lib/chronology'
 import { formatDateLong, formatDateShort } from '@/lib/dates'
 import { formatUSD, formatQty, lineTotal } from '@/lib/money'
-import { computeShowLines, rulesetAndRatesFor } from '@/lib/showBuckets'
+import { computeShowLines, rulesetAndRatesFor, type PmEntryLike } from '@/lib/showBuckets'
 import { calculateNetHours, type ShowDayLike } from '@/lib/payroll'
 import AppShell from '@/components/AppShell'
 import PunchClock from '@/components/PunchClock'
@@ -14,13 +14,12 @@ import RemoveDayButton from '@/components/RemoveDayButton'
 
 export const dynamic = 'force-dynamic'
 
-const DAY_TYPE_LABEL: Record<string, string> = { show: 'Show', travel: 'Travel', pm: 'PM' }
-
 type Punch = { id: string; punch_type: string; punched_at: string }
 type Day = {
-  id: string; date: string; day_type: 'show' | 'travel' | 'pm'
+  id: string; date: string; travel_in: boolean; travel_out: boolean
   pay_as_half_day: boolean; punches: Punch[]
 }
+type PmEntry = { id: string; worked_on: string; minutes: number; note: string | null }
 type ShowRow = {
   id: string; name: string; venue: string | null; notes: string | null; timezone: string
   status: string; invoice_id: string | null
@@ -31,6 +30,7 @@ type ShowRow = {
   short_turn_rest_hours: number; continuous_time_enabled: boolean
   clients: { name: string } | null
   show_days: Day[]
+  pm_entries: PmEntry[]
 }
 
 export default async function ShowPage({ params }: { params: Promise<{ id: string }> }) {
@@ -45,7 +45,9 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
              meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours,
              continuous_time_enabled,
              clients(name),
-             show_days(id, date, day_type, pay_as_half_day, punches(id, punch_type, punched_at))`)
+             show_days(id, date, travel_in, travel_out, pay_as_half_day,
+                       punches(id, punch_type, punched_at)),
+             pm_entries(id, worked_on, minutes, note)`)
     .eq('id', id)
     .maybeSingle()
 
@@ -66,18 +68,20 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
 
   const { rules, rates } = rulesetAndRatesFor(s)
   // Pure function — safe to call straight from a server component to render
-  // a live preview of what this show would bill if billed right now.
-  // TODO(Task 3/4): pass this show's real pm_entries instead of [].
-  const lines = computeShowLines(days as unknown as ShowDayLike[], [], rates, rules)
+  // a live preview of what this show would bill if billed right now. Must
+  // load the same pm_entries billShows does (app/shows/actions.ts) or this
+  // preview can disagree with the invoice it produces.
+  const lines = computeShowLines(
+    days as unknown as ShowDayLike[], s.pm_entries as unknown as PmEntryLike[], rates, rules)
   const previewTotal = lines.reduce((t, l) => t + lineTotal(l.qty_hundredths, l.unit_price_cents), 0)
 
   // Shares isIncompleteDay with billShows (app/shows/actions.ts) so this
   // banner and the billing gate can never disagree about what's billable.
   // A day with a start punch and no end punch (or vice versa), or an
-  // unpaired meal punch, would otherwise silently bill wrong hours. Travel
-  // days legitimately have no punches at all and are not "incomplete".
+  // unpaired meal punch, would otherwise silently bill wrong hours. A day
+  // with no punches at all (e.g. a travel-only leg) is not "incomplete" —
+  // isIncompleteDay only flags an unpaired start/end or meal punch.
   const incompleteDates = days
-    .filter((d) => d.day_type !== 'travel')
     .filter((d) => isIncompleteDay(d.punches))
     .map((d) => formatDateShort(d.date))
 
@@ -125,38 +129,42 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
                   <span className="font-semibold">{formatDateLong(d.date)}</span>
                   <span className="flex items-baseline gap-3">
                     <span className="eyebrow">
-                      {DAY_TYPE_LABEL[d.day_type]}{d.pay_as_half_day ? ' · half day' : ''}
+                      {[
+                        d.travel_in && 'travel in',
+                        d.travel_out && 'travel out',
+                        d.pay_as_half_day && 'half day',
+                      ].filter(Boolean).join(' · ')}
                     </span>
                     <RemoveDayButton showDayId={d.id} date={d.date} locked={locked} />
                   </span>
                 </div>
-                {d.day_type === 'travel' ? (
-                  <p className="text-xs text-muted">Travel day — billed by rate, no punches needed.</p>
-                ) : (
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                    <PunchClock
-                      showId={s.id}
-                      showDayId={d.id}
-                      timezone={s.timezone}
-                      punches={d.punches}
-                      locked={locked}
-                    />
-                    {d.day_type === 'show' && (
-                      // The toggle only appears under 5 net hours — a half
-                      // day is meant for a short call, not a full one — but
-                      // a day that already has the flag stays visible so it
-                      // can always be cleared, even if it later grew past 5
-                      // hours (e.g. after adding punches).
-                      (calculateNetHours(d as unknown as ShowDayLike, rules) < 5 || d.pay_as_half_day) && (
-                        <HalfDayToggle
-                          showDayId={d.id}
-                          checked={d.pay_as_half_day}
-                          locked={locked}
-                        />
-                      )
-                    )}
-                  </div>
-                )}
+                {/* Every show_days row is a work day now (migration 0005 dropped
+                    day_type); travel is an orthogonal flag, so punches and the
+                    half-day toggle always apply — a day flown in and worked
+                    still needs both. Travel-leg checkboxes land in Task 4. */}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <PunchClock
+                    showId={s.id}
+                    showDayId={d.id}
+                    timezone={s.timezone}
+                    punches={d.punches}
+                    locked={locked}
+                  />
+                  {
+                    // The toggle only appears under 5 net hours — a half
+                    // day is meant for a short call, not a full one — but
+                    // a day that already has the flag stays visible so it
+                    // can always be cleared, even if it later grew past 5
+                    // hours (e.g. after adding punches).
+                    (calculateNetHours(d as unknown as ShowDayLike, rules) < 5 || d.pay_as_half_day) && (
+                      <HalfDayToggle
+                        showDayId={d.id}
+                        checked={d.pay_as_half_day}
+                        locked={locked}
+                      />
+                    )
+                  }
+                </div>
               </li>
             ))}
           </ul>

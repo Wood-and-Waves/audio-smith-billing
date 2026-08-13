@@ -3,9 +3,8 @@
 import Link from 'next/link'
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { addShowDay, billShows, unlinkShow } from '@/app/shows/actions'
+import { addShowDays, billShows, unlinkShow } from '@/app/shows/actions'
 import { todayInChicago } from '@/lib/dates'
-import type { DayType } from '@/lib/punchTypes'
 
 const field =
   'w-full px-3 py-2 bg-surface border border-line rounded-field text-ink text-sm ' +
@@ -23,14 +22,21 @@ export default function ShowDayControls({
   const router = useRouter()
   const [pending, start] = useTransition()
   const [error, setError] = useState<string | null>(null)
-  const [date, setDate] = useState(todayInChicago())
-  const [dayType, setDayType] = useState<DayType>('show')
+  const [info, setInfo] = useState<string | null>(null)
+  const [startDate, setStartDate] = useState(todayInChicago())
+  const [endDate, setEndDate] = useState(todayInChicago())
 
-  function addDay() {
+  function addDayRange() {
     setError(null)
+    setInfo(null)
     start(async () => {
-      const result = await addShowDay(showId, date, dayType)
+      const result = await addShowDays(showId, startDate, endDate)
       if ('error' in result) { setError(result.error); return }
+      setInfo(
+        result.skipped > 0
+          ? `${result.created} added, ${result.skipped} already there.`
+          : `${result.created} added.`,
+      )
       router.refresh()
     })
   }
@@ -77,26 +83,25 @@ export default function ShowDayControls({
 
   return (
     <div>
-      <div className="flex flex-wrap items-end gap-3 mb-6">
-        <div>
-          <label className="eyebrow block mb-1.5" htmlFor="showDayDate">Date</label>
-          <input id="showDayDate" type="date" className={field} value={date}
-                 onChange={(e) => setDate(e.target.value)} />
+      <div className="mb-6">
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="eyebrow block mb-1.5" htmlFor="showDayStart">From</label>
+            <input id="showDayStart" type="date" className={field} value={startDate}
+                   onChange={(e) => setStartDate(e.target.value)} />
+          </div>
+          <div>
+            <label className="eyebrow block mb-1.5" htmlFor="showDayEnd">To</label>
+            <input id="showDayEnd" type="date" className={field} value={endDate}
+                   onChange={(e) => setEndDate(e.target.value)} />
+          </div>
+          <button type="button" onClick={addDayRange} disabled={pending}
+                  className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
+                             border border-line text-muted hover:text-ink disabled:opacity-50">
+            {pending ? 'Adding…' : '+ Add days'}
+          </button>
         </div>
-        <div>
-          <label className="eyebrow block mb-1.5" htmlFor="showDayType">Type</label>
-          <select id="showDayType" className={field} value={dayType}
-                  onChange={(e) => setDayType(e.target.value as DayType)}>
-            <option value="show">Show</option>
-            <option value="travel">Travel</option>
-            <option value="pm">PM</option>
-          </select>
-        </div>
-        <button type="button" onClick={addDay} disabled={pending}
-                className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
-                           border border-line text-muted hover:text-ink disabled:opacity-50">
-          {pending ? 'Adding…' : '+ Add day'}
-        </button>
+        {info && <p className="text-xs text-muted mt-2">{info}</p>}
       </div>
 
       <button type="button" onClick={bill}

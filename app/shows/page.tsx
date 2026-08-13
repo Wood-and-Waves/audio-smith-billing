@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { isIncompleteDay } from '@/lib/chronology'
 import { formatDateShort } from '@/lib/dates'
 import { lineTotal } from '@/lib/money'
-import { computeShowLines, rulesetAndRatesFor } from '@/lib/showBuckets'
+import { computeShowLines, rulesetAndRatesFor, type PmEntryLike } from '@/lib/showBuckets'
 import type { ShowDayLike } from '@/lib/payroll'
 import AppShell from '@/components/AppShell'
 import UnbilledShows, { type UnbilledShow } from '@/components/UnbilledShows'
@@ -11,7 +11,8 @@ import UnbilledShows, { type UnbilledShow } from '@/components/UnbilledShows'
 export const dynamic = 'force-dynamic'
 
 type Punch = { punch_type: string; punched_at: string }
-type Day = { id: string; date: string; day_type: 'show' | 'travel' | 'pm'; pay_as_half_day: boolean; punches: Punch[] }
+type Day = { id: string; date: string; travel_in: boolean; travel_out: boolean; pay_as_half_day: boolean; punches: Punch[] }
+type PmEntry = { minutes: number }
 type Row = {
   id: string; name: string; venue: string | null; status: string; client_id: string
   day_rate_cents: number; travel_rate_cents: number; pm_rate_cents: number
@@ -19,7 +20,7 @@ type Row = {
   minimum_meal_break_minutes: number; meal_break_deduction_cap: number
   meal_penalty_grace_hours: number; meal_penalty_cents: number
   short_turn_rest_hours: number; continuous_time_enabled: boolean
-  clients: { name: string } | null; show_days: Day[]
+  clients: { name: string } | null; show_days: Day[]; pm_entries: PmEntry[]
 }
 
 export default async function ShowsPage() {
@@ -31,7 +32,9 @@ export default async function ShowsPage() {
              dt_after_hours, minimum_meal_break_minutes, meal_break_deduction_cap,
              meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours,
              continuous_time_enabled,
-             clients(name), show_days(id, date, day_type, pay_as_half_day, punches(punch_type, punched_at))`)
+             clients(name),
+             show_days(id, date, travel_in, travel_out, pay_as_half_day, punches(punch_type, punched_at)),
+             pm_entries(minutes)`)
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -62,14 +65,15 @@ export default async function ShowsPage() {
   const unbilledShows: UnbilledShow[] = unbilled.map((s) => {
     const days = [...s.show_days].sort((a, b) => a.date.localeCompare(b.date))
     const { rules, rates } = rulesetAndRatesFor(s)
-    // TODO(Task 3/4): pass this show's real pm_entries instead of [].
-    const lines = computeShowLines(days as unknown as ShowDayLike[], [], rates, rules)
+    const lines = computeShowLines(
+      days as unknown as ShowDayLike[], (s.pm_entries ?? []) as PmEntryLike[], rates, rules)
     const totalCents = lines.reduce((t, l) => t + lineTotal(l.qty_hundredths, l.unit_price_cents), 0)
 
     // Shares isIncompleteDay with billShows and the show detail page so this
-    // list can never mark a show billable that billShows would reject.
+    // list can never mark a show billable that billShows would reject. Every
+    // show_days row is a work day now (migration 0005 dropped day_type); a
+    // day with no punches at all is simply not incomplete.
     const incompleteDates = days
-      .filter((d) => d.day_type !== 'travel')
       .filter((d) => isIncompleteDay(d.punches))
       .map((d) => formatDateShort(d.date))
 

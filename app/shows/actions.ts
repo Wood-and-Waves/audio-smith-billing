@@ -4,10 +4,12 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { chronologyError, isIncompleteDay } from '@/lib/chronology'
 import { travelRateFrom, parseUSD } from '@/lib/money'
-import { todayInChicago } from '@/lib/dates'
-import { computeShowLines, mergeLines, rulesetAndRatesFor, type BucketLine } from '@/lib/showBuckets'
+import { todayInChicago, addDays } from '@/lib/dates'
+import {
+  computeShowLines, mergeLines, rulesetAndRatesFor, type BucketLine, type PmEntryLike,
+} from '@/lib/showBuckets'
 import type { ShowDayLike } from '@/lib/payroll'
-import type { PunchType, DayType } from '@/lib/punchTypes'
+import type { PunchType } from '@/lib/punchTypes'
 
 type Fail = { error: string }
 
@@ -59,22 +61,170 @@ export async function createShow(input: {
   return { ok: true, id: data.id }
 }
 
-export async function addShowDay(
-  showId: string, date: string, dayType: DayType,
+const MAX_RANGE_DAYS = 60
+
+/**
+ * Creates a day per date across [startDate, endDate], inclusive. Dates that
+ * already exist for this show are SKIPPED, not errors: re-running an
+ * overlapping range (e.g. adding a trip that already had its first two days
+ * entered) must not fail halfway through and leave a partial trip behind.
+ */
+export async function addShowDays(
+  showId: string, startDate: string, endDate: string,
+): Promise<Fail | { ok: true; created: number; skipped: number }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const { data: show } = await supabase.from('shows').select('status').eq('id', showId).maybeSingle()
+  if (!show) return { error: 'That show no longer exists.' }
+  if (show.status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
+
+  if (endDate < startDate) return { error: 'End date must be on or after the start date.' }
+
+  // Walk the range with addDays, never new Date() arithmetic (see
+  // lib/dates.ts) — a plain date pushed through local time shifts a day
+  // west of UTC. Bail as soon as the count crosses the cap rather than
+  // building the full list first: a mistyped year (2026 -> 2062) would
+  // otherwise walk tens of thousands of dates before we ever check.
+  const dates: string[] = []
+  let cursor = startDate
+  while (cursor <= endDate) {
+    dates.push(cursor)
+    if (dates.length > MAX_RANGE_DAYS) {
+      return { error: `That range is more than ${MAX_RANGE_DAYS} days — check the dates.` }
+    }
+    cursor = addDays(cursor, 1)
+  }
+
+  const { data: existingRows, error: existingError } = await supabase
+    .from('show_days').select('date').eq('show_id', showId).in('date', dates)
+  if (existingError) return { error: existingError.message }
+  const existing = new Set((existingRows ?? []).map((r) => r.date as string))
+
+  const toInsert = dates.filter((d) => !existing.has(d))
+  const skipped = dates.length - toInsert.length
+  if (toInsert.length === 0) return { ok: true, created: 0, skipped }
+
+  const { error } = await supabase.from('show_days')
+    .insert(toInsert.map((date) => ({ owner_id: user.id, show_id: showId, date })))
+  if (error) return { error: error.message }
+
+  revalidatePath(`/shows/${showId}`)
+  return { ok: true, created: toInsert.length, skipped }
+}
+
+/**
+ * Sets or clears one travel leg on a day. Travel is a flag on a day, not a
+ * day type (migration 0005) — a day can be flown-in AND worked the same day.
+ */
+export async function setTravelLeg(
+  showDayId: string, leg: 'in' | 'out', value: boolean,
+): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  // Walk the day's own foreign keys for the lock, the same way
+  // setDayHalfDay/deletePunch do: show_days.show_id -> shows.status. Never
+  // trust a caller-supplied id for the lock decision.
+  const { data: day } = await supabase
+    .from('show_days').select('show_id, shows(status)').eq('id', showDayId).maybeSingle()
+  if (!day) return { error: 'That day no longer exists.' }
+
+  const status = (day as unknown as { shows: { status: string } }).shows?.status
+  if (status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
+
+  const column = leg === 'in' ? 'travel_in' : 'travel_out'
+  const { error } = await supabase.from('show_days')
+    .update({ [column]: value }).eq('id', showDayId)
+  if (error) return { error: error.message }
+
+  revalidatePath(`/shows/${(day as unknown as { show_id: string }).show_id}`)
+  return { ok: true }
+}
+
+const PM_MAX_MINUTES = 1440 // 24h fat-finger guard
+
+/** Logs a piece of prep work. See migration 0005: PM is a duration log, not a punched day. */
+export async function addPmEntry(
+  showId: string, workedOn: string, minutes: number, note: string,
 ): Promise<Fail | { ok: true; id: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not signed in.' }
 
   const { data: show } = await supabase.from('shows').select('status').eq('id', showId).maybeSingle()
-  if (show?.status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
+  if (!show) return { error: 'That show no longer exists.' }
+  if (show.status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
 
-  const { data, error } = await supabase.from('show_days')
-    .insert({ owner_id: user.id, show_id: showId, date, day_type: dayType })
+  // The UI offers 15-minute presets, but the action is the boundary that
+  // actually has to hold — a value typed straight into a request cannot
+  // slip through.
+  if (!Number.isInteger(minutes) || minutes <= 0 || minutes % 15 !== 0) {
+    return { error: 'PM time must be a positive multiple of 15 minutes.' }
+  }
+  if (minutes > PM_MAX_MINUTES) {
+    return { error: 'A single PM entry cannot exceed 24 hours (1440 minutes) — check for a typo.' }
+  }
+
+  const { data, error } = await supabase.from('pm_entries')
+    .insert({ owner_id: user.id, show_id: showId, worked_on: workedOn, minutes, note: note.trim() || null })
     .select('id').single()
   if (error) return { error: error.message }
+
   revalidatePath(`/shows/${showId}`)
   return { ok: true, id: data.id }
+}
+
+export async function deletePmEntry(pmEntryId: string): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  // Derive the lock from the entry's own show_id, never a caller-supplied one.
+  const { data: entry } = await supabase
+    .from('pm_entries').select('show_id, shows(status)').eq('id', pmEntryId).maybeSingle()
+  if (!entry) return { error: 'That entry no longer exists.' }
+
+  const status = (entry as unknown as { shows: { status: string } }).shows?.status
+  if (status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
+
+  const showId = (entry as unknown as { show_id: string }).show_id
+  const { error } = await supabase.from('pm_entries').delete().eq('id', pmEntryId)
+  if (error) return { error: error.message }
+
+  revalidatePath(`/shows/${showId}`)
+  return { ok: true }
+}
+
+/**
+ * Deletes a show and, by cascade, its days, punches and PM log. This
+ * destroys recorded work, so it is refused while the show is billed —
+ * unlinking it first (see unlinkShow) is a deliberate second step, not a
+ * confirmation dialog.
+ *
+ * The cascade is real, not assumed: migration 0003 declares
+ * show_days.show_id and punches.show_day_id `on delete cascade`, and
+ * migration 0005 declares pm_entries.show_id `on delete cascade` too — so
+ * deleting the `shows` row alone removes all three without an explicit
+ * multi-table transaction here.
+ */
+export async function deleteShow(showId: string): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  // Derive the lock from the row being deleted, not a caller-supplied flag.
+  const { data: show } = await supabase.from('shows').select('status').eq('id', showId).maybeSingle()
+  if (!show) return { error: 'That show no longer exists.' }
+  if (show.status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
+
+  const { error } = await supabase.from('shows').delete().eq('id', showId)
+  if (error) return { error: error.message }
+
+  revalidatePath('/shows')
+  return { ok: true }
 }
 
 export async function recordPunch(
@@ -151,7 +301,9 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
              dt_after_hours, minimum_meal_break_minutes, meal_break_deduction_cap,
              meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours,
              continuous_time_enabled,
-             show_days(id, date, day_type, pay_as_half_day, punches(punch_type, punched_at))`)
+             show_days(id, date, travel_in, travel_out, pay_as_half_day,
+                       punches(punch_type, punched_at)),
+             pm_entries(minutes)`)
     .in('id', showIds)
   if (error) return { error: error.message }
   if (!shows?.length) return { error: 'Those shows no longer exist.' }
@@ -164,9 +316,12 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
 
   // An incomplete day would silently bill zero hours — or, for an unpaired
   // meal punch, silently bill the break as worked time — so refuse instead.
+  // Every show_days row is a work day now (migration 0005 dropped
+  // day_type); a day with no punches at all is simply not incomplete
+  // (isIncompleteDay only flags an unpaired start/end or meal), so there is
+  // no "skip travel days" case to carve out any more.
   for (const s of shows) {
-    for (const d of (s.show_days ?? []) as { date: string; day_type: string; punches: { punch_type: string }[] }[]) {
-      if (d.day_type === 'travel') continue
+    for (const d of (s.show_days ?? []) as { date: string; punches: { punch_type: string }[] }[]) {
       if (isIncompleteDay(d.punches)) {
         return { error: `${s.name}: ${d.date} has an unfinished punch. Complete or remove it first.` }
       }
@@ -177,8 +332,8 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
   for (const s of shows) {
     const { rules, rates } = rulesetAndRatesFor(s)
     const days = ((s.show_days ?? []) as unknown as ShowDayLike[])
-    // TODO(Task 3/4): pass this show's real pm_entries instead of [].
-    perShow.push(computeShowLines(days, [], rates, rules))
+    const pmEntries = ((s.pm_entries ?? []) as unknown as PmEntryLike[])
+    perShow.push(computeShowLines(days, pmEntries, rates, rules))
   }
   // Merge same-description/same-price lines across shows BEFORE rounding
   // each to cents (mergeLines, then lineTotal inside saveInvoice) — never
