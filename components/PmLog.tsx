@@ -94,7 +94,8 @@ export default function PmLog({
         <h2 className="eyebrow">Prep (PM)</h2>
         {totalMinutes > 0 && (
           <p className="tabular text-sm text-muted">
-            {formatQty(loggedHoursHundredths)} hours logged · bills {billedHours}
+            {formatQty(loggedHoursHundredths)} {loggedHoursHundredths === 100 ? 'hour' : 'hours'} logged
+            {' · '}bills {billedHours}
           </p>
         )}
       </div>
