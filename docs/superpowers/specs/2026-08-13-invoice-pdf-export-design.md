@@ -16,6 +16,31 @@ rows, a printed "TAX 0%" on every invoice, a floating totals block — were
 deliberately dropped when `InvoiceDocument.tsx` was written and are not coming
 back.
 
+### What the old PDF actually contained
+
+Invoice #386 arrived after the design was approved and was read for anything the
+data-only rebuild might have missed. Its structure:
+
+```
+Smith Audio, LLC / 2610 Melbourne Lane / Lake in the HIlls, IL 60156
+INVOICE          269.217.8400  dan@theaudiosmith.com
+BILL TO: Journe Church     INVOICE # 386   DATE 8/7/2026
+                           Terms Net 30    DUE DATE 9/6/2026
+DESCRIPTION | QTY | PRICE | TOTAL
+Audio Training/Maintenance | 1 | $500.00 | $500.00
+Notes:
+SUB TOTAL $500.00 · TAX (%) 0% · Deposit ($) $0.00 · TOTAL $500.00
+THANK YOU FOR YOUR BUSINESS!
+```
+
+Every field is already present in `InvoiceDocument`. Two are not, and one of
+those is being added — see "Closing line" below.
+
+The comparison also surfaced two long-standing typos in the sheet that the
+rebuilt data already corrects, and which must not be reintroduced: the old
+template printed **"Lake in the HIlls"** (capital I) and rendered the client as
+**"Journe Church"**. Settings and the client record are both correct today.
+
 Emailing the invoice is Phase 5 and is what actually retires the spreadsheet.
 It is out of scope here, but it is the reason for the main architectural choice
 below.
@@ -28,7 +53,36 @@ below.
 | Visual target | `components/InvoiceDocument.tsx`, section for section |
 | Typography | Oswald vendored for headings; built-in Helvetica for body |
 | Money | Printed from stored cents. Never recomputed. |
+| Tax row | Removed entirely, from the PDF **and** the screen |
+| Deposit row | Kept, printed only when non-zero |
+| Closing line | "Thank you for your business!" restored from the old template |
 | Scope | Builder + browser download. No email route. |
+
+### Tax out, deposit conditional
+
+Decided 2026-08-13: drop tax and deposit. Checked against the data before
+acting, and the two are not alike.
+
+**Tax is zero on all 105 invoices** — `tax_bp` and `tax_cents` are both zero
+everywhere. The row is removed unconditionally, and removed from
+`InvoiceDocument.tsx` at the same time so the two renderers stay literally
+parallel. The columns stay in the database and in `computeTotals`; only the
+rendering goes.
+
+**Deposit cannot be dropped. 16 invoices carry one, totalling $56,800.75.**
+Invoice #340 is subtotal $6,883.94, deposit $5,850.00, total $1,033.94 —
+without the row, a client receives a page whose subtotal and total differ by
+$5,850 with nothing accounting for it. The existing conditional behaviour is
+correct and stays: the line prints only when `deposit_cents` is non-zero, which
+is 16 invoices out of 105.
+
+### Closing line
+
+The old template ended with **"THANK YOU FOR YOUR BUSINESS!"** and 105 invoices
+carried it. It is the one piece of wording the data-only rebuild dropped, so it
+is restored — as "Thank you for your business!" in the document's own voice
+rather than the template's shouted capitals, below the footer, in the muted
+grey. Added to both renderers.
 
 ### Why `@react-pdf/renderer` and not print CSS
 
@@ -72,6 +126,11 @@ server will register the same file from disk. A builder that registered fonts
 itself would have to know which environment it was in — the exact coupling
 `PdfParts` exists to prevent.
 
+### `components/InvoiceDocument.tsx`
+
+Two small edits so the screen and the PDF do not differ on day one: remove the
+conditional tax row, and add the closing line. Nothing else changes.
+
 ### `components/DownloadInvoiceButton.tsx`
 
 `'use client'`. Dynamically imports `@react-pdf/renderer` on click — it is
@@ -108,8 +167,9 @@ order:
 3. Bill to (snapshot, falling back to the client's name and address) and the
    invoice meta block — number, date, terms, due
 4. Line table: Description / Qty / Price / Total
-5. Totals: subtotal, tax if non-zero, deposit if non-zero, total due
+5. Totals: subtotal, deposit if non-zero, total due. **No tax row.**
 6. Footer: remit-to and notes, each only when present
+7. "Thank you for your business!" — always
 
 **Colours are hardcoded, not tokenised:** `#ffffff` paper, `#121212` ink,
 `#cbd5e1` rules, `#f59e0b` amber, and `#737373` / `#525252` for the two muted
@@ -129,7 +189,7 @@ average is 3.2, and none exceeds 12. It is a few lines of code, so:
 ## Correctness
 
 **The PDF prints stored cents. It never recomputes them.** `line_total_cents`,
-`subtotal_cents`, `tax_cents`, `deposit_cents` and `total_cents` are rendered
+`subtotal_cents`, `deposit_cents` and `total_cents` are rendered
 through the existing `formatUSD`; quantities through `formatQty`. Recomputing in
 a second place is how a PDF comes to disagree with the record it represents —
 and the imported history contains both $106.36 and $106.37 for the same computed
@@ -141,7 +201,7 @@ already happened once in this app.
 
 Two invariants carried from the screen:
 
-- Zero-value tax and deposit rows are omitted.
+- The deposit row is omitted when zero; the tax row no longer exists.
 - **ACH bank details are never rendered.** `settings.ach_details` is not part of
   `DocumentData`, is not passed in, and must never be added. `remit_to` prints;
   clients who want ACH ask for it. Bank numbers on a forwarded PDF are an
@@ -154,8 +214,11 @@ The injection makes this testable without running a PDF engine. Pass stub
 
 - Every money string in the tree equals `formatUSD` of the corresponding stored
   cents — nothing is recomputed or rounded a second time.
-- An invoice with zero tax and zero deposit produces neither row; one with a
-  deposit produces it, negated.
+- No tax row is ever emitted, for any input — including one with a non-zero
+  `tax_bp`, since the columns still exist and could be set.
+- An invoice with a zero deposit produces no deposit row; invoice #340's real
+  figures ($6,883.94 / $5,850.00 / $1,033.94) produce one, negated, and the
+  three printed numbers reconcile.
 - ACH details cannot reach the document. `DocumentData['settings']` has no
   `ach_details` field, so the test passes a settings object with one attached
   (cast past the type, the way a careless future change would) and asserts no
