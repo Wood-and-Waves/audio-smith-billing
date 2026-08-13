@@ -17,6 +17,7 @@
 
 import { formatUSD } from './money.ts'
 import { formatDateLong } from './dates.ts'
+import { invoiceFilename } from './invoicePdf.ts'
 import type { DocumentData } from '../components/InvoiceDocument.tsx'
 
 export type InvoiceEmailInput = {
@@ -35,6 +36,7 @@ function escapeHtml(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 export function buildInvoiceEmail(input: InvoiceEmailInput) {
@@ -103,10 +105,15 @@ export async function sendInvoiceEmail(
   const from = process.env.INVOICE_FROM_EMAIL
   if (!from) return { error: 'Email is not configured yet (INVOICE_FROM_EMAIL is missing).' }
 
-  const business = input.invoice.settings?.business_name ?? 'The Audio Smith'
-  const { subject, text, html } = buildInvoiceEmail(input)
-
+  // The business lookup and buildInvoiceEmail live inside this try, not just
+  // the network call: buildInvoiceEmail formats the due date, and
+  // formatDateLong throws a RangeError on an unparseable date. This
+  // function's whole contract is to return { error } and never throw, so
+  // anything that can throw on a bad row has to be in here too.
   try {
+    const business = input.invoice.settings?.business_name ?? 'The Audio Smith'
+    const { subject, text, html } = buildInvoiceEmail(input)
+
     const { Resend } = await import('resend')
     const { error } = await new Resend(key).emails.send({
       from: `${business} <${from}>`,
@@ -116,7 +123,7 @@ export async function sendInvoiceEmail(
       text,
       html,
       attachments: [{
-        filename: `Invoice-${input.invoice.number}.pdf`,
+        filename: invoiceFilename(input.invoice),
         content: input.pdf,
       }],
     })

@@ -4,7 +4,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildInvoiceEmail, type InvoiceEmailInput } from '../../lib/invoiceEmail.ts'
+import { buildInvoiceEmail, sendInvoiceEmail, type InvoiceEmailInput } from '../../lib/invoiceEmail.ts'
 import { formatUSD } from '../../lib/money.ts'
 import type { DocumentData } from '../../components/InvoiceDocument.tsx'
 
@@ -116,4 +116,29 @@ test('the html body escapes anything a client name could carry', () => {
   const { html } = buildInvoiceEmail(nasty)
   assert.ok(!html.includes('<script>'), 'the raw tag never survives into the html')
   assert.ok(html.includes('&lt;script&gt;'), 'it is escaped instead')
+})
+
+test('a malformed date makes the send return an error, never throw', async () => {
+  // sendInvoiceEmail promises to return { error } rather than throw, so that a
+  // failed send never loses the record of what was being sent. formatDateLong
+  // throws a RangeError on an unparseable date, so building the body has to
+  // happen inside the try — this pins that.
+  const prevKey = process.env.RESEND_API_KEY
+  const prevFrom = process.env.INVOICE_FROM_EMAIL
+  process.env.RESEND_API_KEY = 'dummy-test-key'
+  process.env.INVOICE_FROM_EMAIL = 'dan@theaudiosmith.com'
+  try {
+    const broken = {
+      ...BASE,
+      invoice: { ...INVOICE, due_date: 'not-a-date' },
+      pdf: Buffer.from(''),
+    }
+    const result = await sendInvoiceEmail(broken)
+    assert.ok(result.error, 'it returned an error instead of throwing')
+  } finally {
+    if (prevKey === undefined) delete process.env.RESEND_API_KEY
+    else process.env.RESEND_API_KEY = prevKey
+    if (prevFrom === undefined) delete process.env.INVOICE_FROM_EMAIL
+    else process.env.INVOICE_FROM_EMAIL = prevFrom
+  }
 })
