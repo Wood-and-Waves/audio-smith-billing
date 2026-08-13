@@ -4,7 +4,8 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildInvoiceEmail, sendInvoiceEmail, type InvoiceEmailInput } from '../../lib/invoiceEmail.ts'
+import { buildInvoiceEmail, type InvoiceEmailInput } from '../../lib/invoiceEmailBody.ts'
+import { sendInvoiceEmail } from '../../lib/invoiceEmail.ts'
 import { formatUSD } from '../../lib/money.ts'
 import type { DocumentData } from '../../components/InvoiceDocument.tsx'
 

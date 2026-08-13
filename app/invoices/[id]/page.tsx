@@ -65,7 +65,9 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
     total_cents: number
     notes: string | null
     imported: boolean
-    clients: DocumentData['client']
+    clients:
+      | (NonNullable<DocumentData['client']> & { billing_email: string | null })
+      | null
     invoice_lines: DocumentData['lines'] & { position: number }[]
   }
 
@@ -88,7 +90,18 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
     total_cents: inv.total_cents,
     // The import note belongs above the document, not printed on it.
     notes: inv.imported ? null : inv.notes,
-    client: inv.clients,
+    // Reconstructed field by field, NOT `client: inv.clients`. The query fetches
+    // billing_email for the send panel, and assigning the row wholesale would
+    // carry it into docData — which is serialized to the browser and handed to
+    // the PDF builder. A type annotation describes a shape; it does not remove
+    // properties at runtime.
+    client: inv.clients
+      ? {
+          name: inv.clients.name,
+          address_line1: inv.clients.address_line1,
+          address_line2: inv.clients.address_line2,
+        }
+      : null,
     lines,
     settings: settings ?? null,
   }
@@ -107,7 +120,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           <SendInvoicePanel
             invoiceId={inv.id}
             data={docData}
-            to={(inv.clients as { billing_email?: string | null } | null)?.billing_email ?? null}
+            to={inv.clients?.billing_email ?? null}
             publicUrlBase={process.env.NEXT_PUBLIC_APP_URL ?? ''}
           />
           <DownloadInvoiceButton data={docData} />

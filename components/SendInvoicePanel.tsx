@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { buildInvoiceEmail } from '@/lib/invoiceEmail'
+import { buildInvoiceEmail } from '@/lib/invoiceEmailBody'
 import { sendInvoice } from '@/app/invoices/actions'
 import type { DocumentData } from '@/components/InvoiceDocument'
 
