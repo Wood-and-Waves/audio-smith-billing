@@ -1,0 +1,17 @@
+-- 0007 — pin pg_temp last on the public invoice reader
+--
+-- public_invoice() is security definer and executable by anon, so it runs with
+-- its owner's rights on a call that never presented a session. 0006 declared
+-- `set search_path = public`, which is not the documented safe form: when
+-- pg_temp is not named, Postgres searches the temporary schema BEFORE the listed
+-- schemas when resolving a relation, so anything able to create a temp table
+-- could shadow `invoices` or `settings` and change what this function reads.
+--
+-- Bounded rather than urgent — the function is stable and read-only, and
+-- PostgREST gives anon no way to CREATE TEMP TABLE — but anon does hold the TEMP
+-- database privilege, and this is the one place in the schema where a
+-- definer-rights function answers an unauthenticated caller.
+--
+-- ALTER FUNCTION, not CREATE OR REPLACE: the body is correct and reviewed, and
+-- restating it here would create a second copy to keep in step with 0006.
+alter function public.public_invoice(uuid) set search_path = public, pg_temp;
