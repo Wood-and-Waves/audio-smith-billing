@@ -18,7 +18,6 @@ export type EditorSettings = {
   remit_to: string | null
   ach_details: string | null
   default_terms_days: number
-  default_tax_bp: number
   next_invoice_number: number
 }
 
@@ -37,9 +36,6 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
 
   const [nextInvoiceNumber, setNextInvoiceNumber] = useState(String(initial.next_invoice_number))
   const [termsDays, setTermsDays] = useState(String(initial.default_terms_days))
-  const [taxPct, setTaxPct] = useState(
-    initial.default_tax_bp ? String(initial.default_tax_bp / 100) : '',
-  )
 
   const [remitTo, setRemitTo] = useState(initial.remit_to ?? '')
   const [achDetails, setAchDetails] = useState(initial.ach_details ?? '')
@@ -58,7 +54,6 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
         remit_to: remitTo,
         ach_details: achDetails,
         default_terms_days: Number(termsDays),
-        default_tax_pct: taxPct,
         next_invoice_number: Number(nextInvoiceNumber),
       })
       if ('error' in result) { setError(result.error); return }
@@ -126,15 +121,6 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
           <label className="eyebrow block mb-2" htmlFor="terms">Default terms (days)</label>
           <input id="terms" type="number" min={0} className={field} value={termsDays}
                  onChange={(e) => setTermsDays(e.target.value)} />
-        </div>
-
-        <div className="sm:col-span-2">
-          <label className="eyebrow block mb-2" htmlFor="tax">Default tax (%)</label>
-          <input id="tax" inputMode="decimal" placeholder="e.g. 8.25" className={field}
-                 value={taxPct} onChange={(e) => setTaxPct(e.target.value)} />
-          <p className="text-xs text-muted mt-1.5">
-            Zero on all 105 invoices to date. The tax line is hidden on an invoice unless it&rsquo;s set.
-          </p>
         </div>
       </div>
 

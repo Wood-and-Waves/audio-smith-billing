@@ -137,7 +137,6 @@ export default function InvoiceEditor({
         issue_date: issueDate,
         terms_days: Number(termsDays) || 30,
         deposit_cents: parseUSD(deposit) ?? 0,
-        tax_bp: 0,
         notes,
         lines: parsed,
       })

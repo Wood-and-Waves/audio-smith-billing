@@ -148,7 +148,10 @@ export function buildInvoicePdf(parts: PdfParts, data: DocumentData, assets: Pdf
             V(s.brandRow, [
               h(Image, { src: assets.logoSrc, style: s.logo }),
               V(null, [
-                T(s.wordmark, ['The Audio ', T({ color: AMBER }, 'Smith')]),
+                // Uppercase to match the screen: components/InvoiceDocument.tsx
+                // renders this wordmark with className="display", and
+                // app/globals.css's .display sets text-transform: uppercase.
+                T(s.wordmark, ['THE AUDIO ', T({ color: AMBER }, 'SMITH')]),
                 T(s.legal, (set?.legal_name ?? 'Smith Audio, LLC').toUpperCase()),
               ]),
             ]),

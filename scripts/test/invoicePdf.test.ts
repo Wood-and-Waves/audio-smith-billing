@@ -48,7 +48,12 @@ const INVOICE: DocumentData = {
   settings: SETTINGS,
 }
 
-// Every string the document would print, in order.
+// Every string the document would print, in order. Text can arrive two ways:
+// as `children` (the common case) or, for @react-pdf/renderer's page-number
+// trick, as a `render` callback the renderer invokes at layout time. Calling
+// only the former would leave that text invisible to every assertion here —
+// including the negative ones (no tax, no routing number, no account
+// number) — so both are walked.
 function textOf(node: unknown, out: string[] = []): string[] {
   if (node === null || node === undefined || typeof node === 'boolean') return out
   if (typeof node === 'string' || typeof node === 'number') {
@@ -59,8 +64,13 @@ function textOf(node: unknown, out: string[] = []): string[] {
     for (const n of node) textOf(n, out)
     return out
   }
-  const props = (node as { props?: { children?: unknown } }).props
+  const props = (node as { props?: { children?: unknown; render?: unknown } }).props
   if (props && 'children' in props) textOf(props.children, out)
+  if (props && typeof props.render === 'function') {
+    textOf((props.render as (arg: { pageNumber: number; totalPages: number }) => unknown)(
+      { pageNumber: 1, totalPages: 2 },
+    ), out)
+  }
   return out
 }
 
@@ -141,6 +151,22 @@ test('a real deposit prints, negated, and the three figures reconcile', () => {
   assert.ok(!all.includes(`−${formatUSD(585000)}`), 'and NOT with a U+2212 minus')
   assert.ok(all.includes(formatUSD(103394)), 'total $1,033.94 prints')
   assert.equal(688394 - 585000, 103394, 'the printed figures reconcile')
+
+  // The three figures above are only proof the *strings* appear somewhere in
+  // the tree — a builder that printed total_cents in the Subtotal row and
+  // subtotal_cents in TOTAL DUE would pass every assertion above while
+  // sending invoice #340 out reading "Subtotal $1,033.94 ... TOTAL DUE
+  // $6,883.94". The tree walk collects strings in document order, so pin
+  // each label to the figure that immediately follows it.
+  const strings = textOf(buildInvoicePdf(PARTS, withDeposit, ASSETS))
+  const labelThenValue = (label: string, value: string) => {
+    const i = strings.indexOf(label)
+    assert.notEqual(i, -1, `"${label}" appears in the document`)
+    assert.equal(strings[i + 1], value, `"${label}" is immediately followed by ${value}`)
+  }
+  labelThenValue('Subtotal', formatUSD(688394))
+  labelThenValue('Deposit received', `-${formatUSD(585000)}`)
+  labelThenValue('TOTAL DUE', formatUSD(103394))
 })
 
 test('lines print in order, one row each', () => {

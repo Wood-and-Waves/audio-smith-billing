@@ -354,18 +354,14 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
 
   if (merged.length === 0) return { error: 'Nothing to bill — those shows have no completed days.' }
 
-  // Terms and tax must match what a client invoiced through InvoiceEditor
-  // would get: InvoiceEditor always overwrites its terms field with the
-  // chosen client's own terms_days (see the client <select> onChange there),
-  // so client.terms_days takes precedence here too. Clients carry no tax
-  // override, so tax_bp comes from the settings row's default.
+  // Terms must match what a client invoiced through InvoiceEditor would get:
+  // InvoiceEditor always overwrites its terms field with the chosen client's
+  // own terms_days (see the client <select> onChange there), so
+  // client.terms_days takes precedence here too. There is no tax to look up
+  // any more — saveInvoice hardcodes tax to zero for every invoice.
   const { data: clientRow } = await supabase
     .from('clients').select('terms_days').eq('id', clientId).maybeSingle()
   const termsDays = clientRow?.terms_days ?? 30
-
-  const { data: settingsRow } = await supabase
-    .from('settings').select('default_tax_bp').eq('id', 1).maybeSingle()
-  const taxBp = settingsRow?.default_tax_bp ?? 0
 
   const { saveInvoice } = await import('@/app/invoices/actions')
   const issue = todayInChicago()
@@ -374,7 +370,6 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
     issue_date: issue,
     terms_days: termsDays,
     deposit_cents: 0,
-    tax_bp: taxBp,
     notes: shows.map((s) => s.name).join(', '),
     lines: merged,
   })

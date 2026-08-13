@@ -11,7 +11,7 @@ export default async function SettingsPage() {
     .from('settings')
     .select(
       `business_name, legal_name, address_line1, address_line2, phone, email,
-       remit_to, ach_details, default_terms_days, default_tax_bp, next_invoice_number`,
+       remit_to, ach_details, default_terms_days, next_invoice_number`,
     )
     .eq('id', 1)
     .maybeSingle()

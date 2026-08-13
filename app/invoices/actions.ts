@@ -17,7 +17,6 @@ export type InvoiceInput = {
   issue_date: string
   terms_days: number
   deposit_cents: number
-  tax_bp: number
   notes: string
   lines: LineInput[]
 }
@@ -39,9 +38,14 @@ export async function saveInvoice(input: InvoiceInput): Promise<SaveResult> {
   const lines = input.lines.filter((l) => l.description.trim() || l.unit_price_cents !== 0)
   if (lines.length === 0) return { error: 'Add at least one line item.' }
 
+  // Tax is hardcoded to zero, not read from the caller: neither renderer
+  // (InvoiceDocument.tsx nor invoicePdf.ts) draws a tax row, so any non-zero
+  // value here would produce a document whose printed total does not add up
+  // to what the client is being asked to pay. See InvoiceInput above — it
+  // has no tax_bp field, so no caller can even attempt to pass one.
   const totals = computeTotals(
     lines.map((l) => ({ qtyHundredths: l.qty_hundredths, unitPriceCents: l.unit_price_cents })),
-    { taxBasisPoints: input.tax_bp, depositCents: input.deposit_cents },
+    { taxBasisPoints: 0, depositCents: input.deposit_cents },
   )
 
   const { data: client } = await supabase
@@ -64,7 +68,7 @@ export async function saveInvoice(input: InvoiceInput): Promise<SaveResult> {
     terms_days: input.terms_days,
     bill_to_snapshot: billTo,
     subtotal_cents: totals.subtotalCents,
-    tax_bp: input.tax_bp,
+    tax_bp: 0,
     tax_cents: totals.taxCents,
     deposit_cents: totals.depositCents,
     total_cents: totals.totalCents,

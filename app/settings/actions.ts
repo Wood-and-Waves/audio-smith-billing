@@ -18,7 +18,6 @@ export type SettingsInput = {
   // off the PDF.
   ach_details: string
   default_terms_days: number
-  default_tax_pct: string // raw user input, e.g. "8.25" -> stored as basis points
   next_invoice_number: number
 }
 
@@ -35,16 +34,6 @@ export async function saveSettings(input: SettingsInput): Promise<Fail | { ok: t
   if (!Number.isFinite(input.default_terms_days) || input.default_terms_days < 0) {
     return { error: 'Default terms must be zero days or more.' }
   }
-
-  // Tax is entered as a percentage and stored as basis points.
-  const pctRaw = input.default_tax_pct.trim()
-  const pct = pctRaw === '' ? 0 : Number(pctRaw)
-  if (!Number.isFinite(pct)) {
-    return { error: `Couldn't read "${input.default_tax_pct}" as a tax rate. Try something like 8.25.` }
-  }
-  const taxBp = Math.round(pct * 100)
-  if (taxBp < 0) return { error: 'Default tax cannot be negative.' }
-  if (taxBp > 10000) return { error: 'Default tax cannot be over 100%.' }
 
   if (!Number.isFinite(input.next_invoice_number) || !Number.isInteger(input.next_invoice_number)) {
     return { error: 'Next invoice number must be a whole number.' }
@@ -70,7 +59,6 @@ export async function saveSettings(input: SettingsInput): Promise<Fail | { ok: t
     remit_to: input.remit_to.trim() || null,
     ach_details: input.ach_details.trim() || null,
     default_terms_days: input.default_terms_days,
-    default_tax_bp: taxBp,
     next_invoice_number: input.next_invoice_number,
   }
 

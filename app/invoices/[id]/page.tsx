@@ -25,6 +25,12 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
       )
       .eq('id', id)
       .maybeSingle(),
+    // docData below (including this whole settings object) is passed to a
+    // client component and so gets serialized into the page payload sent to
+    // the browser. This explicit column list is the only thing keeping
+    // ach_details — bank transfer details — out of that payload. Never widen
+    // this to select('*'): that would ship bank details to the browser on
+    // every invoice view.
     supabase
       .from('settings')
       .select('business_name, legal_name, address_line1, address_line2, phone, email, remit_to')
