@@ -12,8 +12,9 @@ import { formatDateLong } from '@/lib/dates'
 // Three deliberate departures from the old spreadsheet template:
 //   1. No reserved empty rows. A one-line invoice is a short invoice; the
 //      totals sit under the line they total.
-//   2. Zero-value rows are omitted. Tax has been 0% on all 105 invoices and
-//      printing "TAX 0%" on every one is noise.
+//   2. There is no tax row at all. Tax is 0% on all 105 invoices ever issued,
+//      so the row was noise; the deposit row survives because 16 invoices
+//      really carry one. A zero deposit is omitted, a real one is printed.
 //   3. Remit-to always prints. ACH details never do — clients ask for those,
 //      and bank numbers on a forwarded PDF are an unnecessary exposure.
 
@@ -153,13 +154,6 @@ export default function InvoiceDocument({ data }: { data: DocumentData }) {
               <dd className="tabular">{formatUSD(data.subtotal_cents)}</dd>
             </div>
 
-            {data.tax_bp > 0 && (
-              <div className="flex justify-between py-1 text-sm">
-                <dt className="text-neutral-600">Tax ({(data.tax_bp / 100).toFixed(2)}%)</dt>
-                <dd className="tabular">{formatUSD(data.tax_cents)}</dd>
-              </div>
-            )}
-
             {data.deposit_cents !== 0 && (
               <div className="flex justify-between py-1 text-sm">
                 <dt className="text-neutral-600">Deposit received</dt>
@@ -201,6 +195,14 @@ export default function InvoiceDocument({ data }: { data: DocumentData }) {
             )}
           </footer>
         )}
+
+        {/* The old spreadsheet template signed off every one of 105 invoices
+            with "THANK YOU FOR YOUR BUSINESS!". It was the only wording the
+            data-only rebuild dropped, restored here in the document's own
+            voice rather than the template's capitals. */}
+        <p className="mt-10 text-center text-[11px] text-neutral-500">
+          Thank you for your business!
+        </p>
       </div>
     </article>
   )
