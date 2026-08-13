@@ -31,17 +31,25 @@
 
 ## The live data this must not break
 
-There is one show in production: **PwC Tax Start Sept - Orlando, FL** (Streamline, $780/day, OT
-after 11h, status `open`). It has two days, neither punched:
+Checked immediately before implementation, 2026-08-13:
 
-| date | current `day_type` | becomes |
-|---|---|---|
-| 2026-08-11 | `pm` | deleted — no punches, so no time was recorded |
-| 2026-08-28 | `travel` | a day with `travel_in = true` |
+| table | rows |
+|---|---|
+| `shows` | 1 — *PwC Tax Start Sept - Orlando, FL* (Streamline, $780/day, OT after 11h, `open`) |
+| `show_days` | **0** |
+| `punches` | **0** |
+| `invoices` / `clients` | 105 / 19 — must be untouched |
 
-The migration must handle both, and a punched `pm` day (none exist today, but the migration must
-be correct regardless) must convert to a `pm_entries` row carrying its computed minutes rather than
-being silently dropped.
+The show's two days were deleted by the owner before this ran, so **the conversion branches in the
+migration will match nothing**. Do not treat that as a failure, and do not "fix" the migration
+because its `update` and `insert` report zero rows.
+
+Those branches still have to be written and still have to be correct: this migration will run again
+on any future rebuild of the database from `scripts/sql/migrations/`, when rows may well exist. A
+migration that is only correct against today's empty tables is a bug waiting for a restore.
+
+Verify against what is actually there: the columns and constraints change shape, and the 105
+invoices and 19 clients survive.
 
 ---
 
@@ -150,7 +158,8 @@ npm run db:migrate
 
 Then verify with real query output in your report:
 - `show_days` has no `day_type` column and a unique constraint on `(show_id, date)`.
-- The PwC show's 8/28 day has `travel_in = true`; its 8/11 PM day is gone.
+- `show_days` still has 0 rows and the single `shows` row survives untouched — the conversion
+  branches match nothing today, which is expected, not a failure.
 - `pm_entries` has RLS on, one policy, and zero `anon` privileges.
 - 105 invoices and 19 clients are untouched.
 
