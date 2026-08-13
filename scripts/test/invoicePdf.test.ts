@@ -78,6 +78,29 @@ test('every money string is formatUSD of the stored cents, never recomputed', ()
   }
 })
 
+test('stored cents print even when they disagree with qty x price', () => {
+  // Dan's history holds both $106.36 and $106.37 as the overtime rate for the
+  // same computed figure — the same maths rounded two ways, years apart. An
+  // invoice that was sent at the rounded-up total must re-export at that
+  // total, so this fixture stores a line total one cent away from what
+  // qty x unit_price would give and asserts the stored value is what prints.
+  const drifted: DocumentData = {
+    ...INVOICE,
+    subtotal_cents: 116997,   // recomputing 11 x 10636 would give 116996
+    total_cents: 116997,
+    lines: [{
+      id: 'l1',
+      description: 'Overtime',
+      qty_hundredths: 1100,
+      unit_price_cents: 10636,
+      line_total_cents: 116997,
+    }],
+  }
+  const all = textOf(buildInvoicePdf(PARTS, drifted, ASSETS))
+  assert.ok(all.includes(formatUSD(116997)), 'the stored $1,169.97 prints')
+  assert.ok(!all.includes(formatUSD(116996)), 'the recomputed $1,169.96 never appears')
+})
+
 test('dates print as the dates they are, not a day early', () => {
   const all = joined(INVOICE)
   assert.ok(all.includes('8/7/2026'), 'issue date prints 8/7/2026')
