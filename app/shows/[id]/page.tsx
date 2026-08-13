@@ -11,6 +11,9 @@ import ShowDayControls from '@/components/ShowDayControls'
 import ShowSettings from '@/components/ShowSettings'
 import HalfDayToggle from '@/components/HalfDayToggle'
 import RemoveDayButton from '@/components/RemoveDayButton'
+import TravelLegToggle from '@/components/TravelLegToggle'
+import PmLog from '@/components/PmLog'
+import DeleteShowButton from '@/components/DeleteShowButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -85,6 +88,12 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
     .filter((d) => isIncompleteDay(d.punches))
     .map((d) => formatDateShort(d.date))
 
+  // Counts DeleteShowButton needs to name what a delete destroys, and the
+  // date ShowDayControls needs to default the next range's From to the day
+  // after this show's last existing day.
+  const punchCount = days.reduce((t, d) => t + d.punches.length, 0)
+  const lastDayDate = days.length > 0 ? days[days.length - 1].date : null
+
   return (
     <AppShell current="shows">
       <div className="mb-8">
@@ -133,15 +142,19 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
                         d.travel_in && 'travel in',
                         d.travel_out && 'travel out',
                         d.pay_as_half_day && 'half day',
+                        // A day carrying a travel leg but no punches (e.g. a
+                        // pure fly-in day) is intentional, not an unfinished
+                        // day someone forgot to punch — say so.
+                        d.punches.length === 0 && (d.travel_in || d.travel_out) && 'travel only',
                       ].filter(Boolean).join(' · ')}
                     </span>
                     <RemoveDayButton showDayId={d.id} date={d.date} locked={locked} />
                   </span>
                 </div>
                 {/* Every show_days row is a work day now (migration 0005 dropped
-                    day_type); travel is an orthogonal flag, so punches and the
-                    half-day toggle always apply — a day flown in and worked
-                    still needs both. Travel-leg checkboxes land in Task 4. */}
+                    day_type); travel is an orthogonal flag, so punches, the
+                    travel-leg checkboxes and the half-day toggle all apply
+                    together — a day flown in and worked still needs all three. */}
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                   <PunchClock
                     showId={s.id}
@@ -150,6 +163,10 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
                     punches={d.punches}
                     locked={locked}
                   />
+                  <span className="flex flex-wrap items-center gap-3">
+                    <TravelLegToggle showDayId={d.id} leg="in" checked={d.travel_in} locked={locked} />
+                    <TravelLegToggle showDayId={d.id} leg="out" checked={d.travel_out} locked={locked} />
+                  </span>
                   {
                     // The toggle only appears under 5 net hours — a half
                     // day is meant for a short call, not a full one — but
@@ -170,6 +187,8 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
           </ul>
         )}
       </section>
+
+      <PmLog showId={s.id} entries={s.pm_entries} locked={locked} />
 
       <section className="mb-10">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-4">
@@ -201,7 +220,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
         )}
       </section>
 
-      <section>
+      <section className="mb-10">
         <h2 className="eyebrow mb-4">{locked ? 'Billed' : 'Actions'}</h2>
         <ShowDayControls
           showId={s.id}
@@ -209,6 +228,17 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
           invoiceId={s.invoice_id}
           hasLines={lines.length > 0}
           incompleteDates={incompleteDates}
+          lastDayDate={lastDayDate}
+        />
+      </section>
+
+      <section className="pt-6 border-t border-line">
+        <DeleteShowButton
+          showId={s.id}
+          locked={locked}
+          dayCount={days.length}
+          punchCount={punchCount}
+          pmEntryCount={s.pm_entries.length}
         />
       </section>
     </AppShell>

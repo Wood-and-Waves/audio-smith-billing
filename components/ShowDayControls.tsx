@@ -4,27 +4,36 @@ import Link from 'next/link'
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { addShowDays, billShows, unlinkShow } from '@/app/shows/actions'
-import { todayInChicago } from '@/lib/dates'
+import { todayInChicago, addDays } from '@/lib/dates'
 
 const field =
   'w-full px-3 py-2 bg-surface border border-line rounded-field text-ink text-sm ' +
   'focus:border-accent focus:outline-none'
 
+// From defaults to the day after the show's last existing day, not today —
+// on an in-progress multi-day trip "today" is nearly always wrong, and every
+// add used to start by correcting the date. To matches From, so adding a
+// single day is still one click.
+function defaultRangeStart(lastDayDate: string | null): string {
+  return lastDayDate ? addDays(lastDayDate, 1) : todayInChicago()
+}
+
 export default function ShowDayControls({
-  showId, status, invoiceId, hasLines, incompleteDates,
+  showId, status, invoiceId, hasLines, incompleteDates, lastDayDate,
 }: {
   showId: string
   status: string
   invoiceId: string | null
   hasLines: boolean
   incompleteDates: string[]
+  lastDayDate: string | null
 }) {
   const router = useRouter()
   const [pending, start] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
-  const [startDate, setStartDate] = useState(todayInChicago())
-  const [endDate, setEndDate] = useState(todayInChicago())
+  const [startDate, setStartDate] = useState(() => defaultRangeStart(lastDayDate))
+  const [endDate, setEndDate] = useState(() => defaultRangeStart(lastDayDate))
 
   function addDayRange() {
     setError(null)
@@ -32,11 +41,18 @@ export default function ShowDayControls({
     start(async () => {
       const result = await addShowDays(showId, startDate, endDate)
       if ('error' in result) { setError(result.error); return }
+      const dayWord = (n: number) => `${n} day${n === 1 ? '' : 's'}`
       setInfo(
         result.skipped > 0
-          ? `${result.created} added, ${result.skipped} already there.`
-          : `${result.created} added.`,
+          ? `${dayWord(result.created)} added, ${result.skipped} ${result.skipped === 1 ? 'was' : 'were'} already there.`
+          : `${dayWord(result.created)} added.`,
       )
+      // Slide the range forward, so a second add right after (e.g. filling
+      // in the rest of a trip) starts the day after what was just
+      // requested rather than sitting on a now-stale date.
+      const next = addDays(endDate, 1)
+      setStartDate(next)
+      setEndDate(next)
       router.refresh()
     })
   }

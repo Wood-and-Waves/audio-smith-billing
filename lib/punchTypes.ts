@@ -21,5 +21,3 @@ export const MEAL_PAIRS: readonly (readonly [PunchType, PunchType])[] = [
   ['meal_out', 'meal_in'],
   ['meal2_out', 'meal2_in'],
 ] as const
-
-export type DayType = 'show' | 'travel' | 'pm'
