@@ -4,6 +4,9 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { computeTotals } from '@/lib/money'
 import { addDays } from '@/lib/dates'
+import { buildInvoicePdf } from '@/lib/invoicePdf'
+import { sendInvoiceEmail } from '@/lib/invoiceEmail'
+import type { DocumentData } from '@/components/InvoiceDocument'
 
 export type LineInput = {
   description: string
@@ -130,5 +133,165 @@ export async function setInvoiceStatus(
 
   revalidatePath('/invoices')
   revalidatePath(`/invoices/${id}`)
+  return { ok: true }
+}
+
+/**
+ * Emails an invoice: PDF attached, plus a link to the public copy.
+ *
+ * ORDERING IS DELIBERATE. The status and sent_at are written only AFTER the
+ * send succeeds. If that write then fails, Dan has an invoice a client received
+ * that the app still calls a draft — visible, and correctable by hand. The
+ * reverse order would mark an invoice sent that never left, which nobody would
+ * ever notice.
+ *
+ * draft, sent and paid are all sendable: a draft is the normal case, sending a
+ * sent invoice again is a resend, and a paid one is occasionally wanted as a
+ * receipt. Only void is refused — a voided invoice must never reach a client.
+ */
+export async function sendInvoice(
+  invoiceId: string, note: string,
+): Promise<{ error: string } | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL
+  if (!appUrl) return { error: 'Email is not configured yet (NEXT_PUBLIC_APP_URL is missing).' }
+
+  const [{ data: invoice }, { data: settings }] = await Promise.all([
+    supabase
+      .from('invoices')
+      .select(
+        `id, number, issue_date, due_date, terms_days, status, bill_to_snapshot,
+         subtotal_cents, tax_bp, tax_cents, deposit_cents, total_cents, notes, imported,
+         public_token,
+         clients(name, address_line1, address_line2, billing_email),
+         invoice_lines(id, position, description, qty_hundredths, unit_price_cents, line_total_cents)`,
+      )
+      .eq('id', invoiceId)
+      .maybeSingle(),
+    supabase
+      .from('settings')
+      // Explicit columns. ach_details must never join this list — it would then
+      // travel into the email builder and, from there, to a client.
+      .select('business_name, legal_name, address_line1, address_line2, phone, email, remit_to')
+      .eq('id', 1)
+      .maybeSingle(),
+  ])
+
+  if (!invoice) return { error: 'That invoice no longer exists.' }
+
+  const inv = invoice as unknown as {
+    id: string; number: number; issue_date: string; due_date: string; terms_days: number
+    status: 'draft' | 'sent' | 'paid' | 'void'; bill_to_snapshot: string | null
+    subtotal_cents: number; tax_bp: number; tax_cents: number; deposit_cents: number
+    total_cents: number; notes: string | null; imported: boolean
+    public_token: string | null
+    clients: { name: string; address_line1: string | null; address_line2: string | null; billing_email: string | null } | null
+    invoice_lines: { id: string; position: number; description: string; qty_hundredths: number; unit_price_cents: number; line_total_cents: number }[]
+  }
+
+  if (inv.status === 'void') {
+    return { error: `Invoice #${inv.number} is void. Voided invoices are not sent.` }
+  }
+
+  const to = inv.clients?.billing_email?.trim()
+  if (!to) {
+    return {
+      error: `${inv.clients?.name ?? 'This client'} has no billing email on file, ` +
+        'so there is nowhere to send it. Add one on the client screen.',
+    }
+  }
+
+  // Mint the link on first send. Historical invoices stay tokenless until they
+  // are actually sent from here.
+  let token = inv.public_token
+  if (!token) {
+    token = crypto.randomUUID()
+    const { error: tokErr } = await supabase
+      .from('invoices').update({ public_token: token }).eq('id', invoiceId)
+    if (tokErr) return { error: tokErr.message }
+  }
+
+  const lines = [...(inv.invoice_lines ?? [])].sort((a, b) => a.position - b.position)
+
+  const data: DocumentData = {
+    number: inv.number,
+    issue_date: inv.issue_date,
+    due_date: inv.due_date,
+    terms_days: inv.terms_days,
+    bill_to_snapshot: inv.bill_to_snapshot,
+    subtotal_cents: inv.subtotal_cents,
+    tax_bp: inv.tax_bp,
+    tax_cents: inv.tax_cents,
+    deposit_cents: inv.deposit_cents,
+    total_cents: inv.total_cents,
+    notes: inv.imported ? null : inv.notes,
+    client: inv.clients
+      ? {
+          name: inv.clients.name,
+          address_line1: inv.clients.address_line1,
+          address_line2: inv.clients.address_line2,
+        }
+      : null,
+    lines,
+    settings: settings ?? null,
+  }
+
+  // Rendered from the SAME builder as the download button, so the attachment
+  // cannot differ from what was approved on screen.
+  //
+  // Absolute paths from process.cwd(), NOT relative ones. The browser fetches
+  // these over HTTP; here they are read off the serverless filesystem, and a
+  // relative path depends on a working directory nobody controls. next.config
+  // must also trace them into this route's bundle — Vercel serves public/ from
+  // the CDN and does not otherwise put it in the function.
+  const { join } = await import('node:path')
+  const { Document, Page, Text, View, Image, Font, renderToBuffer } =
+    await import('@react-pdf/renderer')
+  Font.register({
+    family: 'Oswald',
+    src: join(process.cwd(), 'public', 'fonts', 'Oswald-Bold.ttf'),
+    fontWeight: 700,
+  })
+  const pdf = await renderToBuffer(
+    buildInvoicePdf(
+      { Document, Page, Text, View, Image },
+      data,
+      { logoSrc: join(process.cwd(), 'public', 'logo.png') },
+    ),
+  )
+
+  const result = await sendInvoiceEmail({
+    to,
+    invoice: data,
+    publicUrl: `${appUrl.replace(/\/+$/, '')}/i/${token}`,
+    note,
+    // From Settings, not hardcoded — it is already editable there, and a
+    // second copy in code is one that goes stale silently. The fallback only
+    // covers a settings row with no email at all.
+    replyTo: settings?.email ?? 'dan@theaudiosmith.com',
+    pdf,
+  })
+  if (result.error) return { error: result.error }
+
+  // Only now. See the note above about ordering.
+  const { error: markErr } = await supabase
+    .from('invoices')
+    .update({
+      sent_at: new Date().toISOString(),
+      ...(inv.status === 'draft' ? { status: 'sent' } : {}),
+    })
+    .eq('id', invoiceId)
+  if (markErr) {
+    return {
+      error: `Invoice #${inv.number} was emailed to ${to}, but recording that failed: ` +
+        `${markErr.message}. The client has it; the status here is stale.`,
+    }
+  }
+
+  revalidatePath(`/invoices/${invoiceId}`)
+  revalidatePath('/invoices')
   return { ok: true }
 }

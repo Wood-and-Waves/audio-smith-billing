@@ -6,6 +6,7 @@ import { displayStatus, daysUntilDue, STATUS_META, todayInChicago } from '@/lib/
 import AppShell from '@/components/AppShell'
 import InvoiceDocument, { type DocumentData } from '@/components/InvoiceDocument'
 import DownloadInvoiceButton from '@/components/DownloadInvoiceButton'
+import SendInvoicePanel from '@/components/SendInvoicePanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,7 +21,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
       .select(
         `id, number, issue_date, due_date, terms_days, status, bill_to_snapshot,
          subtotal_cents, tax_bp, tax_cents, deposit_cents, total_cents, notes, imported,
-         clients(name, address_line1, address_line2),
+         clients(name, address_line1, address_line2, billing_email),
          invoice_lines(id, position, description, qty_hundredths, unit_price_cents, line_total_cents)`,
       )
       .eq('id', id)
@@ -103,6 +104,12 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           ← All invoices
         </Link>
         <div className="flex items-center gap-5">
+          <SendInvoicePanel
+            invoiceId={inv.id}
+            data={docData}
+            to={(inv.clients as { billing_email?: string | null } | null)?.billing_email ?? null}
+            publicUrlBase={process.env.NEXT_PUBLIC_APP_URL ?? ''}
+          />
           <DownloadInvoiceButton data={docData} />
           <Link
             href={`/invoices/${inv.id}/edit`}
