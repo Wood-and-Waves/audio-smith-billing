@@ -1189,14 +1189,17 @@ was marked sent:
 
 ```bash
 npm run db:sql -- /dev/stdin <<'EOF'
-select count(*) as sent_or_tokened
-  from invoices
- where sent_at is not null or public_token is not null;
+select count(*) as tokened from invoices where public_token is not null;
 EOF
 ```
 
-Expected: `0`. Record this number before and after any manual UI poking; it must
-not change while the key is absent.
+Expected: `0`.
+
+**Do not also check `sent_at is null` here.** All 105 imported invoices already
+carry a `sent_at` from the historical import, so that count is 105 before this
+feature exists and would read as a failure. `public_token` is the honest signal:
+it is null on every invoice until something actually sends one, so a non-zero
+count means a send got further than it should have.
 
 - [ ] **Step 6: Commit**
 
