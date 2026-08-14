@@ -7,7 +7,7 @@
 // Pure: no database, no clock, no rendering. No '@/' imports and no JSX.
 
 import {
-  paidNetHours, paidStraightTimeHours, paidOvertimeHours, paidDoubleTimeHours,
+  paidStraightTimeHours, paidOvertimeHours, paidDoubleTimeHours, mealDeductionMinutes,
   mealPenaltyCount, type ShowDayLike, type ShowRuleset,
 } from './payroll.ts'
 import { instantToWall, friendlyTime } from './zonedTime.ts'
@@ -67,15 +67,6 @@ export function dayLabel(iso: string): string {
   return `${WEEKDAYS[at.getUTCDay()]} ${m}/${d}`
 }
 
-/** Minutes deducted for a meal, from the paired meal punches. */
-function mealMinutes(day: ShowDayLike): number {
-  const out = day.punches.find((p) => p.punch_type === 'meal_out')
-  const back = day.punches.find((p) => p.punch_type === 'meal_in')
-  if (!out || !back) return 0
-  return Math.round(
-    (new Date(back.punched_at).getTime() - new Date(out.punched_at).getTime()) / 60000)
-}
-
 /**
  * Freezes a set of billed shows into the document that backs their invoice.
  *
@@ -97,6 +88,12 @@ export function buildBackupSnapshot(
         const end = d.punches.find((p) => p.punch_type === 'end')
         const complete = Boolean(start && end)
 
+        // Every column is a BILLED figure, from the same functions that price
+        // the invoice.
+        const st = complete ? paidStraightTimeHours(d, s.days, s.rules) : 0
+        const ot = complete ? paidOvertimeHours(d, s.days, s.rules) : 0
+        const dt = complete ? paidDoubleTimeHours(d, s.days, s.rules) : 0
+
         return {
           day: dayLabel(d.date),
           // Formatted HERE, in the show's zone, and stored as text. Keeping the
@@ -104,16 +101,17 @@ export function buildBackupSnapshot(
           // show's timezone retro-shift times a client already received.
           in: complete ? friendlyTime(instantToWall(start!.punched_at, s.timezone).time) : null,
           out: complete ? friendlyTime(instantToWall(end!.punched_at, s.timezone).time) : null,
-          meal_minutes: mealMinutes(d),
-          // paidNetHours, NOT calculateNetHours. Hours bill ceiling-rounded
-          // per day, so a 12.5 hour day is charged as 13 — and ST and OT are
-          // derived from that same ceiling. Storing the raw 12.5 here would
-          // print NET 12.5 beside ST 10.0 and OT 3.0: columns that visibly do
-          // not add up, on the one page whose job is to prevent a dispute.
-          net_hours: complete ? paidNetHours(d, s.rules) : 0,
-          st_hours: complete ? paidStraightTimeHours(d, s.days, s.rules) : 0,
-          ot_hours: complete ? paidOvertimeHours(d, s.days, s.rules) : 0,
-          dt_hours: complete ? paidDoubleTimeHours(d, s.days, s.rules) : 0,
+          // What was actually deducted, not the gap between the punches — the
+          // deduction honours a minimum, a per-break cap, and both meal pairs.
+          meal_minutes: complete ? mealDeductionMinutes(d, s.rules) : 0,
+          // The SUM, not paidNetHours. A short-turnaround day carries a
+          // minimum-call guarantee: four hours worked can bill ten, so
+          // paidNetHours would print NET 4.0 beside DT 10.0 and the row would
+          // be off by six hours. NET is what the day bills, which is its parts.
+          net_hours: st + ot + dt,
+          st_hours: st,
+          ot_hours: ot,
+          dt_hours: dt,
           travel_in: d.travel_in,
           travel_out: d.travel_out,
           half_day: d.pay_as_half_day,

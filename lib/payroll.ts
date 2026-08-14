@@ -54,6 +54,35 @@ function mealBreakPairs(d: ShowDayLike): [Date, Date][] {
 const hasBothEnds = (d: ShowDayLike) =>
   !!punchTime(d.punches, 'start') && !!punchTime(d.punches, 'end')
 
+/**
+ * Seconds actually removed from a day for meals.
+ *
+ * Extracted from calculateNetHours so the backup page can print the SAME figure
+ * it deducted. A second implementation would drift: this one honours the
+ * minimum-break threshold, the per-break cap, and BOTH meal pairs, and a naive
+ * "gap between meal_out and meal_in" gets all three wrong — showing 90 minutes
+ * where 60 was deducted, or 30 where two breaks took 60.
+ */
+function mealDeductionSeconds(d: ShowDayLike, rules: ShowRuleset): number {
+  if (rules.continuous_time_enabled) return 0
+  const minBreak = rules.minimum_meal_break_enabled ? rules.minimum_meal_break_minutes * 60 : 0
+  const cap = rules.meal_break_deduction_cap * 60
+  let deduction = 0
+  for (const [out, back] of mealBreakPairs(d)) {
+    const duration = (back.getTime() - out.getTime()) / 1000
+    // duration > 0 guards a reversed pair. chronologyError already refuses to
+    // record one, so this only matters for data that predates that rule — but
+    // without it a negative "break" would ADD paid time.
+    if (duration > 0 && duration >= minBreak) deduction += Math.min(duration, cap)
+  }
+  return deduction
+}
+
+/** The same deduction, in whole minutes, for display on the backup page. */
+export function mealDeductionMinutes(d: ShowDayLike, rules: ShowRuleset): number {
+  return Math.round(mealDeductionSeconds(d, rules) / 60)
+}
+
 export function calculateNetHours(d: ShowDayLike, rules: ShowRuleset, roundingMinutes = 1): number {
   const start = punchTime(d.punches, 'start')
   const end = punchTime(d.punches, 'end')
@@ -61,19 +90,7 @@ export function calculateNetHours(d: ShowDayLike, rules: ShowRuleset, roundingMi
 
   const grossSeconds = (end.getTime() - start.getTime()) / 1000
 
-  let netSeconds: number
-  if (rules.continuous_time_enabled) {
-    netSeconds = Math.max(0, grossSeconds)
-  } else {
-    const minBreak = rules.minimum_meal_break_enabled ? rules.minimum_meal_break_minutes * 60 : 0
-    const cap = rules.meal_break_deduction_cap * 60
-    let deduction = 0
-    for (const [out, back] of mealBreakPairs(d)) {
-      const duration = (back.getTime() - out.getTime()) / 1000
-      if (duration >= minBreak) deduction += Math.min(duration, cap)
-    }
-    netSeconds = Math.max(0, grossSeconds - deduction)
-  }
+  const netSeconds = Math.max(0, grossSeconds - mealDeductionSeconds(d, rules))
 
   const netMinutes = Math.round(netSeconds / 60)
   const interval = roundingMinutes > 0 ? roundingMinutes : 1

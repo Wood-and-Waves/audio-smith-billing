@@ -181,3 +181,88 @@ test('the columns add up on a day whose hours are not whole', () => {
   assert.equal(snap.total_st + snap.total_ot + snap.total_dt, snap.total_net,
     'and the same at the foot of the page')
 })
+
+// The paths the original fixtures never ran. All three defects below shipped
+// with a green suite because RULES hardcoded short_turn_penalty_enabled: false
+// and no test used a second meal pair or a capped break.
+
+test('the columns add up on a short-turnaround day', () => {
+  // rulesetAndRatesFor hardcodes short_turn_penalty_enabled: true for EVERY
+  // real show, so this is the live path, not an exotic one. Such a day carries
+  // a minimum-call guarantee: paidDoubleTimeHours returns max(worked, the OT
+  // threshold), so four hours worked bills ten. Taking NET from paidNetHours
+  // printed NET 4.0 beside DT 10.0 — a row off by six hours.
+  const rules = { ...RULES, short_turn_penalty_enabled: true }
+  const first = day('2026-08-30', '13:00', '03:00')       // ends 11pm Eastern
+  const short = day('2026-08-31', '08:00', '12:00')       // back 5 hours later, works 4
+  const snap = buildBackupSnapshot({
+    shows: [show([first, short], { rules })], showHours: true,
+  })
+
+  for (const d of snap.shows[0].days) {
+    assert.equal(d.st_hours + d.ot_hours + d.dt_hours, d.net_hours,
+      `${d.day}: ST + OT + DT must equal the NET the row claims`)
+  }
+  const shortDay = snap.shows[0].days[1]
+  assert.ok(shortDay.dt_hours >= rules.overtime_after_hours,
+    'the guarantee is what makes this day worth testing')
+  assert.equal(snap.total_st + snap.total_ot + snap.total_dt, snap.total_net)
+})
+
+test('the columns add up with double time enabled', () => {
+  const rules = { ...RULES, double_time_enabled: true, double_time_after_hours: 12 }
+  const long = day('2026-08-30', '11:00', '03:00')  // 16 hours
+  const snap = buildBackupSnapshot({ shows: [show([long], { rules })], showHours: true })
+  const d = snap.shows[0].days[0]
+  assert.ok(d.dt_hours > 0, 'this fixture is meant to reach double time')
+  assert.equal(d.st_hours + d.ot_hours + d.dt_hours, d.net_hours)
+})
+
+test('the meal column shows what was deducted, across both breaks', () => {
+  // A day with TWO meal breaks. Reading only meal_out/meal_in reported half the
+  // deduction, so the client could not reconcile the NET figure from the row.
+  const d = {
+    id: 'd1', date: '2026-08-30', travel_in: false, travel_out: false, pay_as_half_day: false,
+    punches: [
+      { punch_type: 'start', punched_at: '2026-08-30T12:00:00.000Z' },
+      { punch_type: 'meal_out', punched_at: '2026-08-30T16:00:00.000Z' },
+      { punch_type: 'meal_in', punched_at: '2026-08-30T16:30:00.000Z' },
+      { punch_type: 'meal2_out', punched_at: '2026-08-30T21:00:00.000Z' },
+      { punch_type: 'meal2_in', punched_at: '2026-08-30T21:30:00.000Z' },
+      { punch_type: 'end', punched_at: '2026-08-31T00:00:00.000Z' },
+    ],
+  } as unknown as ShowDayLike
+  const snap = buildBackupSnapshot({ shows: [show([d])], showHours: true })
+  assert.equal(snap.shows[0].days[0].meal_minutes, 60, 'both breaks, not just the first')
+})
+
+test('the meal column is capped the way the deduction is capped', () => {
+  // A 90 minute break against a 60 minute cap deducts 60. Printing 90 would
+  // leave the client an unexplained half hour between the clock times and NET.
+  const d = {
+    id: 'd1', date: '2026-08-30', travel_in: false, travel_out: false, pay_as_half_day: false,
+    punches: [
+      { punch_type: 'start', punched_at: '2026-08-30T12:00:00.000Z' },
+      { punch_type: 'meal_out', punched_at: '2026-08-30T16:00:00.000Z' },
+      { punch_type: 'meal_in', punched_at: '2026-08-30T17:30:00.000Z' },
+      { punch_type: 'end', punched_at: '2026-08-31T00:00:00.000Z' },
+    ],
+  } as unknown as ShowDayLike
+  const snap = buildBackupSnapshot({ shows: [show([d])], showHours: true })
+  assert.equal(snap.shows[0].days[0].meal_minutes, 60, 'the cap, not the 90 minutes taken')
+})
+
+test('a reversed meal pair never produces a negative deduction', () => {
+  const d = {
+    id: 'd1', date: '2026-08-30', travel_in: false, travel_out: false, pay_as_half_day: false,
+    punches: [
+      { punch_type: 'start', punched_at: '2026-08-30T12:00:00.000Z' },
+      { punch_type: 'meal_out', punched_at: '2026-08-30T16:30:00.000Z' },
+      { punch_type: 'meal_in', punched_at: '2026-08-30T16:00:00.000Z' },
+      { punch_type: 'end', punched_at: '2026-08-31T00:00:00.000Z' },
+    ],
+  } as unknown as ShowDayLike
+  const snap = buildBackupSnapshot({ shows: [show([d])], showHours: true })
+  assert.ok(snap.shows[0].days[0].meal_minutes >= 0,
+    'a negative break would ADD paid time and print a negative on the invoice')
+})
