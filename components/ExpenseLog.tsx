@@ -25,6 +25,12 @@ const field =
 /** Receipts arrive as photographs or as emailed PDFs. Both end up a JPEG. */
 const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name)
 
+/** "vendor", "vendor and amount", "vendor, amount and date" — never an Oxford comma. */
+function joinFieldNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? ''
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+}
+
 /**
  * Draws the first page of a PDF onto a canvas.
  *
@@ -335,25 +341,35 @@ export default function ExpenseLog({
       }
 
       const { fields } = result
-      let filled = false
+      // Named, not just counted — the note below says exactly which fields
+      // came from the photo. "Filled in from the photo — check it" used to
+      // claim the whole form when only some fields were empty to fill, which
+      // is what let a stale spentOn/category (now reset above on save, but
+      // still possible mid-batch before Add) hide in plain sight next to a
+      // note that implied the photo vouched for it too.
+      const filledFields: string[] = []
       if (fields.vendor !== null && !touchedRef.current.has('vendor')) {
         setWhereSpent(fields.vendor)
-        filled = true
+        filledFields.push('vendor')
       }
       if (fields.amountCents !== null && !touchedRef.current.has('amount')) {
         setAmount(formatAmount(fields.amountCents))
-        filled = true
+        filledFields.push('amount')
       }
       if (fields.spentOn !== null && !touchedRef.current.has('date')) {
         setSpentOn(fields.spentOn)
-        filled = true
+        filledFields.push('date')
       }
       if (fields.category !== null && !touchedRef.current.has('category')) {
         setCategory(fields.category)
-        filled = true
+        filledFields.push('category')
       }
 
-      setOcrNote(filled ? 'Filled in from the photo — check it.' : "Couldn't read that one — type it in.")
+      setOcrNote(
+        filledFields.length > 0
+          ? `Filled in the ${joinFieldNames(filledFields)} — check the rest.`
+          : "Couldn't read that one — type it in.",
+      )
     } catch {
       if (myToken === tokenRef.current) setOcrNote("Couldn't read that one — type it in.")
     }
@@ -394,13 +410,23 @@ export default function ExpenseLog({
 
         setWhereSpent('')
         setAmount('')
+        // spentOn and category reset too, not just whereSpent/amount. Before
+        // OCR they could only hold todayInChicago() or something Dan
+        // personally chose, so carrying them into the next entry was a
+        // convenience. Now they can hold the PREVIOUS receipt's OCR values,
+        // and if the next photo's read comes back null for date or category
+        // (which the extractor does on purpose when it isn't sure), that
+        // stale value would silently ride along under a note that claims the
+        // photo filled it in. A batch of receipts is common enough (a whole
+        // trip's worth at once) that this is worth the retyping.
+        setSpentOn(todayInChicago())
+        setCategory('meals')
         // THE SHARP EDGE: clear the capture — file, both paths, the token
         // (already bumped above) and the touched set — right alongside the
         // fields already reset above. Leaving any of it would let the next
         // Add attach this SAME receipt_path to a second expense: two rows
         // pointing at one file, where deleteExpense on either removes the
-        // file the other still depends on. category and spentOn are
-        // deliberately left alone, as before.
+        // file the other still depends on.
         setCapture(null)
         setOcrNote(null)
         touchedRef.current = new Set()
