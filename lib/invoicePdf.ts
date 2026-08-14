@@ -6,8 +6,11 @@
 // same ones server-side. One builder, so the file Dan approves on screen and
 // the file a client receives can never be built by different code.
 //
-// It mirrors components/InvoiceDocument.tsx section for section, in the same
-// order. Change one, change the other.
+// It mirrors components/InvoiceDocument.tsx for the invoice itself — same
+// sections, same order, change one and change the other — but it is not a
+// section-for-section mirror of the whole file any more: this builder also
+// draws an itemisation page and the receipt image pages when the invoice has
+// expenses, and InvoiceDocument.tsx (the on-screen preview) does not.
 //
 // Two things this file must never do, both load-bearing:
 //   * No JSX. Node strips types but does not transform JSX, so a .tsx here

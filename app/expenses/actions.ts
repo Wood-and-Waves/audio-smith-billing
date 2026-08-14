@@ -3,11 +3,9 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { isPlainDate } from '@/lib/dates'
-import type { ExpenseCategory } from '@/lib/expenses'
+import { CATEGORY_ORDER, type ExpenseCategory } from '@/lib/expenses'
 
 type Fail = { error: string }
-
-const CATEGORIES: ExpenseCategory[] = ['meals', 'rides', 'baggage', 'other']
 
 /** How long a receipt link lives. Longer than any render, shorter than a leak. */
 const SIGNED_URL_SECONDS = 3600
@@ -40,7 +38,7 @@ export async function addExpense(input: {
   if (!show) return { error: 'That show no longer exists.' }
   if (show.status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
 
-  if (!CATEGORIES.includes(input.category)) {
+  if (!CATEGORY_ORDER.includes(input.category)) {
     return { error: `"${input.category}" is not an expense category.` }
   }
   if (!input.whereSpent.trim()) return { error: 'Say where the money went.' }

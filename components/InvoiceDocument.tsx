@@ -1,6 +1,7 @@
 import Image from 'next/image'
 import { formatUSD, formatQty } from '@/lib/money'
 import { formatDateLong } from '@/lib/dates'
+import type { ExpenseCategory } from '@/lib/expenses'
 
 // The invoice itself, on paper.
 //
@@ -61,7 +62,7 @@ export type DocumentData = {
    */
   expenses?: {
     id: string
-    category: 'meals' | 'rides' | 'baggage' | 'other'
+    category: ExpenseCategory
     where_spent: string
     amount_cents: number
     spent_on: string
