@@ -5,7 +5,7 @@ import { formatDateLong, formatDateShort } from '@/lib/dates'
 import { formatUSD, formatQty, lineTotal } from '@/lib/money'
 import { computeShowLines, rulesetAndRatesFor, type PmEntryLike } from '@/lib/showBuckets'
 import { calculateNetHours, type ShowDayLike } from '@/lib/payroll'
-import type { ExpenseCategory } from '@/lib/expenses'
+import { expenseLines, type ExpenseCategory } from '@/lib/expenses'
 import AppShell from '@/components/AppShell'
 import PunchClock from '@/components/PunchClock'
 import ShowDayControls from '@/components/ShowDayControls'
@@ -78,12 +78,19 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
   const locked = s.status === 'billed'
 
   const { rules, rates } = rulesetAndRatesFor(s)
-  // Pure function — safe to call straight from a server component to render
+  // Pure functions — safe to call straight from a server component to render
   // a live preview of what this show would bill if billed right now. Must
-  // load the same pm_entries billShows does (app/shows/actions.ts) or this
-  // preview can disagree with the invoice it produces.
-  const lines = computeShowLines(
-    days as unknown as ShowDayLike[], s.pm_entries as unknown as PmEntryLike[], rates, rules)
+  // load the same pm_entries billShows does (app/shows/actions.ts) and append
+  // expenseLines(s.expenses) in the same order billShows does, or this
+  // preview can disagree with the invoice it produces — a show whose only
+  // billable thing is an unreceipted-but-now-photographed expense (no
+  // punches at all) would otherwise preview as empty and stay unbillable in
+  // the UI even though billShows would happily bill it.
+  const lines = [
+    ...computeShowLines(
+      days as unknown as ShowDayLike[], s.pm_entries as unknown as PmEntryLike[], rates, rules),
+    ...expenseLines(s.expenses ?? []),
+  ]
   const previewTotal = lines.reduce((t, l) => t + lineTotal(l.qty_hundredths, l.unit_price_cents), 0)
 
   // Shares isIncompleteDay with billShows (app/shows/actions.ts) so this

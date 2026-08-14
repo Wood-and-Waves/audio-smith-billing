@@ -5,6 +5,7 @@ import { formatDateShort } from '@/lib/dates'
 import { lineTotal } from '@/lib/money'
 import { computeShowLines, rulesetAndRatesFor, type PmEntryLike } from '@/lib/showBuckets'
 import type { ShowDayLike } from '@/lib/payroll'
+import { expenseLines, type ExpenseCategory } from '@/lib/expenses'
 import AppShell from '@/components/AppShell'
 import UnbilledShows, { type UnbilledShow } from '@/components/UnbilledShows'
 
@@ -13,6 +14,10 @@ export const dynamic = 'force-dynamic'
 type Punch = { punch_type: string; punched_at: string }
 type Day = { id: string; date: string; travel_in: boolean; travel_out: boolean; pay_as_half_day: boolean; punches: Punch[] }
 type PmEntry = { minutes: number }
+type Expense = {
+  id: string; category: ExpenseCategory; where_spent: string
+  amount_cents: number; spent_on: string; receipt_path: string | null
+}
 type Row = {
   id: string; name: string; venue: string | null; status: string; client_id: string
   day_rate_cents: number; travel_rate_cents: number; pm_rate_cents: number
@@ -21,6 +26,7 @@ type Row = {
   meal_penalty_grace_hours: number; meal_penalty_cents: number
   short_turn_rest_hours: number; continuous_time_enabled: boolean
   clients: { name: string } | null; show_days: Day[]; pm_entries: PmEntry[]
+  expenses: Expense[]
 }
 
 export default async function ShowsPage() {
@@ -34,7 +40,8 @@ export default async function ShowsPage() {
              continuous_time_enabled,
              clients(name),
              show_days(id, date, travel_in, travel_out, pay_as_half_day, punches(punch_type, punched_at)),
-             pm_entries(minutes)`)
+             pm_entries(minutes),
+             expenses(id, category, where_spent, amount_cents, spent_on, receipt_path)`)
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -54,8 +61,12 @@ export default async function ShowsPage() {
   // Money lives here, on the server, in integer cents — never in the client
   // component. Each unbilled show gets its own computeShowLines pass, built
   // from the same rulesetAndRatesFor(show) that billShows and
-  // app/shows/[id]/page.tsx call, so the per-show lines below can never
-  // disagree with what billing would compute for that show.
+  // app/shows/[id]/page.tsx call, and then expenseLines(s.expenses) appended
+  // in the same order billShows uses (app/shows/actions.ts), so the per-show
+  // lines below can never disagree with what billing would compute for that
+  // show — a show billing labour AND expenses previews both, and a show
+  // billing only expenses (no punches at all) still produces lines here
+  // instead of showing as empty.
   //
   // We hand the raw BucketLine[] down to UnbilledShows (not just a total):
   // when several shows are selected together, the multi-show total must run
@@ -65,8 +76,11 @@ export default async function ShowsPage() {
   const unbilledShows: UnbilledShow[] = unbilled.map((s) => {
     const days = [...s.show_days].sort((a, b) => a.date.localeCompare(b.date))
     const { rules, rates } = rulesetAndRatesFor(s)
-    const lines = computeShowLines(
-      days as unknown as ShowDayLike[], (s.pm_entries ?? []) as PmEntryLike[], rates, rules)
+    const lines = [
+      ...computeShowLines(
+        days as unknown as ShowDayLike[], (s.pm_entries ?? []) as PmEntryLike[], rates, rules),
+      ...expenseLines(s.expenses ?? []),
+    ]
     const totalCents = lines.reduce((t, l) => t + lineTotal(l.qty_hundredths, l.unit_price_cents), 0)
 
     // Shares isIncompleteDay with billShows and the show detail page so this
