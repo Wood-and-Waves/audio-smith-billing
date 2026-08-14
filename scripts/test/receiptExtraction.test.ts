@@ -146,3 +146,19 @@ test('the schema is the shape the SDK expects', () => {
   assert.equal(RECEIPT_SCHEMA.type, 'json_schema')
   assert.equal(typeof RECEIPT_SCHEMA.schema, 'object')
 })
+
+test('with no API key it refuses by name and never calls out', async () => {
+  const saved = process.env.ANTHROPIC_API_KEY
+  delete process.env.ANTHROPIC_API_KEY
+  try {
+    const { readReceiptImage } = await import('../../lib/receiptOcr.ts')
+    const r = await readReceiptImage({
+      bytes: new Uint8Array([1, 2, 3]), mediaType: 'image/jpeg', today: '2026-08-14',
+    })
+    assert.deepEqual(r, {
+      error: 'Reading receipts is not configured yet (ANTHROPIC_API_KEY is missing).',
+    })
+  } finally {
+    if (saved !== undefined) process.env.ANTHROPIC_API_KEY = saved
+  }
+})
