@@ -17,6 +17,7 @@ export type ClientInput = {
   ot_after_hours: number
   notes: string
   archived: boolean
+  show_hours_on_invoice: boolean
 }
 
 type Fail = { error: string }
@@ -57,6 +58,7 @@ export async function saveClient(input: ClientInput): Promise<Fail | { ok: true;
     ot_after_hours: input.ot_after_hours,
     notes: input.notes.trim() || null,
     archived: input.archived,
+    show_hours_on_invoice: input.show_hours_on_invoice,
   }
 
   let id = input.id

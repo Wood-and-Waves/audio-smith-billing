@@ -12,6 +12,7 @@ import type { ShowDayLike } from '@/lib/payroll'
 import type { PunchType } from '@/lib/punchTypes'
 import { isKnownTimezone } from '@/lib/timezones'
 import { expenseLines, expensesMissingReceipts, type ExpenseLike } from '@/lib/expenses'
+import { buildBackupSnapshot, type SnapshotInput } from '@/lib/backupSnapshot'
 
 type Fail = { error: string }
 
@@ -350,7 +351,7 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
 
   const { data: shows, error } = await supabase
     .from('shows')
-    .select(`id, name, client_id, status,
+    .select(`id, name, client_id, status, timezone,
              day_rate_cents, travel_rate_cents, pm_rate_cents, ot_after_hours,
              dt_after_hours, minimum_meal_break_minutes, meal_break_deduction_cap,
              meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours,
@@ -422,8 +423,25 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
   // client.terms_days takes precedence here too. There is no tax to look up
   // any more — saveInvoice hardcodes tax to zero for every invoice.
   const { data: clientRow } = await supabase
-    .from('clients').select('terms_days').eq('id', clientId).maybeSingle()
+    .from('clients').select('terms_days, show_hours_on_invoice').eq('id', clientId).maybeSingle()
   const termsDays = clientRow?.terms_days ?? 30
+
+  // Frozen here, from the SAME days and rules that produced the lines above.
+  // Deriving it later from the shows would reintroduce exactly the drift this
+  // replaces: unlink one show of two and the backup stops matching the charge.
+  const backupSnapshot = buildBackupSnapshot({
+    showHours: clientRow?.show_hours_on_invoice ?? false,
+    shows: shows.map((s) => {
+      const { rules } = rulesetAndRatesFor(s)
+      return {
+        name: s.name,
+        timezone: s.timezone,
+        days: ((s.show_days ?? []) as unknown as ShowDayLike[]),
+        rules,
+        expenses: ((s as unknown as { expenses?: ExpenseLike[] }).expenses ?? []),
+      } satisfies SnapshotInput
+    }),
+  })
 
   const { saveInvoice } = await import('@/app/invoices/actions')
   const issue = todayInChicago()
@@ -434,6 +452,7 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
     deposit_cents: 0,
     notes: shows.map((s) => s.name).join(', '),
     lines: merged,
+    backupSnapshot,
   })
   if ('error' in result) return result
 

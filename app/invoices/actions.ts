@@ -10,6 +10,7 @@ import { sendReminderEmail } from '@/lib/reminderEmail'
 import { signedReceiptUrls } from '@/app/expenses/actions'
 import type { DocumentData } from '@/components/InvoiceDocument'
 import type { ExpenseCategory } from '@/lib/expenses'
+import type { BackupSnapshot } from '@/lib/backupSnapshot'
 
 type ExpenseRow = {
   id: string
@@ -34,6 +35,13 @@ export type InvoiceInput = {
   deposit_cents: number
   notes: string
   lines: LineInput[]
+  // Only billShows (app/shows/actions.ts) ever passes this — a show-derived
+  // invoice freezes its hours/expense backup here, at the same moment the
+  // invoice itself is created. InvoiceEditor's hand-written invoices have no
+  // shows behind them, pass nothing, and store null — a null snapshot
+  // renders no backup pages, which is what every invoice billed before
+  // migration 0012 already does.
+  backupSnapshot?: BackupSnapshot | null
 }
 
 export type SaveResult = { error: string } | { ok: true; id: string }
@@ -125,7 +133,11 @@ export async function saveInvoice(input: InvoiceInput): Promise<SaveResult> {
 
     const { data: created, error } = await supabase
       .from('invoices')
-      .insert({ ...row, number, status: 'draft' })
+      // backup_snapshot is set only here, at creation, and left out of `row`
+      // (shared with the update branch above) on purpose: an edit made
+      // through InvoiceEditor never passes one, and if it were in `row` that
+      // edit would silently null out a backup a show already froze in.
+      .insert({ ...row, number, status: 'draft', backup_snapshot: input.backupSnapshot ?? null })
       .select('id')
       .single()
     if (error) return { error: error.message }

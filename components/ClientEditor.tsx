@@ -22,6 +22,7 @@ export type EditorClient = {
   ot_after_hours: number
   notes: string | null
   archived: boolean
+  show_hours_on_invoice: boolean
 }
 
 export default function ClientEditor({ initial }: { initial?: EditorClient }) {
@@ -42,6 +43,7 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
   const [otAfterHours, setOtAfterHours] = useState(String(initial?.ot_after_hours ?? 10))
   const [notes, setNotes] = useState(initial?.notes ?? '')
   const [archived, setArchived] = useState(initial?.archived ?? false)
+  const [showHours, setShowHours] = useState(initial?.show_hours_on_invoice ?? false)
 
   // Preview only — parseUSD returns null on junk, which just hides the
   // preview rather than blocking typing. The real validation happens in
@@ -68,6 +70,7 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
         ot_after_hours: Number(otAfterHours),
         notes,
         archived,
+        show_hours_on_invoice: showHours,
       })
       if ('error' in result) { setError(result.error); return }
       router.push(`/clients/${result.id}`)
@@ -167,6 +170,18 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
                  onChange={(e) => setArchived(e.target.checked)} />
           Archived — hidden from the active client list
         </label>
+
+        <label className="flex items-center gap-2 text-sm text-muted mt-4">
+          <input type="checkbox" className="h-4 w-4 accent-accent"
+                 checked={showHours} disabled={pending}
+                 onChange={(e) => setShowHours(e.target.checked)} />
+          Attach an hours breakdown to this client&rsquo;s invoices
+        </label>
+        <p className="text-xs text-muted mt-1.5">
+          Adds a page listing each day worked, with in and out times and the
+          overtime split. Useful for production clients who reconcile against
+          a call sheet.
+        </p>
       </div>
 
       {error && (

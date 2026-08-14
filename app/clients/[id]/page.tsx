@@ -17,7 +17,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
       .from('clients')
       .select(
         `id, name, billing_email, contact_name, phone, address_line1, address_line2,
-         terms_days, day_rate_cents, ot_after_hours, notes, archived`,
+         terms_days, day_rate_cents, ot_after_hours, notes, archived, show_hours_on_invoice`,
       )
       .eq('id', id)
       .maybeSingle(),
