@@ -93,8 +93,13 @@ A **private** bucket, `receipts`. Owner-only read and write via storage RLS. No
 public URLs, ever: a receipt carries a vendor, a date and an amount, and the
 bucket must not be enumerable.
 
-Path: `{owner_id}/{show_id}/{expense_id}-{enhanced|original}.jpg`. Owner first,
-so a storage policy can match on the leading path segment.
+Path: `{owner_id}/{show_id}/{stamp}-{enhanced|original}.jpg`, where `stamp` is a
+timestamp and a short random suffix. Owner first, so a storage policy can match
+on the leading path segment.
+
+The name deliberately does **not** contain the expense id: the files are
+uploaded before the row exists, so no id has been assigned yet. That ordering is
+the point — see below.
 
 The PDF reads receipts through **signed URLs, valid one hour**, generated at
 render time. This is what keeps the service-role key out of it: the browser
