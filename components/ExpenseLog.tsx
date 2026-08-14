@@ -291,6 +291,11 @@ export default function ExpenseLog({
     if (capture) removeSuperseded([capture.enhancedPath, capture.originalPath])
     setCapture(null)
     setOcrNote(null)
+    // A stale error from a previous failed save (or a previous failed
+    // upload) must not sit in the alert paragraph forever once the user has
+    // moved on to a new pick — see the enhance/upload failure below, which
+    // now writes here instead of to ocrNote.
+    setError(null)
 
     tokenRef.current += 1
     const myToken = tokenRef.current
@@ -317,7 +322,14 @@ export default function ExpenseLog({
     }
 
     if ('error' in uploaded) {
-      setOcrNote(uploaded.error)
+      // An upload failure is not an OCR note — small muted text under the
+      // file input is easy to miss, especially on a phone, and the expense
+      // would go on to save receipt-less with nothing louder than that to
+      // show for it. This is what the role="alert" paragraph is for. Add
+      // stays enabled regardless: logging the amount now and attaching the
+      // photo later is legitimate, so this must not block the save, only
+      // announce that the photo itself didn't make it up.
+      setError(uploaded.error)
       return
     }
 
