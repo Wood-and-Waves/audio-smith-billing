@@ -136,7 +136,7 @@ export default function ShowDayControls({
         </p>
       ) : expensesNeedingReceipts.length > 0 ? (
         <p className="text-xs text-accent mt-2">
-          {expensesNeedingReceipts.length} {expensesNeedingReceipts.length === 1 ? 'expense needs' : 'expenses need'} receipts: {expensesNeedingReceipts.join(', ')}.
+          {expensesNeedingReceipts.length} {expensesNeedingReceipts.length === 1 ? 'expense needs' : 'expenses need'} a receipt: {expensesNeedingReceipts.join(', ')}.
         </p>
       ) : !hasLines ? (
         <p className="text-xs text-muted mt-2">

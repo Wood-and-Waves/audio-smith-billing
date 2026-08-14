@@ -132,7 +132,7 @@ export default function UnbilledShows({ shows }: { shows: UnbilledShow[] }) {
                     </p>
                   ) : receiptsMissing ? (
                     <p className="text-xs text-accent mt-1">
-                      {s.expensesNeedingReceipts.length} {s.expensesNeedingReceipts.length === 1 ? 'expense needs' : 'expenses need'} receipts: {s.expensesNeedingReceipts.join(', ')}.
+                      {s.expensesNeedingReceipts.length} {s.expensesNeedingReceipts.length === 1 ? 'expense needs' : 'expenses need'} a receipt: {s.expensesNeedingReceipts.join(', ')}.
                     </p>
                   ) : empty ? (
                     <p className="text-xs text-muted mt-1">Nothing to bill yet.</p>
