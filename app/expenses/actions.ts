@@ -123,17 +123,30 @@ export async function deleteExpense(expenseId: string): Promise<Fail | { ok: tru
   return warning ? { ok: true, warning } : { ok: true }
 }
 
-/** Short-lived read URLs, keyed by storage path. */
-export async function signedReceiptUrls(paths: string[]): Promise<Record<string, string>> {
-  if (paths.length === 0) return {}
+/**
+ * Short-lived read URLs, keyed by storage path.
+ *
+ * `storageError` is true only for a genuine top-level failure from Storage
+ * itself (down, unreachable, credentials rejected) — never for an individual
+ * missing object. createSignedUrls returns HTTP 200 with a per-row result
+ * for a deleted file: that row comes back with no `signedUrl` and the
+ * top-level `error` stays null, indistinguishable from any other row except
+ * by its own absence from `urls`. A caller that collapsed "zero urls came
+ * back" into "Storage is down" would treat one deleted receipt exactly like
+ * a bucket outage — see app/invoices/actions.ts, which used to.
+ */
+export async function signedReceiptUrls(
+  paths: string[],
+): Promise<{ urls: Record<string, string>; storageError: boolean }> {
+  if (paths.length === 0) return { urls: {}, storageError: false }
   const supabase = await createClient()
   const { data, error } = await supabase.storage
     .from('receipts').createSignedUrls(paths, SIGNED_URL_SECONDS)
-  if (error || !data) return {}
+  if (error || !data) return { urls: {}, storageError: true }
 
-  const out: Record<string, string> = {}
+  const urls: Record<string, string> = {}
   for (const row of data) {
-    if (row.path && row.signedUrl) out[row.path] = row.signedUrl
+    if (row.path && row.signedUrl) urls[row.path] = row.signedUrl
   }
-  return out
+  return { urls, storageError: false }
 }

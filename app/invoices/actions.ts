@@ -320,25 +320,23 @@ export async function sendInvoice(
   // would serialise a dozen round trips inside a function with a timeout — the
   // send would work on a two-receipt invoice and fail on a twelve-receipt one.
   const paths = expenseRows.map((e) => e.receipt_path).filter(Boolean) as string[]
-  const urls = await signedReceiptUrls(paths)
+  const { urls, storageError } = await signedReceiptUrls(paths)
 
   // A receipt is what makes an expense billable (see the billing guard in
   // lib/expenses.ts / billShows) — mailing a client an itemisation backed by
-  // zero receipt pages is worse than refusing to send. This guards ONLY a
-  // genuine bucket-level failure: signedReceiptUrls resolved not a single
-  // URL for a non-empty set of paths, which only happens when Storage itself
-  // errored or is unreachable (see its own doc comment — it swallows a
-  // top-level error into `{}`), i.e. a Storage outage. It must be checked
-  // here, off `urls` directly, and not off how many images end up attached —
-  // an invoice with exactly one expense would otherwise make "one dead file"
-  // and "total outage" the same predicate (every() is vacuously true over
-  // one failure) and refuse to send forever, with no way to recover once the
-  // show is billed and locked. A per-file failure below (a signed URL that
-  // resolved but whose `fetch` call failed, or came back non-OK) is NOT this
-  // condition and must fall through to the existing degrade-to-null
-  // behaviour and still send.
-  const allUrlsFailed = paths.length > 0 && Object.keys(urls).length === 0
-  if (allUrlsFailed) {
+  // a Storage outage is worse than refusing to send. This guards ONLY a
+  // genuine bucket-level failure: signedReceiptUrls now reports that
+  // directly off Storage's own top-level error, rather than inferring an
+  // outage from an empty url map — an empty map is also exactly what ONE
+  // missing file produces (a receipt whose expense was deleted after the
+  // show was unlinked and rebilled: createSignedUrls returns that row with
+  // no signedUrl and the top-level error stays null). Collapsing that into
+  // "Storage is down" made a single deleted receipt block the invoice from
+  // ever being sent again, permanently, with no way to clear it. A per-file
+  // miss — deleted, or a signed URL that resolved but whose `fetch` call
+  // failed or came back non-OK — is NOT this condition and must fall through
+  // to the existing degrade-to-null behaviour below and still send.
+  if (paths.length > 0 && storageError) {
     return {
       error: "This invoice's receipt images could not be attached (Storage may be down), " +
         'so it was not sent. Try again.',

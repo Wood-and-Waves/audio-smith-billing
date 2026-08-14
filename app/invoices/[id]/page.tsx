@@ -95,7 +95,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   // would serialise a dozen round trips inside a function with a timeout — the
   // send would work on a two-receipt invoice and fail on a twelve-receipt one.
   const paths = snapshotExpenses.map((e) => e.receipt_path).filter(Boolean) as string[]
-  const urls = await signedReceiptUrls(paths)
+  const { urls } = await signedReceiptUrls(paths)
   const withImages = await Promise.all(snapshotExpenses.map(async (e) => {
     const url = e.receipt_path ? urls[e.receipt_path] : null
     if (!url) return { ...e, category: e.category as ExpenseCategory, receiptDataUri: null }
