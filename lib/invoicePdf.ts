@@ -123,8 +123,18 @@ const s = {
     borderTopWidth: 2, borderTopColor: INK, paddingTop: 8, marginTop: 12,
   },
   receiptPage: { backgroundColor: PAPER, padding: 40 },
-  receiptCaption: { fontSize: 8, color: MUTED, marginBottom: 4 },
-  receiptImage: { width: '100%', objectFit: 'contain', marginBottom: 20 },
+  receiptCaption: { fontSize: 8, color: MUTED, marginBottom: 6 },
+  // The height is capped in POINTS rather than left to the image.
+  //
+  // A LETTER page is 792pt; 40pt of padding top and bottom leaves 712, and the
+  // caption takes about 14 of it. With only `width: '100%'`, a 1200x1600 phone
+  // photo computes to 532x709pt — which together with the caption overflows the
+  // page, so @react-pdf kept the caption and pushed the image onto a page of
+  // its own. That left an orphaned caption page reading as a duplicate of the
+  // itemisation, and a photo that appeared to vanish when you scrolled to it.
+  // objectFit 'contain' keeps the aspect ratio inside this box, so a tall
+  // receipt shrinks to fit instead of spilling.
+  receiptImage: { width: '100%', height: 690, objectFit: 'contain' },
 } as const
 
 /** `Invoice-386-Journey-Church.pdf` */

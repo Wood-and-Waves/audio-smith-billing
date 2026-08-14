@@ -275,3 +275,39 @@ test('an invoice with no expenses gains no itemisation', () => {
   const joined = textOf(buildInvoicePdf(PARTS, INVOICE, ASSETS)).join(' ')
   assert.ok(!/itemis|receipt/i.test(joined), 'no expense page on a plain invoice')
 })
+
+test('a receipt image is height-capped so it cannot push itself onto a second page', () => {
+  // Invoice 390 shipped with only `width: '100%'`. A 1200x1600 phone photo then
+  // computed to 532x709pt, which together with the caption overflowed a 792pt
+  // page — so @react-pdf kept the caption and moved the image to a page of its
+  // own, leaving an orphaned caption page that read as a duplicate of the
+  // itemisation. Verified by rendering: the old style produced 4 pages for one
+  // receipt, this one produces 3.
+  const withReceipt: DocumentData = {
+    ...INVOICE,
+    expenses: [{
+      id: 'e1', category: 'meals', where_spent: 'HMS Host', amount_cents: 5000,
+      spent_on: '2026-08-14', receiptDataUri: 'data:image/png;base64,AAAA',
+    }],
+  }
+
+  const images: Record<string, unknown>[] = []
+  const walk = (n: unknown): void => {
+    if (!n || typeof n !== 'object') return
+    const node = n as { type?: unknown; props?: { style?: unknown; children?: unknown } }
+    if (node.type === PARTS.Image && node.props?.style) images.push(node.props.style as Record<string, unknown>)
+    if (node.props) {
+      const kids = node.props.children
+      if (Array.isArray(kids)) kids.forEach(walk)
+      else walk(kids)
+    }
+  }
+  walk(buildInvoicePdf(PARTS, withReceipt, ASSETS))
+
+  const receipt = images.find((s) => s.objectFit === 'contain')
+  assert.ok(receipt, 'the receipt image should be rendered with objectFit contain')
+  assert.equal(typeof receipt.height, 'number',
+    'the height must be an explicit number of points, not left to the image')
+  assert.ok((receipt.height as number) <= 712,
+    'and must fit inside a LETTER page less its 40pt padding, with room for the caption')
+})
