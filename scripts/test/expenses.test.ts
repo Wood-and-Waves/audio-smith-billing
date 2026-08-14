@@ -8,7 +8,11 @@ import assert from 'node:assert/strict'
 import {
   expenseLines, expensesMissingReceipts, CATEGORY_LABEL, type ExpenseLike,
 } from '../../lib/expenses.ts'
-import { formatUSD } from '../../lib/money.ts'
+import { formatUSD, lineTotal } from '../../lib/money.ts'
+import {
+  computeShowLines, mergeLines, type ShowRates, type BucketLine,
+} from '../../lib/showBuckets.ts'
+import type { ShowRuleset, ShowDayLike } from '../../lib/payroll.ts'
 
 const exp = (over: Partial<ExpenseLike> = {}): ExpenseLike => ({
   id: 'e1',
@@ -100,4 +104,89 @@ test('an empty string is not a receipt', () => {
   // a show bill with nothing behind it.
   assert.equal(expensesMissingReceipts([exp({ receipt_path: '' })]).length, 1)
   assert.equal(expensesMissingReceipts([exp({ receipt_path: '   ' })]).length, 1)
+})
+
+// Regression for the preview/invoice parity bug: a $5,850 preview against a
+// $6,226.21 invoice, because one of the two `...expenseLines(...)` spreads
+// was missing. Both call sites are modelled exactly as they build their
+// arrays, not simplified:
+//   - preview (app/shows/page.tsx, app/shows/[id]/page.tsx): per show,
+//     [...computeShowLines(...), ...expenseLines(...)], the per-show arrays
+//     then merged together.
+//   - billing (billShows, app/shows/actions.ts): computeShowLines(...) and
+//     expenseLines(...) pushed as two SEPARATE array entries per show, all
+//     shows' entries then merged together.
+// Two shows share a day rate (so Day Rate actually merges into one line)
+// and both carry $19.98 of meals (so Meal Expenses actually merges into
+// one line too) — otherwise the merge step would be a no-op and this test
+// would pass even with a shape bug.
+test("the preview's flat sequence and billShows' grouped sequence agree", () => {
+  const rates: ShowRates = {
+    day_rate_cents: 70000, travel_rate_cents: 35000, pm_rate_cents: 7000,
+    ot_rate_cents: 0, dt_rate_cents: 0, meal_penalty_cents: 0,
+  }
+  const rules: ShowRuleset = {
+    overtime_after_hours: 11, double_time_enabled: false, double_time_after_hours: 14,
+    meal_penalty_enabled: false, meal_penalty_grace_hours: 6,
+    minimum_meal_break_enabled: true, minimum_meal_break_minutes: 60,
+    meal_break_deduction_cap: 60, short_turn_penalty_enabled: false,
+    short_turn_rest_hours: 10, continuous_time_enabled: false,
+  }
+
+  const dayA: ShowDayLike = {
+    id: 'da', date: '2026-06-01', pay_as_half_day: false, travel_in: false, travel_out: false,
+    punches: [
+      { punch_type: 'start', punched_at: '2026-06-01T13:00:00Z' },
+      { punch_type: 'end', punched_at: '2026-06-01T23:00:00Z' },
+    ],
+  }
+  const dayB: ShowDayLike = {
+    id: 'db', date: '2026-06-08', pay_as_half_day: false, travel_in: false, travel_out: false,
+    punches: [
+      { punch_type: 'start', punched_at: '2026-06-08T13:00:00Z' },
+      { punch_type: 'end', punched_at: '2026-06-08T23:00:00Z' },
+    ],
+  }
+
+  const expensesA: ExpenseLike[] = [
+    exp({ id: 'a1', category: 'meals', where_spent: 'Diner', amount_cents: 1200 }),
+    exp({ id: 'a2', category: 'meals', where_spent: 'Cafe', amount_cents: 798 }),
+  ]
+  const expensesB: ExpenseLike[] = [
+    exp({ id: 'b1', category: 'meals', where_spent: 'Grill', amount_cents: 1998 }),
+  ]
+
+  // preview's shape: per show, computeShowLines then expenseLines spread
+  // flat into one array, then merged across shows.
+  const previewA = [...computeShowLines([dayA], [], rates, rules), ...expenseLines(expensesA)]
+  const previewB = [...computeShowLines([dayB], [], rates, rules), ...expenseLines(expensesB)]
+  const previewMerged = mergeLines([previewA, previewB])
+  const previewTotal =
+    previewMerged.reduce((t, l) => t + lineTotal(l.qty_hundredths, l.unit_price_cents), 0)
+
+  // billShows' shape: computeShowLines and expenseLines pushed as separate
+  // array entries per show, all shows' entries then merged.
+  const perShow: BucketLine[][] = []
+  perShow.push(computeShowLines([dayA], [], rates, rules))
+  perShow.push(expenseLines(expensesA))
+  perShow.push(computeShowLines([dayB], [], rates, rules))
+  perShow.push(expenseLines(expensesB))
+  const billingMerged = mergeLines(perShow)
+  const billingTotal =
+    billingMerged.reduce((t, l) => t + lineTotal(l.qty_hundredths, l.unit_price_cents), 0)
+
+  assert.deepEqual(previewMerged, billingMerged, 'the two shapes must merge to identical lines')
+  assert.equal(previewTotal, billingTotal, 'the two shapes must total identically')
+
+  // Prove the merge is not a no-op: Day Rate (same $700 both shows) and
+  // Meal Expenses (both shows total $19.98) each collapse from two lines
+  // into one, so dropping either expenseLines() spread would change both
+  // the line count and the total, not just leave a line out silently.
+  assert.equal(billingMerged.length, 2)
+  const dayRate = billingMerged.find((l) => l.description === 'Day Rate')
+  const meals = billingMerged.find((l) => l.description === 'Meal Expenses')
+  assert.equal(dayRate?.qty_hundredths, 200)
+  assert.equal(meals?.qty_hundredths, 200)
+  assert.equal(meals?.unit_price_cents, 1998)
+  assert.equal(formatUSD(billingTotal), '$1,439.96') // 2 x $700 day rate + $19.98 x 2 meals
 })
