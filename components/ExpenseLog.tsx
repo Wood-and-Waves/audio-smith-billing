@@ -179,24 +179,29 @@ export default function ExpenseLog({
       ) : (
         <ul className="border-t border-line mb-4">
           {sorted.map((e) => (
+            // Two deliberate lines rather than six columns: at 375px — a phone
+            // in an airport, which is where this screen is actually used — six
+            // fixed-width items wrap into ragged unaligned rows. Vendor and
+            // amount are the headline; `basis-full` forces the rest beneath it
+            // at every width instead of leaving the break to chance.
             <li key={e.id}
-                className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line py-2 text-sm">
-              <span className="text-muted w-16 shrink-0 tabular">{formatDateShort(e.spent_on)}</span>
-              <span className="text-muted w-28 shrink-0 truncate">{CATEGORY_LABEL[e.category]}</span>
-              <span className="flex-1 min-w-[6rem] truncate">{e.where_spent}</span>
-              {!e.receipt_path && (
-                <span className="text-xs text-danger shrink-0">no receipt</span>
-              )}
+                className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-line py-2 text-sm">
+              <span className="flex-1 min-w-0 truncate">{e.where_spent}</span>
               <span className="tabular shrink-0">{formatUSD(e.amount_cents)}</span>
               <button
                 type="button"
                 disabled={locked || pending}
                 onClick={() => remove(e.id)}
                 aria-label={`Remove ${e.where_spent}`}
-                className="text-muted hover:text-danger transition-colors text-lg leading-none disabled:opacity-40"
+                className="shrink-0 text-muted hover:text-danger transition-colors text-lg leading-none disabled:opacity-40"
               >
                 ×
               </button>
+              <span className="basis-full text-xs text-muted flex flex-wrap items-baseline gap-x-2">
+                <span className="tabular">{formatDateShort(e.spent_on)}</span>
+                <span>{CATEGORY_LABEL[e.category]}</span>
+                {!e.receipt_path && <span className="text-danger">needs a receipt</span>}
+              </span>
             </li>
           ))}
         </ul>
