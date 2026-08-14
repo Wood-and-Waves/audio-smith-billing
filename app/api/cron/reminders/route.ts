@@ -34,8 +34,27 @@ export async function GET(request: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   const appUrl = process.env.APP_URL
+
+  // The condition stays a direct check of the three so TypeScript still
+  // narrows them to string below. Naming which one is absent matters: this is
+  // past the secret gate, so the only reader already holds CRON_SECRET, and a
+  // bare "not configured" turns setup into guesswork across three variables.
+  // Names only — values are never echoed.
   if (!url || !serviceKey || !appUrl) {
-    return NextResponse.json({ error: 'Reminders are not configured.' }, { status: 500 })
+    const missing = [
+      !url && 'NEXT_PUBLIC_SUPABASE_URL',
+      !serviceKey && 'SUPABASE_SERVICE_ROLE_KEY',
+      !appUrl && 'APP_URL',
+    ].filter(Boolean) as string[]
+
+    return NextResponse.json(
+      {
+        error: `Reminders are not configured. Missing in this deployment: ${missing.join(', ')}.`,
+        hint: 'Add them in Vercel for Production, then REDEPLOY — a variable binds to a deployment when that deployment is created.',
+        missing,
+      },
+      { status: 500 },
+    )
   }
 
   const db = createClient(url, serviceKey, {
