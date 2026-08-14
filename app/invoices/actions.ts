@@ -385,7 +385,7 @@ export async function sendClientReminder(
       .from('settings')
       // Explicit columns, same list sendInvoice uses — ach_details must never
       // join this, or it would reach a client through this path too.
-      .select('business_name, email')
+      .select('legal_name, email')
       .eq('id', 1)
       .maybeSingle(),
   ])
@@ -422,7 +422,11 @@ export async function sendClientReminder(
   }
 
   const link = `${appUrl.replace(/\/+$/, '')}/i/${token}`
-  const subject = `Reminder: invoice #${inv.number} from The Audio Smith`
+  // The legal name, not the trading name — this reaches a client's accounts
+  // payable, who have "Smith Audio, LLC" on file. Was hardcoded; now it follows
+  // Settings like everything else.
+  const legalName = settings?.legal_name ?? 'Smith Audio, LLC'
+  const subject = `Reminder: invoice #${inv.number} from ${legalName}`
   const text = [
     `A friendly reminder about invoice #${inv.number}.`,
     '',
@@ -450,7 +454,7 @@ export async function sendClientReminder(
     // From Settings, same reasoning as sendInvoice: a reply from the client
     // must reach Dan, not INVOICE_FROM_EMAIL, which receives nothing.
     replyTo: settings?.email ?? 'dan@theaudiosmith.com',
-    fromName: settings?.business_name,
+    fromName: legalName,
   })
   if (result.error) return { error: result.error }
 

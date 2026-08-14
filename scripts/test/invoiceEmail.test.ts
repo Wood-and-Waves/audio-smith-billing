@@ -51,10 +51,19 @@ const BASE: InvoiceEmailInput = {
   replyTo: 'dan@theaudiosmith.com',
 }
 
-test('the subject names the invoice and the business', () => {
-  const { subject } = buildInvoiceEmail(BASE)
+test('the subject and body name the LEGAL entity, not the trading name', () => {
+  // A client's accounts-payable clerk has "Smith Audio, LLC" on file and has
+  // very likely never heard of "The Audio Smith". The PDF keeps the trading
+  // name in its wordmark — that is branding on a document — but the email has
+  // to identify the supplier they are actually paying.
+  const { subject, text, html } = buildInvoiceEmail(BASE)
   assert.ok(subject.includes('386'), 'the invoice number is in the subject')
-  assert.ok(subject.includes('The Audio Smith'), 'the business is in the subject')
+  assert.ok(subject.includes('Smith Audio, LLC'), 'the legal name is in the subject')
+  assert.ok(!subject.includes('The Audio Smith'), 'and the trading name is not')
+  for (const body of [text, html]) {
+    assert.ok(body.includes('Smith Audio, LLC'), 'the legal name is in the body')
+    assert.ok(!body.includes('The Audio Smith'), 'and the trading name is not')
+  }
 })
 
 test('both bodies carry the amount, the due date and the link', () => {

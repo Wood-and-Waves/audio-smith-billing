@@ -38,7 +38,10 @@ export async function sendInvoiceEmail(
   // function's whole contract is to return { error } and never throw, so
   // anything that can throw on a bad row has to be in here too.
   try {
-    const business = input.invoice.settings?.business_name ?? 'The Audio Smith'
+    // The legal name, matching the subject and body — this is the sender name
+    // an accounts-payable clerk sees in their inbox list, and it has to be the
+    // one they have on file.
+    const business = input.invoice.settings?.legal_name ?? 'Smith Audio, LLC'
     const { subject, text, html } = buildInvoiceEmail(input)
 
     const { Resend } = await import('resend')

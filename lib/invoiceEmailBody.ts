@@ -45,7 +45,12 @@ export function escapeHtml(s: string): string {
 
 export function buildInvoiceEmail(input: InvoiceEmailInput) {
   const { invoice, publicUrl, status } = input
-  const business = invoice.settings?.business_name ?? 'The Audio Smith'
+  // The LEGAL name, not the trading name. This email is read by a client's
+  // accounts-payable clerk, who has "Smith Audio, LLC" on file and has very
+  // likely never heard of "The Audio Smith". The PDF keeps the trading name in
+  // its wordmark — that is branding on a document; this is identification in an
+  // inbox.
+  const business = invoice.settings?.legal_name ?? 'Smith Audio, LLC'
   const amount = formatUSD(invoice.total_cents)
   const note = input.note?.trim() || null
   const isReceipt = status === 'paid'

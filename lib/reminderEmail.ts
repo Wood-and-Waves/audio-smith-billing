@@ -131,7 +131,10 @@ export async function sendReminderEmail(
   try {
     const { Resend } = await import('resend')
     const { error } = await new Resend(key).emails.send({
-      from: `${input.fromName ?? 'The Audio Smith'} <${from}>`,
+      // Falls back to the LEGAL name. Client-facing mail routed through here is
+      // read by an accounts-payable clerk who has that name on file, not the
+      // trading name.
+      from: `${input.fromName ?? 'Smith Audio, LLC'} <${from}>`,
       to: input.to,
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
       subject: input.subject,
