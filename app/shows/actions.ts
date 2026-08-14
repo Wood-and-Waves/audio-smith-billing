@@ -210,16 +210,25 @@ export async function deletePmEntry(pmEntryId: string): Promise<Fail | { ok: tru
 }
 
 /**
- * Deletes a show and, by cascade, its days, punches and PM log. This
- * destroys recorded work, so it is refused while the show is billed —
+ * Deletes a show and, by cascade, its days, punches, PM log and expenses.
+ * This destroys recorded work, so it is refused while the show is billed —
  * unlinking it first (see unlinkShow) is a deliberate second step, not a
  * confirmation dialog.
  *
  * The cascade is real, not assumed: migration 0003 declares
- * show_days.show_id and punches.show_day_id `on delete cascade`, and
- * migration 0005 declares pm_entries.show_id `on delete cascade` too — so
- * deleting the `shows` row alone removes all three without an explicit
- * multi-table transaction here.
+ * show_days.show_id and punches.show_day_id `on delete cascade`, migration
+ * 0005 declares pm_entries.show_id `on delete cascade`, and migration 0010
+ * declares expenses.show_id `on delete cascade` too — so deleting the
+ * `shows` row alone removes all four without an explicit multi-table
+ * transaction here.
+ *
+ * The cascade does NOT reach Storage — a deleted expense row leaves its
+ * receipt JPEGs behind in the private bucket with nothing referencing them,
+ * silently, forever. So the expenses' receipt paths are read BEFORE the
+ * delete (there is nothing left to read them from after), and the files are
+ * removed AFTER the row delete, matching the order deleteExpense already
+ * uses (app/expenses/actions.ts): row first, then files, so a storage
+ * failure orphans a file rather than leaving a row pointing at a deleted one.
  */
 export async function deleteShow(showId: string): Promise<Fail | { ok: true }> {
   const supabase = await createClient()
@@ -231,8 +240,16 @@ export async function deleteShow(showId: string): Promise<Fail | { ok: true }> {
   if (!show) return { error: 'That show no longer exists.' }
   if (show.status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
 
+  const { data: expenseRows } = await supabase
+    .from('expenses').select('receipt_path, receipt_original').eq('show_id', showId)
+
   const { error } = await supabase.from('shows').delete().eq('id', showId)
   if (error) return { error: error.message }
+
+  const paths = (expenseRows ?? [])
+    .flatMap((e) => [e.receipt_path, e.receipt_original])
+    .filter((p): p is string => Boolean(p))
+  if (paths.length) await supabase.storage.from('receipts').remove(paths)
 
   revalidatePath('/shows')
   return { ok: true }

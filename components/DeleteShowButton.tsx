@@ -4,22 +4,24 @@ import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { deleteShow } from '@/app/shows/actions'
 
-// Deleting a show cascades to its days, punches and PM log — all real
-// recorded work — so this follows RemoveDayButton's shape exactly: a
-// two-step control (Delete -> named confirm) rather than a one-click button
-// or a browser confirm() dialog, with the same auto-disarm on a stray click
-// or a few seconds of no follow-up.
+// Deleting a show cascades to its days, punches, PM log and expenses — all
+// real recorded work, and the expenses' receipt photos besides — so this
+// follows RemoveDayButton's shape exactly: a two-step control (Delete ->
+// named confirm) rather than a one-click button or a browser confirm()
+// dialog, with the same auto-disarm on a stray click or a few seconds of no
+// follow-up.
 
 const CONFIRM_TIMEOUT_MS = 4000
 
 export default function DeleteShowButton({
-  showId, locked, dayCount, punchCount, pmEntryCount,
+  showId, locked, dayCount, punchCount, pmEntryCount, expenseCount,
 }: {
   showId: string
   locked: boolean
   dayCount: number
   punchCount: number
   pmEntryCount: number
+  expenseCount: number
 }) {
   const router = useRouter()
   const [pending, start] = useTransition()
@@ -77,6 +79,7 @@ export default function DeleteShowButton({
   const dayLabel = `${dayCount} day${dayCount === 1 ? '' : 's'}`
   const punchLabel = `${punchCount} punch${punchCount === 1 ? '' : 'es'}`
   const pmLabel = `${pmEntryCount} PM ${pmEntryCount === 1 ? 'entry' : 'entries'}`
+  const expenseLabel = `${expenseCount} expense${expenseCount === 1 ? '' : 's'}`
 
   return (
     <div ref={containerRef} className="inline-flex items-baseline">
@@ -89,7 +92,7 @@ export default function DeleteShowButton({
         >
           {pending
             ? 'Deleting…'
-            : `Confirm delete? This removes ${dayLabel}, ${punchLabel} and ${pmLabel}.`}
+            : `Confirm delete? This removes ${dayLabel}, ${punchLabel}, ${pmLabel} and ${expenseLabel}.`}
         </button>
       ) : (
         <button

@@ -266,6 +266,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
           dayCount={days.length}
           punchCount={punchCount}
           pmEntryCount={s.pm_entries.length}
+          expenseCount={s.expenses.length}
         />
       </section>
     </AppShell>
