@@ -248,16 +248,21 @@ test('the itemisation total equals the expense lines on the invoice', () => {
       { id: 'l3', description: 'Day Rate', qty_hundredths: 100,
         unit_price_cents: 50000, line_total_cents: 50000 },
     ],
-    expenses: [
-      { id: 'e1', category: 'meals', where_spent: 'The Well', amount_cents: 1998,
-        spent_on: '2026-05-16', receiptDataUri: null },
-      { id: 'e2', category: 'meals', where_spent: 'The Meritage', amount_cents: 24623,
-        spent_on: '2026-05-21', receiptDataUri: null },
-      { id: 'e3', category: 'baggage', where_spent: 'United', amount_cents: 6000,
-        spent_on: '2026-05-16', receiptDataUri: null },
-      { id: 'e4', category: 'baggage', where_spent: 'United', amount_cents: 6000,
-        spent_on: '2026-05-21', receiptDataUri: null },
-    ],
+    backup: {
+      show_hours: false,
+      shows: [],
+      total_net: 0, total_st: 0, total_ot: 0, total_dt: 0,
+      expenses: [
+        { category: 'meals', where_spent: 'The Well', amount_cents: 1998,
+          spent_on: '2026-05-16', receiptDataUri: null },
+        { category: 'meals', where_spent: 'The Meritage', amount_cents: 24623,
+          spent_on: '2026-05-21', receiptDataUri: null },
+        { category: 'baggage', where_spent: 'United', amount_cents: 6000,
+          spent_on: '2026-05-16', receiptDataUri: null },
+        { category: 'baggage', where_spent: 'United', amount_cents: 6000,
+          spent_on: '2026-05-21', receiptDataUri: null },
+      ],
+    },
   }
 
   const all = textOf(buildInvoicePdf(PARTS, withExpenses, ASSETS))
@@ -266,7 +271,7 @@ test('the itemisation total equals the expense lines on the invoice', () => {
   assert.ok(joined.includes('The Well'), 'each expense is itemised')
   assert.ok(joined.includes('United'), 'including repeats of the same vendor')
 
-  const expenseTotal = withExpenses.expenses!.reduce((t, e) => t + e.amount_cents, 0)
+  const expenseTotal = withExpenses.backup!.expenses.reduce((t, e) => t + e.amount_cents, 0)
   assert.equal(expenseTotal, 26621 + 12000, 'the fixture itself reconciles')
   assert.ok(joined.includes(formatUSD(expenseTotal)), 'and the page prints that total')
 })
@@ -285,10 +290,15 @@ test('a receipt image is height-capped so it cannot push itself onto a second pa
   // receipt, this one produces 3.
   const withReceipt: DocumentData = {
     ...INVOICE,
-    expenses: [{
-      id: 'e1', category: 'meals', where_spent: 'HMS Host', amount_cents: 5000,
-      spent_on: '2026-08-14', receiptDataUri: 'data:image/png;base64,AAAA',
-    }],
+    backup: {
+      show_hours: false,
+      shows: [],
+      total_net: 0, total_st: 0, total_ot: 0, total_dt: 0,
+      expenses: [{
+        category: 'meals', where_spent: 'HMS Host', amount_cents: 5000,
+        spent_on: '2026-08-14', receiptDataUri: 'data:image/png;base64,AAAA',
+      }],
+    },
   }
 
   const images: Record<string, unknown>[] = []
@@ -310,4 +320,57 @@ test('a receipt image is height-capped so it cannot push itself onto a second pa
     'the height must be an explicit number of points, not left to the image')
   assert.ok((receipt.height as number) <= 712,
     'and must fit inside a LETTER page less its 40pt padding, with room for the caption')
+})
+
+test('the hours page prints only when the client opted in', () => {
+  const withHours: DocumentData = {
+    ...INVOICE,
+    backup: {
+      show_hours: true,
+      shows: [{ name: 'PwC Orlando', zone_label: 'Eastern', days: [
+        { day: 'Sat 8/30', in: '8:00 AM', out: '8:30 PM', meal_minutes: 30,
+          net_hours: 12, st_hours: 10, ot_hours: 2, dt_hours: 0,
+          travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
+      ] }],
+      total_net: 12, total_st: 10, total_ot: 2, total_dt: 0, expenses: [],
+    },
+  }
+  const on = textOf(buildInvoicePdf(PARTS, withHours, ASSETS)).join(' ')
+  assert.ok(on.includes('PWC ORLANDO'), 'the show is named')
+  assert.ok(on.includes('8:00 AM'), 'clock times print')
+  assert.ok(on.includes('Eastern'), 'and the zone they are quoted in')
+
+  const off = textOf(buildInvoicePdf(
+    PARTS, { ...withHours, backup: { ...withHours.backup!, show_hours: false } }, ASSETS)).join(' ')
+  assert.ok(!off.includes('PWC ORLANDO'), 'the flag off suppresses the page entirely')
+})
+
+test('an invoice with no snapshot renders exactly as it always did', () => {
+  const joined = textOf(buildInvoicePdf(PARTS, INVOICE, ASSETS)).join(' ')
+  assert.ok(!/HOURS —/.test(joined), 'no hours page')
+  assert.ok(!/itemis|EXPENSES/i.test(joined), 'and no expense pages')
+})
+
+test('a travel day is labelled instead of showing empty columns', () => {
+  const travelOnly: DocumentData = {
+    ...INVOICE,
+    backup: {
+      show_hours: true,
+      shows: [{ name: 'PwC Orlando', zone_label: 'Eastern', days: [
+        { day: 'Fri 8/29', in: null, out: null, meal_minutes: 0,
+          net_hours: 0, st_hours: 0, ot_hours: 0, dt_hours: 0,
+          travel_in: true, travel_out: false, half_day: false, meal_penalties: 0 },
+      ] }],
+      total_net: 0, total_st: 0, total_ot: 0, total_dt: 0, expenses: [],
+    },
+  }
+  const joined = textOf(buildInvoicePdf(PARTS, travelOnly, ASSETS)).join(' ')
+  assert.ok(joined.includes('travel in'), 'the day says what it is')
+})
+
+test('no Unicode minus reaches the page', () => {
+  // U+2212 renders as NOTHING in Helvetica. A deposit once printed as a charge
+  // rather than a credit because of it.
+  const joined = textOf(buildInvoicePdf(PARTS, INVOICE, ASSETS)).join(' ')
+  assert.ok(!joined.includes('−'))
 })

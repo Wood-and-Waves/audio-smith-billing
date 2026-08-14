@@ -1,7 +1,6 @@
 import Image from 'next/image'
 import { formatUSD, formatQty } from '@/lib/money'
 import { formatDateLong } from '@/lib/dates'
-import type { ExpenseCategory } from '@/lib/expenses'
 
 // The invoice itself, on paper.
 //
@@ -55,19 +54,24 @@ export type DocumentData = {
     remit_to: string | null
   } | null
   /**
-   * Present only on an invoice generated from shows. The receipt image arrives
-   * as a data URI, already fetched — the PDF renderer must not pull a dozen
-   * remote URLs itself, which would serialise a dozen round trips inside a
-   * function that has a timeout.
+   * The frozen backup, present only on invoices billed from shows after
+   * migration 0012. Receipt images arrive already fetched as data URIs — the
+   * PDF renderer must not pull remote URLs itself.
    */
-  expenses?: {
-    id: string
-    category: ExpenseCategory
-    where_spent: string
-    amount_cents: number
-    spent_on: string
-    receiptDataUri: string | null
-  }[]
+  backup?: {
+    show_hours: boolean
+    shows: { name: string; zone_label: string; days: {
+      day: string; in: string | null; out: string | null; meal_minutes: number
+      net_hours: number; st_hours: number; ot_hours: number; dt_hours: number
+      travel_in: boolean; travel_out: boolean; half_day: boolean; meal_penalties: number
+    }[] }[]
+    total_net: number; total_st: number; total_ot: number; total_dt: number
+    expenses: {
+      category: 'meals' | 'rides' | 'baggage' | 'other'
+      where_spent: string; amount_cents: number; spent_on: string
+      receiptDataUri: string | null
+    }[]
+  }
 }
 
 function Meta({ label, value }: { label: string; value: string }) {

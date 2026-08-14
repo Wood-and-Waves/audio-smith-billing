@@ -122,6 +122,22 @@ const s = {
     flexDirection: 'row', justifyContent: 'space-between',
     borderTopWidth: 2, borderTopColor: INK, paddingTop: 8, marginTop: 12,
   },
+  hoursShow: { fontSize: 9, color: MUTED, letterSpacing: 1, marginTop: 16, marginBottom: 6 },
+  hoursHead: {
+    flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: INK,
+    paddingBottom: 4, fontSize: 7, color: MUTED, letterSpacing: 0.5,
+  },
+  hoursRow: {
+    flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: LINE, paddingVertical: 4,
+  },
+  hDay:   { width: 58 },
+  hClock: { width: 132 },
+  hMeal:  { width: 56, color: MUTED_DARK },
+  hNum:   { width: 42, textAlign: 'right' },
+  hFlag:  { width: 118, paddingLeft: 16, color: MUTED_DARK, fontSize: 8 },
+  hoursTotal: {
+    flexDirection: 'row', borderTopWidth: 2, borderTopColor: INK, paddingTop: 8, marginTop: 14,
+  },
   receiptPage: { backgroundColor: PAPER, padding: 40 },
   receiptCaption: { fontSize: 8, color: MUTED, marginBottom: 6 },
   // The height is capped in POINTS rather than left to the image.
@@ -169,7 +185,7 @@ export function buildInvoicePdf(parts: PdfParts, data: DocumentData, assets: Pdf
   const totalsRow = (label: string, value: string) =>
     V(s.totalsRow, [T(s.totalsLabel, label), T(null, value)])
 
-  const expenses = data.expenses ?? []
+  const expenses = data.backup?.expenses ?? []
   const expenseTotal = expenses.reduce((t, e) => t + e.amount_cents, 0)
 
   // Only when there is something to show. An invoice not generated from shows
@@ -211,6 +227,60 @@ export function buildInvoicePdf(parts: PdfParts, data: DocumentData, assets: Pdf
           h(Image, { src: e.receiptDataUri as string, style: s.receiptImage }),
         ),
       ),
+  ]
+
+  const hrs = (n: number) => (n ? n.toFixed(1) : '')
+  const backup = data.backup
+  // The DT column only exists when there is double time — an empty column on
+  // an ordinary show is noise.
+  const anyDt = Boolean(backup?.shows.some((sh) => sh.days.some((d) => d.dt_hours > 0)))
+
+  const hoursPages = !backup?.show_hours ? [] : [
+    h(Page, { size: 'LETTER', style: s.page },
+      V(s.body, [
+        T(s.expenseHead, `HOURS — INVOICE #${data.number}`),
+        ...backup.shows.flatMap((sh) => [
+          T(s.hoursShow, `${sh.name.toUpperCase()}   ·   ${sh.zone_label}`),
+          V(s.hoursHead, [
+            T(s.hDay, 'DAY'), T(s.hClock, 'TIMES'), T(s.hMeal, 'MEAL'),
+            T(s.hNum, 'NET'), T(s.hNum, 'ST'), T(s.hNum, 'OT'),
+            ...(anyDt ? [T(s.hNum, 'DT')] : []), T(s.hFlag, ''),
+          ]),
+          ...sh.days.map((d) => {
+            const flag = [d.travel_in && 'travel in', d.travel_out && 'travel out',
+                          d.half_day && 'half day',
+                          d.meal_penalties ? 'meal penalty' : ''].filter(Boolean).join(' · ')
+            // A travel or half day carries no punches. Left blank it reads as
+            // missing data, so it is labelled instead of given empty columns.
+            if (!d.in || !d.out) {
+              return V(s.hoursRow, [
+                T(s.hDay, d.day),
+                T({ ...s.hClock, color: MUTED_DARK, fontSize: 8 }, flag || '—'),
+              ])
+            }
+            return V(s.hoursRow, [
+              T(s.hDay, d.day),
+              T(s.hClock, `${d.in} – ${d.out}`),
+              T(s.hMeal, d.meal_minutes ? `${d.meal_minutes} min` : ''),
+              T(s.hNum, hrs(d.net_hours)),
+              T(s.hNum, hrs(d.st_hours)),
+              T(s.hNum, hrs(d.ot_hours)),
+              ...(anyDt ? [T(s.hNum, hrs(d.dt_hours))] : []),
+              T(s.hFlag, flag),
+            ])
+          }),
+        ]),
+        V(s.hoursTotal, [
+          T({ ...s.hDay, fontFamily: 'Oswald', fontSize: 10 }, 'TOTAL'),
+          T(s.hClock, ''), T(s.hMeal, ''),
+          T({ ...s.hNum, fontFamily: 'Oswald', fontSize: 10 }, hrs(backup.total_net)),
+          T({ ...s.hNum, fontFamily: 'Oswald', fontSize: 10 }, hrs(backup.total_st)),
+          T({ ...s.hNum, fontFamily: 'Oswald', fontSize: 10 }, hrs(backup.total_ot)),
+          ...(anyDt ? [T({ ...s.hNum, fontFamily: 'Oswald', fontSize: 10 }, hrs(backup.total_dt))] : []),
+          T(s.hFlag, ''),
+        ]),
+      ]),
+    ),
   ]
 
   return h(
@@ -333,6 +403,7 @@ export function buildInvoicePdf(parts: PdfParts, data: DocumentData, assets: Pdf
         }),
       ],
     ),
+    ...hoursPages,
     ...expensePages,
   )
 }

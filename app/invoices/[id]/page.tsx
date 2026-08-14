@@ -10,29 +10,22 @@ import SendInvoicePanel from '@/components/SendInvoicePanel'
 import SendReminderButton from '@/components/SendReminderButton'
 import { signedReceiptUrls } from '@/app/expenses/actions'
 import type { ExpenseCategory } from '@/lib/expenses'
+import type { BackupSnapshot } from '@/lib/backupSnapshot'
 
 export const dynamic = 'force-dynamic'
-
-type ExpenseRow = {
-  id: string
-  category: ExpenseCategory
-  where_spent: string
-  amount_cents: number
-  spent_on: string
-  receipt_path: string | null
-}
 
 export default async function InvoicePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const supabase = await createClient()
   const today = todayInChicago()
 
-  const [{ data: invoice, error }, { data: settings }, { data: showRows }] = await Promise.all([
+  const [{ data: invoice, error }, { data: settings }] = await Promise.all([
     supabase
       .from('invoices')
       .select(
         `id, number, issue_date, due_date, terms_days, status, bill_to_snapshot,
          subtotal_cents, tax_bp, tax_cents, deposit_cents, total_cents, notes, imported,
+         backup_snapshot,
          clients(name, address_line1, address_line2, billing_email),
          invoice_lines(id, position, description, qty_hundredths, unit_price_cents, line_total_cents),
          reminder_log(kind, sent_at)`,
@@ -50,13 +43,6 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
       .select('business_name, legal_name, address_line1, address_line2, phone, email, remit_to')
       .eq('id', 1)
       .maybeSingle(),
-    // An invoice not generated from shows (105 historical invoices, most
-    // manual ones) simply has no shows pointing at it — rows comes back
-    // empty and the PDF gains no expense pages.
-    supabase
-      .from('shows')
-      .select('expenses(id, category, where_spent, amount_cents, spent_on, receipt_path)')
-      .eq('invoice_id', id),
   ])
 
   if (error) {
@@ -85,6 +71,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
     total_cents: number
     notes: string | null
     imported: boolean
+    backup_snapshot: BackupSnapshot | null
     clients:
       | (NonNullable<DocumentData['client']> & { billing_email: string | null })
       | null
@@ -98,26 +85,32 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
     (a, b) => (a as { position: number }).position - (b as { position: number }).position,
   )
 
-  const rows = ((showRows ?? []) as unknown as { expenses: ExpenseRow[] }[])
-    .flatMap((row) => row.expenses ?? [])
+  // Null on every invoice billed before migration 0012 (and any hand-written
+  // one) — those render no backup pages, which is what they already did.
+  const snapshot = inv.backup_snapshot
+  const snapshotExpenses = snapshot?.expenses ?? []
 
   // Fetched here, not by the PDF renderer: letting it pull a dozen remote URLs
   // would serialise a dozen round trips inside a function with a timeout — the
   // send would work on a two-receipt invoice and fail on a twelve-receipt one.
-  const paths = rows.map((e) => e.receipt_path).filter(Boolean) as string[]
+  const paths = snapshotExpenses.map((e) => e.receipt_path).filter(Boolean) as string[]
   const urls = await signedReceiptUrls(paths)
-  const withImages = await Promise.all(rows.map(async (e) => {
+  const withImages = await Promise.all(snapshotExpenses.map(async (e) => {
     const url = e.receipt_path ? urls[e.receipt_path] : null
-    if (!url) return { ...e, receiptDataUri: null }
+    if (!url) return { ...e, category: e.category as ExpenseCategory, receiptDataUri: null }
     try {
       const res = await fetch(url)
-      if (!res.ok) return { ...e, receiptDataUri: null }
+      if (!res.ok) return { ...e, category: e.category as ExpenseCategory, receiptDataUri: null }
       const buf = Buffer.from(await res.arrayBuffer())
-      return { ...e, receiptDataUri: `data:image/jpeg;base64,${buf.toString('base64')}` }
+      return {
+        ...e,
+        category: e.category as ExpenseCategory,
+        receiptDataUri: `data:image/jpeg;base64,${buf.toString('base64')}`,
+      }
     } catch {
       // A missing image must not lose the invoice. The itemisation still
       // lists the expense; only the picture is absent.
-      return { ...e, receiptDataUri: null }
+      return { ...e, category: e.category as ExpenseCategory, receiptDataUri: null }
     }
   }))
 
@@ -149,7 +142,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
       : null,
     lines,
     settings: settings ?? null,
-    expenses: withImages,
+    backup: snapshot ? { ...snapshot, expenses: withImages } : undefined,
   }
 
   // Most recent client reminder, as a plain date for display. reminder_log
