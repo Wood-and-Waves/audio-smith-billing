@@ -231,3 +231,47 @@ test('an unpaid invoice still reads TOTAL DUE', () => {
     assert.ok(!all.includes('PAID IN FULL'), `${status ?? 'no status'} is not marked paid`)
   }
 })
+
+// The itemisation and the invoice lines are two views of the same money. Two
+// views that can silently disagree is the failure this project keeps finding,
+// so the reconciliation is a test rather than an intention.
+test('the itemisation total equals the expense lines on the invoice', () => {
+  const withExpenses: DocumentData = {
+    ...INVOICE,
+    subtotal_cents: 88621,
+    total_cents: 88621,
+    lines: [
+      { id: 'l1', description: 'Meal Expenses', qty_hundredths: 100,
+        unit_price_cents: 26621, line_total_cents: 26621 },
+      { id: 'l2', description: 'Baggage Expenses', qty_hundredths: 100,
+        unit_price_cents: 12000, line_total_cents: 12000 },
+      { id: 'l3', description: 'Day Rate', qty_hundredths: 100,
+        unit_price_cents: 50000, line_total_cents: 50000 },
+    ],
+    expenses: [
+      { id: 'e1', category: 'meals', where_spent: 'The Well', amount_cents: 1998,
+        spent_on: '2026-05-16', receiptDataUri: null },
+      { id: 'e2', category: 'meals', where_spent: 'The Meritage', amount_cents: 24623,
+        spent_on: '2026-05-21', receiptDataUri: null },
+      { id: 'e3', category: 'baggage', where_spent: 'United', amount_cents: 6000,
+        spent_on: '2026-05-16', receiptDataUri: null },
+      { id: 'e4', category: 'baggage', where_spent: 'United', amount_cents: 6000,
+        spent_on: '2026-05-21', receiptDataUri: null },
+    ],
+  }
+
+  const all = textOf(buildInvoicePdf(PARTS, withExpenses, ASSETS))
+  const joined = all.join(' ')
+
+  assert.ok(joined.includes('The Well'), 'each expense is itemised')
+  assert.ok(joined.includes('United'), 'including repeats of the same vendor')
+
+  const expenseTotal = withExpenses.expenses!.reduce((t, e) => t + e.amount_cents, 0)
+  assert.equal(expenseTotal, 26621 + 12000, 'the fixture itself reconciles')
+  assert.ok(joined.includes(formatUSD(expenseTotal)), 'and the page prints that total')
+})
+
+test('an invoice with no expenses gains no itemisation', () => {
+  const joined = textOf(buildInvoicePdf(PARTS, INVOICE, ASSETS)).join(' ')
+  assert.ok(!/itemis|receipt/i.test(joined), 'no expense page on a plain invoice')
+})

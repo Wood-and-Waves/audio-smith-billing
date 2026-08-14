@@ -18,6 +18,7 @@
 import { createElement as h } from 'react'
 import { formatUSD, formatQty } from './money.ts'
 import { formatDateLong } from './dates.ts'
+import { CATEGORY_LABEL, CATEGORY_ORDER } from './expenses.ts'
 import type { DocumentData } from '../components/InvoiceDocument.tsx'
 
 export type PdfParts = {
@@ -103,6 +104,24 @@ const s = {
     position: 'absolute', bottom: 20, left: 40, right: 40,
     fontSize: 7, color: MUTED, textAlign: 'center',
   },
+
+  expenseHead: { fontFamily: 'Oswald', fontSize: 12, marginBottom: 10 },
+  expenseCat: { fontSize: 9, color: MUTED, letterSpacing: 1, marginTop: 12, marginBottom: 4 },
+  expenseRow: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    borderBottomWidth: 1, borderBottomColor: LINE, paddingVertical: 4,
+  },
+  expenseSub: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    paddingTop: 4, fontSize: 9, color: MUTED_DARK,
+  },
+  expenseTotal: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    borderTopWidth: 2, borderTopColor: INK, paddingTop: 8, marginTop: 12,
+  },
+  receiptPage: { backgroundColor: PAPER, padding: 40 },
+  receiptCaption: { fontSize: 8, color: MUTED, marginBottom: 4 },
+  receiptImage: { width: '100%', objectFit: 'contain', marginBottom: 20 },
 } as const
 
 /** `Invoice-386-Journey-Church.pdf` */
@@ -136,6 +155,50 @@ export function buildInvoicePdf(parts: PdfParts, data: DocumentData, assets: Pdf
 
   const totalsRow = (label: string, value: string) =>
     V(s.totalsRow, [T(s.totalsLabel, label), T(null, value)])
+
+  const expenses = data.expenses ?? []
+  const expenseTotal = expenses.reduce((t, e) => t + e.amount_cents, 0)
+
+  // Only when there is something to show. An invoice not generated from shows
+  // has no expenses and gains no pages at all.
+  const expensePages = expenses.length === 0 ? [] : [
+    h(Page, { size: 'LETTER', style: s.page },
+      V(s.body, [
+        T(s.expenseHead, `EXPENSES — INVOICE #${data.number}`),
+        ...CATEGORY_ORDER.flatMap((cat) => {
+          const rows = expenses.filter((e) => e.category === cat)
+          if (rows.length === 0) return []
+          const subtotal = rows.reduce((t, e) => t + e.amount_cents, 0)
+          return [
+            T(s.expenseCat, CATEGORY_LABEL[cat].toUpperCase()),
+            ...rows.map((e) =>
+              V(s.expenseRow, [
+                T(null, `${formatDateLong(e.spent_on)}  ${e.where_spent}`),
+                T(null, formatUSD(e.amount_cents)),
+              ]),
+            ),
+            V(s.expenseSub, [T(null, 'Subtotal'), T(null, formatUSD(subtotal))]),
+          ]
+        }),
+        V(s.expenseTotal, [
+          T(s.grandLabel, 'TOTAL EXPENSES'),
+          T({ fontSize: 12 }, formatUSD(expenseTotal)),
+        ]),
+      ]),
+    ),
+
+    // One page per receipt: a receipt scaled to fit a shared page is unreadable,
+    // and unreadable backup is the same as none.
+    ...expenses
+      .filter((e) => e.receiptDataUri)
+      .map((e) =>
+        h(Page, { size: 'LETTER', style: s.receiptPage },
+          T(s.receiptCaption,
+            `${CATEGORY_LABEL[e.category]} · ${e.where_spent} · ${formatUSD(e.amount_cents)} · ${formatDateLong(e.spent_on)}`),
+          h(Image, { src: e.receiptDataUri as string, style: s.receiptImage }),
+        ),
+      ),
+  ]
 
   return h(
     Document,
@@ -257,5 +320,6 @@ export function buildInvoicePdf(parts: PdfParts, data: DocumentData, assets: Pdf
         }),
       ],
     ),
+    ...expensePages,
   )
 }

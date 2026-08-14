@@ -53,6 +53,20 @@ export type DocumentData = {
     email: string | null
     remit_to: string | null
   } | null
+  /**
+   * Present only on an invoice generated from shows. The receipt image arrives
+   * as a data URI, already fetched — the PDF renderer must not pull a dozen
+   * remote URLs itself, which would serialise a dozen round trips inside a
+   * function that has a timeout.
+   */
+  expenses?: {
+    id: string
+    category: 'meals' | 'rides' | 'baggage' | 'other'
+    where_spent: string
+    amount_cents: number
+    spent_on: string
+    receiptDataUri: string | null
+  }[]
 }
 
 function Meta({ label, value }: { label: string; value: string }) {

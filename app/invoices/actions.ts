@@ -7,7 +7,18 @@ import { addDays, formatDateLong } from '@/lib/dates'
 import { buildInvoicePdf } from '@/lib/invoicePdf'
 import { sendInvoiceEmail } from '@/lib/invoiceEmail'
 import { sendReminderEmail } from '@/lib/reminderEmail'
+import { signedReceiptUrls } from '@/app/expenses/actions'
 import type { DocumentData } from '@/components/InvoiceDocument'
+import type { ExpenseCategory } from '@/lib/expenses'
+
+type ExpenseRow = {
+  id: string
+  category: ExpenseCategory
+  where_spent: string
+  amount_cents: number
+  spent_on: string
+  receipt_path: string | null
+}
 
 export type LineInput = {
   description: string
@@ -179,26 +190,34 @@ export async function sendInvoice(
   const appUrl = process.env.APP_URL
   if (!appUrl) return { error: 'Email is not configured yet (APP_URL is missing).' }
 
-  const [{ data: invoice, error: invoiceError }, { data: settings, error: settingsError }] = await Promise.all([
-    supabase
-      .from('invoices')
-      .select(
-        `id, number, issue_date, due_date, terms_days, status, bill_to_snapshot,
+  const [{ data: invoice, error: invoiceError }, { data: settings, error: settingsError }, { data: showRows }] =
+    await Promise.all([
+      supabase
+        .from('invoices')
+        .select(
+          `id, number, issue_date, due_date, terms_days, status, bill_to_snapshot,
          subtotal_cents, tax_bp, tax_cents, deposit_cents, total_cents, notes, imported,
          public_token,
          clients(name, address_line1, address_line2, billing_email),
          invoice_lines(id, position, description, qty_hundredths, unit_price_cents, line_total_cents)`,
-      )
-      .eq('id', invoiceId)
-      .maybeSingle(),
-    supabase
-      .from('settings')
-      // Explicit columns. ach_details must never join this list — it would then
-      // travel into the email builder and, from there, to a client.
-      .select('business_name, legal_name, address_line1, address_line2, phone, email, remit_to')
-      .eq('id', 1)
-      .maybeSingle(),
-  ])
+        )
+        .eq('id', invoiceId)
+        .maybeSingle(),
+      supabase
+        .from('settings')
+        // Explicit columns. ach_details must never join this list — it would then
+        // travel into the email builder and, from there, to a client.
+        .select('business_name, legal_name, address_line1, address_line2, phone, email, remit_to')
+        .eq('id', 1)
+        .maybeSingle(),
+      // An invoice not generated from shows (the historical invoices, most
+      // manual ones) has no shows pointing at it — rows comes back empty and
+      // the PDF gains no expense pages.
+      supabase
+        .from('shows')
+        .select('expenses(id, category, where_spent, amount_cents, spent_on, receipt_path)')
+        .eq('invoice_id', invoiceId),
+    ])
 
   if (invoiceError) return { error: invoiceError.message }
   if (!invoice) return { error: 'That invoice no longer exists.' }
@@ -257,6 +276,29 @@ export async function sendInvoice(
 
   const lines = [...(inv.invoice_lines ?? [])].sort((a, b) => a.position - b.position)
 
+  const expenseRows = ((showRows ?? []) as unknown as { expenses: ExpenseRow[] }[])
+    .flatMap((row) => row.expenses ?? [])
+
+  // Fetched here, not by the PDF renderer: letting it pull a dozen remote URLs
+  // would serialise a dozen round trips inside a function with a timeout — the
+  // send would work on a two-receipt invoice and fail on a twelve-receipt one.
+  const paths = expenseRows.map((e) => e.receipt_path).filter(Boolean) as string[]
+  const urls = await signedReceiptUrls(paths)
+  const withImages = await Promise.all(expenseRows.map(async (e) => {
+    const url = e.receipt_path ? urls[e.receipt_path] : null
+    if (!url) return { ...e, receiptDataUri: null }
+    try {
+      const res = await fetch(url)
+      if (!res.ok) return { ...e, receiptDataUri: null }
+      const buf = Buffer.from(await res.arrayBuffer())
+      return { ...e, receiptDataUri: `data:image/jpeg;base64,${buf.toString('base64')}` }
+    } catch {
+      // A missing image must not lose the invoice. The itemisation still
+      // lists the expense; only the picture is absent.
+      return { ...e, receiptDataUri: null }
+    }
+  }))
+
   const data: DocumentData = {
     number: inv.number,
     status: inv.status,
@@ -279,6 +321,7 @@ export async function sendInvoice(
       : null,
     lines,
     settings: settings ?? null,
+    expenses: withImages,
   }
 
   // Rendered from the SAME builder as the download button, so the attachment
