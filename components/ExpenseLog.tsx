@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { formatUSD, parseUSD } from '@/lib/money'
 import { formatDateShort, todayInChicago } from '@/lib/dates'
-import { CATEGORY_LABEL, CATEGORY_ORDER, type ExpenseCategory } from '@/lib/expenses'
+import { CATEGORY_LABEL, CATEGORY_ORDER, expensesMissingReceipts, type ExpenseCategory } from '@/lib/expenses'
 import { scaleToFit, contrastBounds, buildLut, JPEG_QUALITY } from '@/lib/receiptImage'
 import { addExpense, deleteExpense } from '@/app/expenses/actions'
 
@@ -93,7 +93,9 @@ export default function ExpenseLog({
   // Newest first, matching PmLog's ordering of its entries.
   const sorted = [...expenses].sort((a, b) => b.spent_on.localeCompare(a.spent_on))
   const total = expenses.reduce((t, e) => t + e.amount_cents, 0)
-  const missing = expenses.filter((e) => !e.receipt_path).length
+  // Shared with billShows/expensesMissingReceipts (lib/expenses.ts) so this
+  // count agrees with the billing gate about a blank (not just null) path.
+  const missing = expensesMissingReceipts(expenses).length
 
   function add() {
     setError(null)
