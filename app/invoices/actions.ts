@@ -284,6 +284,30 @@ export async function sendInvoice(
   // send would work on a two-receipt invoice and fail on a twelve-receipt one.
   const paths = expenseRows.map((e) => e.receipt_path).filter(Boolean) as string[]
   const urls = await signedReceiptUrls(paths)
+
+  // A receipt is what makes an expense billable (see the billing guard in
+  // lib/expenses.ts / billShows) — mailing a client an itemisation backed by
+  // zero receipt pages is worse than refusing to send. This guards ONLY a
+  // genuine bucket-level failure: signedReceiptUrls resolved not a single
+  // URL for a non-empty set of paths, which only happens when Storage itself
+  // errored or is unreachable (see its own doc comment — it swallows a
+  // top-level error into `{}`), i.e. a Storage outage. It must be checked
+  // here, off `urls` directly, and not off how many images end up attached —
+  // an invoice with exactly one expense would otherwise make "one dead file"
+  // and "total outage" the same predicate (every() is vacuously true over
+  // one failure) and refuse to send forever, with no way to recover once the
+  // show is billed and locked. A per-file failure below (a signed URL that
+  // resolved but whose `fetch` call failed, or came back non-OK) is NOT this
+  // condition and must fall through to the existing degrade-to-null
+  // behaviour and still send.
+  const allUrlsFailed = paths.length > 0 && Object.keys(urls).length === 0
+  if (allUrlsFailed) {
+    return {
+      error: "This invoice's receipt images could not be attached (Storage may be down), " +
+        'so it was not sent. Try again.',
+    }
+  }
+
   const withImages = await Promise.all(expenseRows.map(async (e) => {
     const url = e.receipt_path ? urls[e.receipt_path] : null
     if (!url) return { ...e, receiptDataUri: null }
@@ -298,25 +322,6 @@ export async function sendInvoice(
       return { ...e, receiptDataUri: null }
     }
   }))
-
-  // A receipt is what makes an expense billable (see the billing guard in
-  // lib/expenses.ts / billShows) — mailing a client an itemisation backed by
-  // zero receipt pages is worse than refusing to send. This only fires on a
-  // TOTAL wipeout: every expense that has a receipt_path failed to resolve
-  // to an image, which means signedReceiptUrls came back empty or the bucket
-  // is unreachable (see its own doc comment — it swallows storage errors
-  // into `{}`), i.e. a Storage outage rather than one dead file. A partial
-  // failure — one bad image among several good ones — must still send; that
-  // is the already-correct behaviour and this check must not touch it.
-  const expensesWithReceipts = withImages.filter((e) => e.receipt_path)
-  const allReceiptsFailed =
-    expensesWithReceipts.length > 0 && expensesWithReceipts.every((e) => !e.receiptDataUri)
-  if (allReceiptsFailed) {
-    return {
-      error: "This invoice's receipt images could not be attached (Storage may be down), " +
-        'so it was not sent. Try again.',
-    }
-  }
 
   const data: DocumentData = {
     number: inv.number,
