@@ -2,13 +2,22 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { isPlainDate } from '@/lib/dates'
+import { isPlainDate, todayInChicago } from '@/lib/dates'
 import { CATEGORY_ORDER, type ExpenseCategory } from '@/lib/expenses'
+import { readReceiptImage } from '@/lib/receiptOcr'
+import type { ReceiptFields } from '@/lib/receiptExtraction'
 
 type Fail = { error: string }
 
 /** How long a receipt link lives. Longer than any render, shorter than a leak. */
 const SIGNED_URL_SECONDS = 3600
+
+/**
+ * The bucket caps objects at 10MB and the enhanced JPEG this reads back is a
+ * few hundred KB, so anything past this is already wrong — refused by its
+ * declared `content-length` before a single byte of the body is read.
+ */
+const MAX_RECEIPT_DOWNLOAD_BYTES = 6 * 1024 * 1024
 
 /**
  * Records an expense.
@@ -149,4 +158,65 @@ export async function signedReceiptUrls(
     if (row.path && row.signedUrl) urls[row.path] = row.signedUrl
   }
   return { urls, storageError: false }
+}
+
+/**
+ * Reads a receipt already sitting in Storage and returns Claude's best
+ * guess at its four fields, for a human to confirm. Nothing is written and
+ * no show is locked — there is no `showId` here, and the `user.id` prefix
+ * check below is the entire authorization. The worst a caller-supplied
+ * `receiptPath` outside that prefix could do is fail the check; the worst
+ * one INSIDE it can do is spend a Claude call OCR-ing the caller's own
+ * other receipt, which is not a security problem worth a second parameter.
+ *
+ * No `revalidatePath`: this reads, it never mutates.
+ */
+export async function extractReceipt(
+  receiptPath: string,
+): Promise<Fail | { ok: true; fields: ReceiptFields; unreadable: boolean }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  if (!receiptPath.startsWith(`${user.id}/`)) {
+    return { error: 'That receipt does not belong to you.' }
+  }
+
+  // Reuse signedReceiptUrls rather than a second signing path — it already
+  // tells a genuine Storage outage apart from this one object simply being
+  // missing (see its own doc comment above).
+  const { urls, storageError } = await signedReceiptUrls([receiptPath])
+  if (storageError) {
+    return { error: 'That receipt could not be reached (Storage may be down). Try again.' }
+  }
+  const url = urls[receiptPath]
+  if (!url) return { error: 'That receipt no longer exists.' }
+
+  let res: Response
+  try {
+    res = await fetch(url)
+  } catch {
+    return { error: 'That receipt could not be downloaded.' }
+  }
+  if (!res.ok) return { error: 'That receipt could not be downloaded.' }
+
+  // Refused off the declared length, before the body is ever read into
+  // memory or base64'd into an API call — see MAX_RECEIPT_DOWNLOAD_BYTES.
+  const declaredLength = Number(res.headers.get('content-length'))
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_RECEIPT_DOWNLOAD_BYTES) {
+    return { error: 'That receipt file is too large to read.' }
+  }
+
+  const bytes = new Uint8Array(await res.arrayBuffer())
+  if (bytes.byteLength > MAX_RECEIPT_DOWNLOAD_BYTES) {
+    return { error: 'That receipt file is too large to read.' }
+  }
+
+  // readReceiptImage already returns { error } with its own message (e.g.
+  // naming a missing ANTHROPIC_API_KEY by name) — passed through as-is
+  // rather than wrapped, since the UI shows that string verbatim.
+  const result = await readReceiptImage({ bytes, mediaType: 'image/jpeg', today: todayInChicago() })
+  if ('error' in result) return result
+
+  return { ok: true, fields: result.fields, unreadable: result.unreadable }
 }
