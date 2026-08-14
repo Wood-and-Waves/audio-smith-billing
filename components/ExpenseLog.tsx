@@ -248,7 +248,7 @@ export default function ExpenseLog({
   // The picked file's already-uploaded receipt pair, ready to attach to the
   // next Add. Null until upload finishes; also null again the instant a new
   // file is picked, an upload fails, or a save consumes it.
-  type Capture = { file: File; enhancedPath: string; originalPath: string; token: number }
+  type Capture = { file: File; enhancedPath: string; originalPath: string }
   const [capture, setCapture] = useState<Capture | null>(null)
   // True only while enhance+upload are running (between pick and capture).
   // OCR, which runs after, deliberately does NOT set this — see onPickFile.
@@ -334,7 +334,7 @@ export default function ExpenseLog({
     }
 
     const { enhancedPath, originalPath } = uploaded
-    setCapture({ file: f, enhancedPath, originalPath, token: myToken })
+    setCapture({ file: f, enhancedPath, originalPath })
 
     setOcrNote('Reading the receipt…')
     try {
