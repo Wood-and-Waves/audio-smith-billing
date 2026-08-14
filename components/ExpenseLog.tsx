@@ -445,8 +445,24 @@ export default function ExpenseLog({
         setOcrNote(null)
         touchedRef.current = new Set()
         router.refresh()
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'That expense could not be saved.')
+      } catch {
+        // Unlike the `{ error }` return above — no row was created there, so
+        // keeping `capture` for a retry is correct — this branch cannot tell
+        // "the insert never happened" from "it committed and the response
+        // was lost" (a dropped connection, an aborted fetch). Before this
+        // guard, a retry after either kind of failure reused `capture`,
+        // whose receipt_path/receipt_original a committed row can now
+        // already own: Add again and a second row shares that same path
+        // with the first (deleting either one deletes the file the other
+        // depends on), or pick a new file and removeSuperseded deletes
+        // objects the committed row still needs. Before this branch existed
+        // a retry always uploaded a fresh pair with a new stamp, so two rows
+        // could never share paths — clearing capture here restores that.
+        // Losing the upload on a genuinely-failed save costs one re-pick;
+        // reusing paths a committed row owns corrupts a receipt.
+        setCapture(null)
+        setOcrNote(null)
+        setError('That expense may or may not have been saved — check the list before adding it again.')
       } finally {
         setStep(null)
       }
