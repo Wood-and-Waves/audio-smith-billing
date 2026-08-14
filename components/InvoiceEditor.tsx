@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState, useTransition } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
   computeTotals, formatUSD, formatAmount, formatQty,
@@ -49,6 +50,11 @@ export default function InvoiceEditor({
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  // Set only when saveInvoice reports it switched off a billed invoice's
+  // hours page because the edited hours no longer match it — see the
+  // reconciliation guard in app/invoices/actions.ts. Shown instead of an
+  // immediate redirect so it is not navigated past before Dan can read it.
+  const [warning, setWarning] = useState<{ id: string; message: string } | null>(null)
 
   const [clientId, setClientId] = useState(initial?.client_id ?? '')
   const [issueDate, setIssueDate] = useState(
@@ -130,6 +136,7 @@ export default function InvoiceEditor({
 
   function submit() {
     setError(null)
+    setWarning(null)
     startTransition(async () => {
       const result = await saveInvoice({
         id: invoiceId,
@@ -141,6 +148,14 @@ export default function InvoiceEditor({
         lines: parsed,
       })
       if ('error' in result) { setError(result.error); return }
+      if (result.warning) {
+        // Stay put and surface it, rather than navigating straight past it —
+        // the invoice is saved either way, so the link below is how Dan gets
+        // there once he has seen why the hours page went dark.
+        setWarning({ id: result.id, message: result.warning })
+        router.refresh()
+        return
+      }
       router.push(`/invoices/${result.id}`)
       router.refresh()
     })
@@ -267,6 +282,15 @@ export default function InvoiceEditor({
       {error && (
         <p role="alert" className="mb-5 text-sm text-danger border-l-2 border-danger pl-3 py-1">
           {error}
+        </p>
+      )}
+
+      {warning && (
+        <p role="status" className="mb-5 text-sm text-accent border-l-2 border-accent pl-3 py-1">
+          {warning.message}{' '}
+          <Link href={`/invoices/${warning.id}`} className="underline font-semibold">
+            View invoice
+          </Link>
         </p>
       )}
 

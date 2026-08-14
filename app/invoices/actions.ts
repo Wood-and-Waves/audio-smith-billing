@@ -35,7 +35,11 @@ export type InvoiceInput = {
   backupSnapshot?: BackupSnapshot | null
 }
 
-export type SaveResult = { error: string } | { ok: true; id: string }
+export type SaveResult =
+  | { error: string }
+  // `warning` fires only when editing a billed invoice's hours lines forced
+  // show_hours off — see the reconciliation guard in the update branch below.
+  | { ok: true; id: string; warning?: string }
 
 /**
  * The one place an invoice is written. Totals are recomputed here from the
@@ -90,14 +94,46 @@ export async function saveInvoice(input: InvoiceInput): Promise<SaveResult> {
   }
 
   let invoiceId = input.id
+  let hoursWarning: string | undefined
 
   if (invoiceId) {
-    // Read the due date this row had BEFORE the update, so it can be compared
-    // against the new one below.
+    // Read the due date and backup_snapshot this row had BEFORE the update,
+    // so both can be compared against the new one below.
     const { data: before } = await supabase
-      .from('invoices').select('due_date').eq('id', invoiceId).maybeSingle()
+      .from('invoices').select('due_date, backup_snapshot').eq('id', invoiceId).maybeSingle()
 
-    const { error } = await supabase.from('invoices').update(row).eq('id', invoiceId)
+    // invoice_lines is deleted and re-inserted below, but backup_snapshot is
+    // deliberately left out of `row` (see the insert branch's comment) so an
+    // edit never nulls out a backup a show already froze in. That leaves a
+    // gap: the snapshot's hours page can go on asserting figures page 1 no
+    // longer charges. So when the snapshot is showing hours, compare the
+    // incoming Overtime/Double Time quantities against what it asserts, and
+    // if they no longer match, turn the hours page off in this same update —
+    // an invoice must never ship a page that contradicts itself. Everything
+    // else in the snapshot stays exactly as frozen; only show_hours changes.
+    let updatePatch: Record<string, unknown> = row
+    const snapshot = before?.backup_snapshot as BackupSnapshot | null
+    if (snapshot?.show_hours) {
+      // qty_hundredths is hours x 100 (see lib/showBuckets.ts), so /100
+      // recovers hours. A tolerance, not ===, because both sides pass through
+      // that hundredths round-trip and float noise is expected, not a real
+      // divergence.
+      const TOLERANCE_HOURS = 0.01
+      const qtyFor = (description: string) =>
+        lines
+          .filter((l) => l.description === description)
+          .reduce((t, l) => t + l.qty_hundredths, 0) / 100
+      const otMatches = Math.abs(qtyFor('Overtime') - snapshot.total_ot) < TOLERANCE_HOURS
+      const dtMatches = Math.abs(qtyFor('Double Time') - snapshot.total_dt) < TOLERANCE_HOURS
+      if (!otMatches || !dtMatches) {
+        updatePatch = { ...row, backup_snapshot: { ...snapshot, show_hours: false } }
+        hoursWarning =
+          'The hours breakdown was switched off because the edited hours no longer match it. ' +
+          'Switch it back on from the invoice page if that was intended.'
+      }
+    }
+
+    const { error } = await supabase.from('invoices').update(updatePatch).eq('id', invoiceId)
     if (error) return { error: error.message }
     const { error: delError } = await supabase
       .from('invoice_lines')
@@ -150,7 +186,9 @@ export async function saveInvoice(input: InvoiceInput): Promise<SaveResult> {
 
   revalidatePath('/invoices')
   revalidatePath(`/invoices/${invoiceId}`)
-  return { ok: true, id: invoiceId! }
+  return hoursWarning
+    ? { ok: true, id: invoiceId!, warning: hoursWarning }
+    : { ok: true, id: invoiceId! }
 }
 
 /** draft -> sent, or sent -> paid. Kept separate from editing on purpose. */
