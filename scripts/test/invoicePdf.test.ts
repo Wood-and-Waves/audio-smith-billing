@@ -345,6 +345,56 @@ test('the hours page prints only when the client opted in', () => {
   assert.ok(!off.includes('PWC ORLANDO'), 'the flag off suppresses the page entirely')
 })
 
+test('a multi-show invoice subtotals each show and labels the grand total ALL SHOWS', () => {
+  // Design doc example: Napa's four rows (here compressed to two, same sum)
+  // summing to 13.5, printed directly beneath the final show's rows with no
+  // separation, reading as if TOTAL 33.5 belonged to Napa alone.
+  const twoShows: DocumentData = {
+    ...INVOICE,
+    backup: {
+      show_hours: true,
+      shows: [
+        { name: 'Napa', zone_label: 'Pacific', days: [
+          { day: 'Mon 8/24', in: '8:00 AM', out: '2:30 PM', meal_minutes: 0,
+            net_hours: 6.5, st_hours: 6.5, ot_hours: 0, dt_hours: 0,
+            travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
+          { day: 'Tue 8/25', in: '8:00 AM', out: '3:00 PM', meal_minutes: 0,
+            net_hours: 7.0, st_hours: 7.0, ot_hours: 0, dt_hours: 0,
+            travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
+        ] },
+        { name: 'PwC Orlando', zone_label: 'Eastern', days: [
+          { day: 'Sat 8/29', in: '8:00 AM', out: '8:30 PM', meal_minutes: 30,
+            net_hours: 20.0, st_hours: 10.0, ot_hours: 10.0, dt_hours: 0,
+            travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
+        ] },
+      ],
+      total_net: 33.5, total_st: 23.5, total_ot: 10.0, total_dt: 0, expenses: [],
+    },
+  }
+
+  const strings = textOf(buildInvoicePdf(PARTS, twoShows, ASSETS))
+  // Each hours row is DAY, TIMES, MEAL, NET, ST, OT[, DT], flag — so the NET
+  // figure for a TOTAL/SUBTOTAL row sits three slots after its label, past
+  // the two blank TIMES/MEAL cells that row leaves empty.
+  const netAfter = (label: string, from = 0) => {
+    const i = strings.indexOf(label, from)
+    assert.notEqual(i, -1, `"${label}" appears in the document`)
+    return { index: i, net: strings[i + 3] }
+  }
+
+  const napaSubtotal = netAfter('SUBTOTAL')
+  assert.equal(napaSubtotal.net, '13.5', "Napa's subtotal reads 13.5")
+  const orlandoSubtotal = netAfter('SUBTOTAL', napaSubtotal.index + 1)
+  assert.equal(orlandoSubtotal.net, '20.0', "Orlando's subtotal reads 20.0")
+
+  const grand = netAfter('ALL SHOWS')
+  assert.equal(grand.net, '33.5', 'the grand total equals the sum of the per-show subtotals')
+  assert.equal(
+    Number(napaSubtotal.net) + Number(orlandoSubtotal.net), Number(grand.net),
+    'the grand total equals the sum of the printed subtotals, not just the fixture totals',
+  )
+})
+
 test('an invoice with no snapshot renders exactly as it always did', () => {
   const joined = textOf(buildInvoicePdf(PARTS, INVOICE, ASSETS)).join(' ')
   assert.ok(!/HOURS —/.test(joined), 'no hours page')

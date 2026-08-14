@@ -138,6 +138,13 @@ const s = {
   hoursTotal: {
     flexDirection: 'row', borderTopWidth: 2, borderTopColor: INK, paddingTop: 8, marginTop: 14,
   },
+  // Deliberately lighter than hoursTotal — a thin LINE-colour rule and a
+  // small muted label — so a per-show subtotal reads as a running number,
+  // not the bold, INK-bordered grand total the page ends on.
+  hoursSubtotal: {
+    flexDirection: 'row', borderTopWidth: 1, borderTopColor: LINE,
+    paddingTop: 4, marginTop: 4, marginBottom: 10,
+  },
   receiptPage: { backgroundColor: PAPER, padding: 40 },
   receiptCaption: { fontSize: 8, color: MUTED, marginBottom: 6 },
   // The height is capped in POINTS rather than left to the image.
@@ -240,43 +247,71 @@ export function buildInvoicePdf(parts: PdfParts, data: DocumentData, assets: Pdf
   // header and a bold TOTAL row with four blank cells — worse than no page,
   // since it reads as data that failed to load rather than data that never
   // existed.
+  // A per-show subtotal only earns its place when there is more than one
+  // show — on a single-show invoice it would just repeat the grand total a
+  // few lines down. Sitting right under the show's own rows, its rows sum,
+  // rather than under the LAST show's rows with no separation from the
+  // grand total below it.
+  const multiShow = Boolean(backup && backup.shows.length > 1)
+  const showTotals = (sh: { days: { net_hours: number; st_hours: number; ot_hours: number; dt_hours: number }[] }) => ({
+    net: sh.days.reduce((t, d) => t + d.net_hours, 0),
+    st: sh.days.reduce((t, d) => t + d.st_hours, 0),
+    ot: sh.days.reduce((t, d) => t + d.ot_hours, 0),
+    dt: sh.days.reduce((t, d) => t + d.dt_hours, 0),
+  })
+
   const hoursPages = !backup?.show_hours || backup.total_net === 0 ? [] : [
     h(Page, { size: 'LETTER', style: s.page },
       V(s.body, [
         T(s.expenseHead, `HOURS — INVOICE #${data.number}`),
-        ...backup.shows.flatMap((sh) => [
-          T(s.hoursShow, `${sh.name.toUpperCase()}   ·   ${sh.zone_label}`),
-          V(s.hoursHead, [
-            T(s.hDay, 'DAY'), T(s.hClock, 'TIMES'), T(s.hMeal, 'MEAL'),
-            T(s.hNum, 'NET'), T(s.hNum, 'ST'), T(s.hNum, 'OT'),
-            ...(anyDt ? [T(s.hNum, 'DT')] : []), T(s.hFlag, ''),
-          ]),
-          ...sh.days.map((d) => {
-            const flag = [d.travel_in && 'travel in', d.travel_out && 'travel out',
-                          d.half_day && 'half day',
-                          d.meal_penalties ? 'meal penalty' : ''].filter(Boolean).join(' · ')
-            // A travel or half day carries no punches. Left blank it reads as
-            // missing data, so it is labelled instead of given empty columns.
-            if (!d.in || !d.out) {
+        ...backup.shows.flatMap((sh) => {
+          const totals = showTotals(sh)
+          return [
+            T(s.hoursShow, `${sh.name.toUpperCase()}   ·   ${sh.zone_label}`),
+            V(s.hoursHead, [
+              T(s.hDay, 'DAY'), T(s.hClock, 'TIMES'), T(s.hMeal, 'MEAL'),
+              T(s.hNum, 'NET'), T(s.hNum, 'ST'), T(s.hNum, 'OT'),
+              ...(anyDt ? [T(s.hNum, 'DT')] : []), T(s.hFlag, ''),
+            ]),
+            ...sh.days.map((d) => {
+              const flag = [d.travel_in && 'travel in', d.travel_out && 'travel out',
+                            d.half_day && 'half day',
+                            d.meal_penalties ? 'meal penalty' : ''].filter(Boolean).join(' · ')
+              // A travel or half day carries no punches. Left blank it reads
+              // as missing data, so it is labelled instead of given empty
+              // columns.
+              if (!d.in || !d.out) {
+                return V(s.hoursRow, [
+                  T(s.hDay, d.day),
+                  T({ ...s.hClock, color: MUTED_DARK, fontSize: 8 }, flag || '—'),
+                ])
+              }
               return V(s.hoursRow, [
                 T(s.hDay, d.day),
-                T({ ...s.hClock, color: MUTED_DARK, fontSize: 8 }, flag || '—'),
+                T(s.hClock, `${d.in} – ${d.out}`),
+                T(s.hMeal, d.meal_minutes ? `${d.meal_minutes} min` : ''),
+                T(s.hNum, hrs(d.net_hours)),
+                T(s.hNum, hrs(d.st_hours)),
+                T(s.hNum, hrs(d.ot_hours)),
+                ...(anyDt ? [T(s.hNum, hrs(d.dt_hours))] : []),
+                T(s.hFlag, flag),
               ])
-            }
-            return V(s.hoursRow, [
-              T(s.hDay, d.day),
-              T(s.hClock, `${d.in} – ${d.out}`),
-              T(s.hMeal, d.meal_minutes ? `${d.meal_minutes} min` : ''),
-              T(s.hNum, hrs(d.net_hours)),
-              T(s.hNum, hrs(d.st_hours)),
-              T(s.hNum, hrs(d.ot_hours)),
-              ...(anyDt ? [T(s.hNum, hrs(d.dt_hours))] : []),
-              T(s.hFlag, flag),
-            ])
-          }),
-        ]),
+            }),
+            ...(multiShow ? [
+              V(s.hoursSubtotal, [
+                T({ ...s.hDay, fontSize: 8, color: MUTED_DARK }, 'SUBTOTAL'),
+                T(s.hClock, ''), T(s.hMeal, ''),
+                T({ ...s.hNum, fontSize: 8, color: MUTED_DARK }, hrs(totals.net)),
+                T({ ...s.hNum, fontSize: 8, color: MUTED_DARK }, hrs(totals.st)),
+                T({ ...s.hNum, fontSize: 8, color: MUTED_DARK }, hrs(totals.ot)),
+                ...(anyDt ? [T({ ...s.hNum, fontSize: 8, color: MUTED_DARK }, hrs(totals.dt))] : []),
+                T(s.hFlag, ''),
+              ]),
+            ] : []),
+          ]
+        }),
         V(s.hoursTotal, [
-          T({ ...s.hDay, fontFamily: 'Oswald', fontSize: 10 }, 'TOTAL'),
+          T({ ...s.hDay, fontFamily: 'Oswald', fontSize: 10 }, multiShow ? 'ALL SHOWS' : 'TOTAL'),
           T(s.hClock, ''), T(s.hMeal, ''),
           T({ ...s.hNum, fontFamily: 'Oswald', fontSize: 10 }, hrs(backup.total_net)),
           T({ ...s.hNum, fontFamily: 'Oswald', fontSize: 10 }, hrs(backup.total_st)),
