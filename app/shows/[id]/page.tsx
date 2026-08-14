@@ -109,6 +109,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
           name: s.name,
           venue: s.venue,
           notes: s.notes,
+          timezone: s.timezone,
           day_rate_cents: s.day_rate_cents,
           travel_rate_cents: s.travel_rate_cents,
           pm_rate_cents: s.pm_rate_cents,

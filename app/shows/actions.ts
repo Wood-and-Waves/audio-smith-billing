@@ -10,6 +10,7 @@ import {
 } from '@/lib/showBuckets'
 import type { ShowDayLike } from '@/lib/payroll'
 import type { PunchType } from '@/lib/punchTypes'
+import { isKnownTimezone } from '@/lib/timezones'
 
 type Fail = { error: string }
 
@@ -452,6 +453,8 @@ export type UpdateShowInput = {
   meal_penalty_grace_hours: number
   meal_penalty: string          // raw USD input; 0/"" -> meal penalties disabled (see billShows)
   short_turn_rest_hours: number
+  /** IANA zone the show is worked in. Punch times are rendered in it. */
+  timezone: string
   continuous_time_enabled: boolean
 }
 
@@ -535,6 +538,12 @@ export async function updateShow(input: UpdateShowInput): Promise<Fail | { ok: t
     return { error: 'Short-turn rest hours must be zero or more.' }
   }
 
+  // A bad zone does not throw — it silently renders every punch an hour or
+  // three out, which is only noticed later, on an invoice.
+  if (!isKnownTimezone(input.timezone)) {
+    return { error: `"${input.timezone}" is not a timezone this app offers.` }
+  }
+
   const { error } = await supabase.from('shows').update({
     name: input.name.trim(),
     venue: input.venue.trim() || null,
@@ -550,6 +559,7 @@ export async function updateShow(input: UpdateShowInput): Promise<Fail | { ok: t
     meal_penalty_cents: mealPenaltyCents,
     short_turn_rest_hours: input.short_turn_rest_hours,
     continuous_time_enabled: input.continuous_time_enabled,
+    timezone: input.timezone,
   }).eq('id', input.id)
   if (error) return { error: error.message }
 

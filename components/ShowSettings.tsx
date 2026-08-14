@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatAmount, parseUSD } from '@/lib/money'
 import { updateShow } from '@/app/shows/actions'
+import { TIMEZONES, DEFAULT_TIMEZONE } from '@/lib/timezones'
 
 const field =
   'w-full px-3 py-2 bg-surface border border-line rounded-field text-ink text-sm ' +
@@ -14,6 +15,7 @@ export type EditorShow = {
   name: string
   venue: string | null
   notes: string | null
+  timezone: string
   day_rate_cents: number
   travel_rate_cents: number
   pm_rate_cents: number
@@ -36,6 +38,10 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
   const [name, setName] = useState(initial.name)
   const [venue, setVenue] = useState(initial.venue ?? '')
   const [notes, setNotes] = useState(initial.notes ?? '')
+  // Punch times are stored as instants and displayed in this zone. Getting it
+  // wrong does not change the hours billed — a duration is a duration — but
+  // every time you read back is shifted, which matters most on site.
+  const [timezone, setTimezone] = useState(initial.timezone ?? DEFAULT_TIMEZONE)
 
   const [dayRate, setDayRate] = useState(formatAmount(initial.day_rate_cents))
   const [travelRate, setTravelRate] = useState(formatAmount(initial.travel_rate_cents))
@@ -77,6 +83,7 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
         meal_break_deduction_cap: Number(mealBreakCap),
         meal_penalty_grace_hours: Number(mealPenaltyGrace),
         meal_penalty: mealPenalty,
+        timezone,
         short_turn_rest_hours: Number(shortTurnRest),
         continuous_time_enabled: continuousTime,
       })
@@ -110,6 +117,19 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
             <label className="eyebrow block mb-2" htmlFor="show-venue">Venue</label>
             <input id="show-venue" className={field} value={venue} disabled={locked || pending}
                    onChange={(e) => setVenue(e.target.value)} />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="eyebrow block mb-2" htmlFor="show-tz">Timezone</label>
+            <select id="show-tz" className={field} value={timezone} disabled={locked || pending}
+                    onChange={(e) => setTimezone(e.target.value)}>
+              {TIMEZONES.map((tz) => (
+                <option key={tz.value} value={tz.value}>{tz.label}</option>
+              ))}
+            </select>
+            <p className="text-xs text-muted mt-1.5">
+              Where the work happens, not where you bill from. Punch times display in this
+              zone; hours billed are unaffected either way.
+            </p>
           </div>
         </div>
 
