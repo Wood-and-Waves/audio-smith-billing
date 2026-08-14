@@ -63,3 +63,18 @@ test('an unpaired second meal punch is incomplete too', () => {
   ]
   assert.equal(isIncompleteDay(punches), true)
 })
+
+test('a punch at the same moment as another is rejected', () => {
+  // The picker prefills a later punch from the previous one, so saving without
+  // touching the time is a single careless tap. An out equal to its in is a
+  // zero-length day; a meal that starts and ends at once is not a break.
+  const existing = [{ punch_type: 'start', punched_at: at(9) }]
+  assert.match(chronologyError('end', at(9), existing) ?? '', /after/i)
+  assert.equal(chronologyError('end', at(9.25), existing), null, 'a quarter hour later is fine')
+
+  const withEnd = [
+    { punch_type: 'start', punched_at: at(9) },
+    { punch_type: 'end', punched_at: at(18) },
+  ]
+  assert.match(chronologyError('meal_out', at(18), withEnd) ?? '', /before/i)
+})

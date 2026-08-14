@@ -42,15 +42,21 @@ export function chronologyError(
   const index = PUNCH_ORDER.indexOf(type)
   const byType = new Map(existing.map((p) => [p.punch_type, new Date(p.punched_at).getTime()]))
 
+  // Note <= and >=, not < and >. Two punches at the same moment are rejected:
+  // an out equal to its in is a zero-length day, and a meal that starts and
+  // ends at once is not a break. This was unreachable while punching stamped
+  // the current millisecond, but the picker prefills a later punch from the
+  // previous one — so saving without changing the time is now one careless tap,
+  // and it would bill silently wrong hours.
   for (let i = 0; i < index; i++) {
     const earlier = byType.get(PUNCH_ORDER[i])
-    if (earlier !== undefined && when < earlier) {
+    if (earlier !== undefined && when <= earlier) {
       return `${PUNCH_LABELS[type]} must be after ${PUNCH_LABELS[PUNCH_ORDER[i]]}.`
     }
   }
   for (let i = index + 1; i < PUNCH_ORDER.length; i++) {
     const later = byType.get(PUNCH_ORDER[i])
-    if (later !== undefined && when > later) {
+    if (later !== undefined && when >= later) {
       return `${PUNCH_LABELS[type]} must be before ${PUNCH_LABELS[PUNCH_ORDER[i]]}.`
     }
   }

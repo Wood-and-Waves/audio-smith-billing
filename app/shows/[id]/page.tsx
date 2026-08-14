@@ -183,6 +183,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
                   <PunchClock
                     showId={s.id}
                     showDayId={d.id}
+                    date={d.date}
                     timezone={s.timezone}
                     punches={d.punches}
                     locked={locked}
