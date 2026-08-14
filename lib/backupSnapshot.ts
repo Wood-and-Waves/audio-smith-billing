@@ -7,7 +7,7 @@
 // Pure: no database, no clock, no rendering. No '@/' imports and no JSX.
 
 import {
-  calculateNetHours, paidStraightTimeHours, paidOvertimeHours, paidDoubleTimeHours,
+  paidNetHours, paidStraightTimeHours, paidOvertimeHours, paidDoubleTimeHours,
   mealPenaltyCount, type ShowDayLike, type ShowRuleset,
 } from './payroll.ts'
 import { instantToWall, friendlyTime } from './zonedTime.ts'
@@ -105,7 +105,12 @@ export function buildBackupSnapshot(
           in: complete ? friendlyTime(instantToWall(start!.punched_at, s.timezone).time) : null,
           out: complete ? friendlyTime(instantToWall(end!.punched_at, s.timezone).time) : null,
           meal_minutes: mealMinutes(d),
-          net_hours: complete ? calculateNetHours(d, s.rules) : 0,
+          // paidNetHours, NOT calculateNetHours. Hours bill ceiling-rounded
+          // per day, so a 12.5 hour day is charged as 13 — and ST and OT are
+          // derived from that same ceiling. Storing the raw 12.5 here would
+          // print NET 12.5 beside ST 10.0 and OT 3.0: columns that visibly do
+          // not add up, on the one page whose job is to prevent a dispute.
+          net_hours: complete ? paidNetHours(d, s.rules) : 0,
           st_hours: complete ? paidStraightTimeHours(d, s.days, s.rules) : 0,
           ot_hours: complete ? paidOvertimeHours(d, s.days, s.rules) : 0,
           dt_hours: complete ? paidDoubleTimeHours(d, s.days, s.rules) : 0,

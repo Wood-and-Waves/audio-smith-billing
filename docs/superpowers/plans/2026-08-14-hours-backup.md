@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - **Money is integer cents.** Never recomputed from a rate. Rendered only via `formatUSD`.
-- **Hours use exactly the rounding billing uses** — the same `roundingMinutes` `computeShowLines` passes to `calculateNetHours`. A page that rounds differently disagrees with the invoice by minutes and invites a query about nothing.
+- **The NET column is the BILLED figure (`paidNetHours`), not raw elapsed time.** Hours bill ceiling-rounded per day, and ST/OT derive from that ceiling — so **ST + OT + DT always equals NET**, and the page discloses the rounding once at its foot.
 - **Clock times are frozen as formatted strings** in the show's zone at bill time. Never store the instant and format later: editing a show's timezone would retro-shift times a client already received.
 - **Prep/PM is NOT on the hours page** and not in the snapshot. It bills as its own line on page 1.
 - **The reconciliation is a test, not an intention:** OT hours summed across the snapshot must equal the `Overtime` line's `qty_hundredths / 100`, and likewise double time.
@@ -602,6 +602,7 @@ In `lib/invoicePdf.ts`, add to the `s` object, immediately before `receiptPage`:
   hoursTotal: {
     flexDirection: 'row', borderTopWidth: 2, borderTopColor: INK, paddingTop: 8, marginTop: 14,
   },
+  hoursNote: { fontSize: 8, color: MUTED, marginTop: 10 },
 ```
 
 **Fixed column widths, not flex-grow.** An earlier version used `flexGrow` with `textAlign: 'right'` and printed `12.010.0 ST` — the net and split columns ran together. This layout has been rendered and looked at.
@@ -661,6 +662,11 @@ In `buildInvoicePdf`, declare this **above** the `return h(Document, …)`, besi
           ...(anyDt ? [T({ ...s.hNum, fontFamily: 'Oswald', fontSize: 10 }, hrs(backup.total_dt))] : []),
           T(s.hFlag, ''),
         ]),
+        // The NET column is the BILLED figure: hours round up to the next whole
+        // hour each day, so a 12.5 hour day is charged as 13. A client can read
+        // 12.5 off the clock times in the same row, so say it once rather than
+        // let them find it.
+        T(s.hoursNote, 'Hours are rounded up to the next whole hour each day.'),
       ]),
     ),
   ]

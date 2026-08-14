@@ -164,3 +164,20 @@ test('totals sum across several shows', () => {
   assert.equal(snap.total_net,
     snap.shows.flatMap((s) => s.days).reduce((t, d) => t + d.net_hours, 0))
 })
+
+test('the columns add up on a day whose hours are not whole', () => {
+  // Hours bill ceiling-rounded per day: a 12.5 hour day is charged as 13, and
+  // ST/OT are derived from that ceiling. If the page printed the raw 12.5 the
+  // three columns would not reconcile — NET 12.5 beside ST 10.0 and OT 3.0 —
+  // which is the exact "two views disagreeing" failure the backup exists to
+  // prevent, printed on the document meant to settle it.
+  const twelveHalf = day('2026-08-30', '12:00', '00:30')  // 12.5 hours worked
+  const snap = buildBackupSnapshot({ shows: [show([twelveHalf])], showHours: true })
+  const d = snap.shows[0].days[0]
+
+  assert.equal(d.net_hours, 13, 'the billed figure, not the raw 12.5')
+  assert.equal(d.st_hours + d.ot_hours + d.dt_hours, d.net_hours,
+    'ST + OT + DT must account for every hour the NET column claims')
+  assert.equal(snap.total_st + snap.total_ot + snap.total_dt, snap.total_net,
+    'and the same at the foot of the page')
+})

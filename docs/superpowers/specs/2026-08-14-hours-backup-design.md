@@ -149,13 +149,24 @@ to avoid reading as an overcharge.
 
 The snapshot therefore stores no PM data and the page has no prep rows.
 
-### Rounding
+### Rounding, and the NET column
 
-Day hours are computed with **exactly the rounding billing uses** — the same
-`roundingMinutes` argument `computeShowLines` passes to `calculateNetHours`. A
-page derived from the same punches but rounded differently would disagree with
-the invoice by a few minutes, which is worse than not showing it at all: it
-invites a query about a discrepancy that is purely cosmetic.
+The NET column is the **billed** figure, `paidNetHours` — not the raw elapsed
+time. Hours bill ceiling-rounded per day, so 12.5 hours worked is charged as 13,
+and straight time and overtime are both derived from that same ceiling.
+
+Printing the raw 12.5 instead would produce `NET 12.5 · ST 10.0 · OT 3.0` —
+three columns that visibly fail to add up, on the one page whose purpose is to
+settle a question rather than raise one. So **ST + OT + DT always equals NET**,
+and that is a test.
+
+Because a client can read 12.5 off the clock times in the same row, the page
+discloses the rounding once, at the foot:
+
+> Hours are rounded up to the next whole hour each day.
+
+Without that line the page invites exactly the query it exists to prevent. With
+it, the arithmetic is complete: the client can derive every number on the row.
 
 ## The invariant, as a test
 
