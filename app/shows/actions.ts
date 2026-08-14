@@ -11,6 +11,7 @@ import {
 import type { ShowDayLike } from '@/lib/payroll'
 import type { PunchType } from '@/lib/punchTypes'
 import { isKnownTimezone } from '@/lib/timezones'
+import { expenseLines, expensesMissingReceipts, type ExpenseLike } from '@/lib/expenses'
 
 type Fail = { error: string }
 
@@ -313,7 +314,8 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
              continuous_time_enabled,
              show_days(id, date, travel_in, travel_out, pay_as_half_day,
                        punches(punch_type, punched_at)),
-             pm_entries(minutes)`)
+             pm_entries(minutes),
+             expenses(id, category, where_spent, amount_cents, spent_on, receipt_path)`)
     .in('id', showIds)
   if (error) return { error: error.message }
   if (!shows?.length) return { error: 'Those shows no longer exist.' }
@@ -338,12 +340,28 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
     }
   }
 
+  // Every expense has to have a receipt to bill. An expense may be LOGGED
+  // without one, because the amount is usually noted before the photograph,
+  // but a client must never receive an expense with nothing behind it.
+  const receiptless = shows.flatMap((s) => {
+    const rows = (s as unknown as { expenses?: ExpenseLike[] }).expenses ?? []
+    return expensesMissingReceipts(rows).map((e) => `${e.where_spent} (#${s.name})`)
+  })
+  if (receiptless.length) {
+    return {
+      error: `${receiptless.length} ${receiptless.length === 1 ? 'expense needs' : 'expenses need'} ` +
+        `a receipt before billing: ${receiptless.join(', ')}.`,
+    }
+  }
+
   const perShow: BucketLine[][] = []
   for (const s of shows) {
     const { rules, rates } = rulesetAndRatesFor(s)
     const days = ((s.show_days ?? []) as unknown as ShowDayLike[])
     const pmEntries = ((s.pm_entries ?? []) as unknown as PmEntryLike[])
     perShow.push(computeShowLines(days, pmEntries, rates, rules))
+    const expenses = (s as unknown as { expenses?: ExpenseLike[] }).expenses ?? []
+    perShow.push(expenseLines(expenses))
   }
   // Merge same-description/same-price lines across shows BEFORE rounding
   // each to cents (mergeLines, then lineTotal inside saveInvoice) — never
