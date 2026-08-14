@@ -19,6 +19,14 @@ test('an already-small image is never enlarged', () => {
   assert.deepEqual(scaleToFit(800, 600), { width: 800, height: 600 })
 })
 
+test('an extreme sliver never scales to a zero dimension', () => {
+  // A 1px-wide image, long edge far past MAX_EDGE. The naive scale factor
+  // rounds the short edge down to 0, which is an unusable canvas.
+  const sliver = scaleToFit(1, 3201)
+  assert.equal(sliver.height, MAX_EDGE)
+  assert.ok(sliver.width >= 1, `width ${sliver.width} must be at least 1px`)
+})
+
 test('contrast bounds ignore the extreme tails', () => {
   // A receipt photographed in shadow: most pixels mid-grey, a few specks of
   // pure black and pure white. Stretching between the absolute min and max
@@ -33,14 +41,77 @@ test('contrast bounds ignore the extreme tails', () => {
   assert.ok(hi >= 165 && hi <= 175, `hi ${hi} should land at the high end of the real data`)
 })
 
-test('a flat image does not divide by zero', () => {
-  // Every pixel identical — lo and hi collapse. The LUT must still be usable.
+test('a flat image does not divide by zero, and is not thresholded to two levels', () => {
+  // Every pixel identical — lo and hi collapse. The LUT must still be usable,
+  // and — this is the part a bare Number.isFinite check misses — it must not
+  // collapse the whole image down to black-and-white. Passing the image
+  // through untouched is correct; a two-level silhouette is not.
   const h = new Array(256).fill(0)
   h[128] = 1000
   const { lo, hi } = contrastBounds(h)
   const lut = buildLut(lo, hi)
   assert.equal(lut.length, 256)
   assert.ok(Number.isFinite(lut[128]))
+
+  const distinct = new Set(Array.from(lut))
+  assert.ok(distinct.size > 2, `expected more than a black/white split, got ${distinct.size} distinct values`)
+  assert.notEqual(lut[100], lut[150], 'two different inputs must not collapse onto the same output')
+})
+
+test('contrastBounds feeding straight into buildLut never produces a black-and-white image', () => {
+  // The bug this guards against only shows up when contrastBounds' real
+  // output — not a hand-picked wide span — is fed into buildLut. Each case
+  // below is a plausible bad photo, not a synthetic edge case.
+  const cases: Array<[string, () => number[]]> = [
+    [
+      'a flat single-bin histogram',
+      () => {
+        const h = new Array(256).fill(0)
+        h[128] = 1000
+        return h
+      },
+    ],
+    [
+      'an underexposed photo: 99% black, 1% highlight',
+      () => {
+        const h = new Array(256).fill(0)
+        h[0] = 9900
+        h[250] = 100
+        return h
+      },
+    ],
+    [
+      'an all-black histogram',
+      () => {
+        const h = new Array(256).fill(0)
+        h[0] = 1000
+        return h
+      },
+    ],
+    [
+      'an all-white histogram',
+      () => {
+        const h = new Array(256).fill(0)
+        h[255] = 1000
+        return h
+      },
+    ],
+  ]
+
+  for (const [label, makeHistogram] of cases) {
+    const { lo, hi } = contrastBounds(makeHistogram())
+    const lut = buildLut(lo, hi)
+
+    const distinct = new Set(Array.from(lut))
+    assert.ok(
+      distinct.size > 2,
+      `${label}: expected more than a black/white split, got ${distinct.size} distinct values (lo=${lo}, hi=${hi})`
+    )
+
+    // Two luminances that differed in the input must still differ in the
+    // output — detail must survive, not just "the LUT has many values".
+    assert.notEqual(lut[80], lut[160], `${label}: distinguishable inputs collapsed to the same output`)
+  }
 })
 
 test('the lut stretches the chosen range across the full scale', () => {

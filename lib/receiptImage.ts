@@ -17,10 +17,21 @@ export const JPEG_QUALITY = 0.8
 /** Ignored at each end when choosing the contrast range. */
 const TAIL_FRACTION = 0.02
 
-/** Scale so the LONG edge is at most MAX_EDGE. Never enlarges. */
+/**
+ * Below this span, stretching amplifies sensor noise into banding rather than
+ * revealing detail — and at the extreme (span 0 or 1) it degenerates into a
+ * binary threshold, which destroys the receipt outright. Passing the image
+ * through unchanged is the safer failure than either.
+ */
+const MIN_SPAN = 16
+
+/** Scale so the LONG edge is at most MAX_EDGE. Never enlarges. Never zero. */
 export function scaleToFit(w: number, h: number): { width: number; height: number } {
   const scale = Math.min(1, MAX_EDGE / Math.max(w, h))
-  return { width: Math.round(w * scale), height: Math.round(h * scale) }
+  return {
+    width: Math.max(1, Math.round(w * scale)),
+    height: Math.max(1, Math.round(h * scale)),
+  }
 }
 
 /**
@@ -57,9 +68,19 @@ export function contrastBounds(histogram: number[]): { lo: number; hi: number } 
 /** A 256-entry lookup mapping [lo, hi] onto the full 0–255 scale. */
 export function buildLut(lo: number, hi: number): Uint8ClampedArray {
   const lut = new Uint8ClampedArray(256)
-  // A flat image collapses lo and hi. Guard the division rather than letting
-  // every pixel become NaN and the receipt vanish.
-  const span = Math.max(1, hi - lo)
+
+  // A flat or near-flat image collapses lo and hi. Stretching a range this
+  // narrow doesn't reveal detail, it manufactures a two- or three-level
+  // silhouette (see MIN_SPAN above) — worse than doing nothing, since the
+  // untouched original is always kept separately. Fall through to identity
+  // instead. This also covers hi < lo (an empty/degenerate range) naturally,
+  // since hi - lo is then negative and still less than MIN_SPAN.
+  if (hi - lo < MIN_SPAN) {
+    for (let v = 0; v < 256; v++) lut[v] = v
+    return lut
+  }
+
+  const span = hi - lo
   for (let v = 0; v < 256; v++) {
     lut[v] = Math.round(((v - lo) / span) * 255)
   }
