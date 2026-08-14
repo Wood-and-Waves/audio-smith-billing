@@ -14,7 +14,9 @@ import { NextResponse, type NextRequest } from 'next/server'
 // /i is the public invoice link. It is a single page that reads through the
 // public_invoice() function (migration 0006), which returns one invoice by
 // unguessable token and nothing else — anon holds no table privileges.
-const PUBLIC_PREFIXES = ['/login', '/auth', '/api/dev', '/i']
+// /api/cron is the reminder sweep. Vercel calls it with no session, so it has
+// to be allowlisted here; it guards itself with CRON_SECRET.
+const PUBLIC_PREFIXES = ['/login', '/auth', '/api/dev', '/i', '/api/cron']
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request })
