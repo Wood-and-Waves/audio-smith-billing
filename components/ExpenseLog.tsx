@@ -341,6 +341,18 @@ export default function ExpenseLog({
       }
 
       const { fields } = result
+      // Read separately from filledFields: typing all four fields before
+      // attaching the photo — normal, since the amount is often noted
+      // before it's photographed — means every field below is already
+      // touched and none get written, even on a flawless read. Without
+      // this, that case fell through to "Couldn't read that one", which
+      // reads as an OCR failure and invites a re-shoot: another
+      // multi-megabyte upload pair and another paid API call, for a
+      // receipt that was read just fine the first time.
+      const extractedAnything =
+        fields.vendor !== null || fields.amountCents !== null
+        || fields.spentOn !== null || fields.category !== null
+
       // Named, not just counted — the note below says exactly which fields
       // came from the photo. "Filled in from the photo — check it" used to
       // claim the whole form when only some fields were empty to fill, which
@@ -368,7 +380,9 @@ export default function ExpenseLog({
       setOcrNote(
         filledFields.length > 0
           ? `Filled in the ${joinFieldNames(filledFields)} — check the rest.`
-          : "Couldn't read that one — type it in.",
+          : extractedAnything
+            ? 'Receipt read — your entries kept.'
+            : "Couldn't read that one — type it in.",
       )
     } catch {
       if (myToken === tokenRef.current) setOcrNote("Couldn't read that one — type it in.")
