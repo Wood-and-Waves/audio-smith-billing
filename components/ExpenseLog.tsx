@@ -22,6 +22,54 @@ const field =
   'w-full px-3 py-2 bg-surface border border-line rounded-field text-ink text-sm ' +
   'focus:border-accent focus:outline-none disabled:opacity-50'
 
+/** Receipts arrive as photographs or as emailed PDFs. Both end up a JPEG. */
+const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name)
+
+/**
+ * Draws the first page of a PDF onto a canvas.
+ *
+ * Airlines, hotels and Amazon email a PDF, and that is the receipt Dan has —
+ * so it has to become an image somewhere. It has to be HERE because
+ * @react-pdf cannot embed one PDF inside another, and the receipt's whole
+ * purpose is to reach the client attached to the invoice.
+ *
+ * pdf.js is imported dynamically: it is by far the largest thing this screen
+ * can pull, and a photographed receipt must not pay for it.
+ */
+async function pdfFirstPageToCanvas(file: File): Promise<HTMLCanvasElement> {
+  const pdfjs = await import('pdfjs-dist')
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url,
+  ).toString()
+
+  // Destroy the loading TASK, not the document — that is what releases the
+  // worker, and leaking one per receipt would accumulate across a trip.
+  const task = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) })
+  const doc = await task.promise
+  try {
+    const page = await doc.getPage(1)
+    // Render at the target size directly. Rasterising at full scale and then
+    // shrinking would cost memory for detail the downscale throws away.
+    const base = page.getViewport({ scale: 1 })
+    const { width, height } = scaleToFit(base.width, base.height)
+    const viewport = page.getViewport({ scale: width / base.width })
+
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('This browser cannot process PDFs.')
+    // A PDF page has no background of its own; without this it rasterises onto
+    // transparency, which JPEG renders as black.
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, width, height)
+    await page.render({ canvas, canvasContext: ctx, viewport }).promise
+    return canvas
+  } finally {
+    await task.destroy()
+  }
+}
+
 /**
  * Downscale, grayscale and contrast-stretch, entirely in the browser.
  *
@@ -29,17 +77,34 @@ const field =
  * and exceeds Next's 1MB server-action body limit, and twelve untouched photos
  * make a PDF most mail servers reject. The maths lives in lib/receiptImage.ts
  * where it can be tested; this is only the canvas wiring.
+ *
+ * A born-digital PDF already spans the full range from white paper to black
+ * text, so the contrast stretch computes to roughly the identity and leaves it
+ * alone. The same path serves both without a special case.
  */
 async function enhance(file: File): Promise<Blob> {
-  const bitmap = await createImageBitmap(file)
-  const { width, height } = scaleToFit(bitmap.width, bitmap.height)
+  let canvas: HTMLCanvasElement
+  let width: number
+  let height: number
 
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
+  if (isPdf(file)) {
+    canvas = await pdfFirstPageToCanvas(file)
+    width = canvas.width
+    height = canvas.height
+  } else {
+    const bitmap = await createImageBitmap(file)
+    ;({ width, height } = scaleToFit(bitmap.width, bitmap.height))
+    canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const c = canvas.getContext('2d')
+    if (!c) throw new Error('This browser cannot process images.')
+    c.drawImage(bitmap, 0, 0, width, height)
+    bitmap.close()
+  }
+
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('This browser cannot process images.')
-  ctx.drawImage(bitmap, 0, 0, width, height)
 
   const image = ctx.getImageData(0, 0, width, height)
   const px = image.data
@@ -83,6 +148,9 @@ export default function ExpenseLog({
   const router = useRouter()
   const [pending, start] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  // What the upload is doing right now. Processing a photo and pushing a few
+  // megabytes takes long enough that a silent button reads as a hung page.
+  const [step, setStep] = useState<string | null>(null)
 
   const [category, setCategory] = useState<ExpenseCategory>('meals')
   const [whereSpent, setWhereSpent] = useState('')
@@ -115,25 +183,48 @@ export default function ExpenseLog({
 
           const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
           const base = `${user.id}/${showId}/${stamp}`
+
+          setStep(isPdf(file) ? 'Reading the PDF…' : 'Processing the photo…')
           const enhanced = await enhance(file)
+
+          // The original keeps its own type. A PDF stored as .jpg downloads
+          // with an extension that lies about its contents.
+          const ext = isPdf(file) ? 'pdf' : 'jpg'
+          const enhancedPath = `${base}-enhanced.jpg`
+          const originalPath = `${base}-original.${ext}`
 
           // Both files BEFORE the row: a row pointing at a failed upload is a
           // receipt that looks present and cannot be opened, and a receipt is
           // what makes an expense billable.
-          const up1 = await supabase.storage.from('receipts')
-            .upload(`${base}-enhanced.jpg`, enhanced, { contentType: 'image/jpeg' })
-          if (up1.error) { setError(up1.error.message); return }
+          //
+          // Together, not one after the other. The original is the untouched
+          // 3-5MB capture and the enhanced copy a few hundred KB; uploaded in
+          // sequence the wait is their sum, which on hotel wifi is long enough
+          // to look like the page has hung.
+          setStep('Uploading the receipt…')
+          const [up1, up2] = await Promise.all([
+            supabase.storage.from('receipts')
+              .upload(enhancedPath, enhanced, { contentType: 'image/jpeg' }),
+            supabase.storage.from('receipts')
+              .upload(originalPath, file, { contentType: file.type || 'image/jpeg' }),
+          ])
 
-          const up2 = await supabase.storage.from('receipts')
-            .upload(`${base}-original.jpg`, file, { contentType: file.type || 'image/jpeg' })
-          if (up2.error) {
-            await supabase.storage.from('receipts').remove([`${base}-enhanced.jpg`])
-            setError(up2.error.message); return
+          // Either failing means neither is kept: a half-uploaded pair would
+          // leave a receipt that cannot be opened behind a billable expense.
+          if (up1.error || up2.error) {
+            await supabase.storage.from('receipts').remove(
+              [up1.error ? null : enhancedPath, up2.error ? null : originalPath]
+                .filter(Boolean) as string[],
+            )
+            setError((up1.error ?? up2.error)!.message)
+            return
           }
 
-          receiptPath = `${base}-enhanced.jpg`
-          receiptOriginal = `${base}-original.jpg`
+          receiptPath = enhancedPath
+          receiptOriginal = originalPath
         }
+
+        setStep('Saving…')
 
         const result = await addExpense({
           showId, category, whereSpent, amountCents: cents, spentOn,
@@ -147,6 +238,8 @@ export default function ExpenseLog({
         router.refresh()
       } catch (e) {
         setError(e instanceof Error ? e.message : 'That expense could not be saved.')
+      } finally {
+        setStep(null)
       }
     })
   }
@@ -229,19 +322,19 @@ export default function ExpenseLog({
         <button type="button" onClick={add} disabled={locked || pending}
                 className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
                            border border-line text-muted hover:text-ink disabled:opacity-40">
-          {pending ? 'Saving…' : '+ Add'}
+          {pending ? (step ?? 'Saving…') : '+ Add'}
         </button>
 
         <label className="sm:col-span-5 text-xs text-muted">
           {/* capture="environment" opens the camera directly on a phone, which
               is where a receipt actually gets photographed. */}
-          <input type="file" accept="image/*" capture="environment" disabled={locked || pending}
+          <input type="file" accept="image/*,application/pdf" disabled={locked || pending}
                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                  className="text-xs text-muted file:mr-3 file:px-3 file:py-1.5 file:rounded-field
                             file:border file:border-line file:bg-transparent file:text-muted
                             file:text-xs file:font-semibold file:uppercase file:tracking-wider
                             disabled:opacity-40" />
-          {file ? ` ${file.name}` : ' A receipt is required before this show can be billed.'}
+          {file ? ` ${file.name}` : ' Photo or PDF. A receipt is required before this show can be billed.'}
         </label>
       </div>
 
