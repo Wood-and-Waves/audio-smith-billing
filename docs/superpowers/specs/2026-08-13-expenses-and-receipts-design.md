@@ -134,9 +134,18 @@ Supabase Storage.** Both halves matter:
 
 **The original is uploaded too, untouched.** Thermal receipts fade, and hard
 contrast can erase a faint total — the exact number a client would query. The
-enhanced copy is what gets shown and sent; the original is the record, and it is
-what a future OCR or perspective-correction pass will re-process without anyone
-re-photographing anything.
+enhanced copy is what gets shown and sent; the original is the record.
+
+**Correction, 2026-08-14.** This paragraph used to say a future OCR pass would
+re-process the original. It does not, and the reasoning here was written for
+perspective correction — a geometric operation that genuinely wants untouched
+pixels. A vision model wants the opposite. The deciding argument is uniformity:
+a PDF's original *is a PDF*, so reading originals would mean rasterising
+server-side and dragging pdf.js and a canvas onto the server, which is the exact
+dependency the browser pipeline exists to avoid. OCR reads the **enhanced copy**
+— always a JPEG, already downscaled and contrast-stretched, and the same image
+the client receives in the invoice. The original is still retained, so a
+per-photo retry against it remains a one-line change.
 
 Both are JPEG. Order matters: **upload both files first, then record the row.**
 An expense row pointing at a file that failed to upload is a receipt that
@@ -209,14 +218,19 @@ cap with their aspect ratio intact.
 
 ## Out of scope
 
-- **OCR, and forwarded-email ingest.** Phase 2. Both are much easier to design
-  against a filled-in expense record than in the abstract, and the inbound path
-  is half-built already — Resend's "Enable Receiving" on `mail.theaudiosmith.com`
-  is switched off, waiting.
+- **Forwarded-email ingest.** Still deferred. The spec once called the inbound
+  path "half-built"; that was optimistic — there is no route, no signature
+  verification, no attachment handling and no auth model for a request that
+  arrives with no session. Only the *sending* subdomain exists.
+
+  **OCR shipped on 2026-08-14** — see
+  `docs/superpowers/plans/2026-08-14-receipt-ocr.md`. Photographing a receipt
+  now fills in the vendor, amount, date and category for confirmation.
 - **Perspective correction** — finding a receipt's corners and warping them
-  square, the part that makes a photo look like a flatbed scan. It needs
-  edge detection and it is the same pipeline OCR wants, so it goes with Phase 2
-  and runs over the retained originals.
+  square. **Probably drop this rather than defer it.** It was queued as a
+  prerequisite for a pipeline no longer being built: a vision model does not
+  need a squared-up receipt, and it read a sideways photograph correctly on the
+  first try. The contrast pass already covers legibility for the human reader.
 - **A billable/non-billable flag.** Every expense in five years of the sheet was
   billed. It belongs with bookkeeping, when there is something to distinguish.
 - **Mileage, or any computed expense.** Everything here is a receipt for money
