@@ -229,8 +229,16 @@ export async function deletePmEntry(pmEntryId: string): Promise<Fail | { ok: tru
  * removed AFTER the row delete, matching the order deleteExpense already
  * uses (app/expenses/actions.ts): row first, then files, so a storage
  * failure orphans a file rather than leaving a row pointing at a deleted one.
+ *
+ * Both storage-adjacent calls are checked, not swallowed: the show row is
+ * genuinely gone either way by the time either could fail, so neither is a
+ * reason to report the delete itself as failed — but leaving Dan with no
+ * signal at all is exactly the silent orphaning this code exists to prevent.
+ * A pre-read failure is the worse case (paths ends up empty and every
+ * receipt orphans with zero indication), so it gets the same warning
+ * treatment as a failed remove().
  */
-export async function deleteShow(showId: string): Promise<Fail | { ok: true }> {
+export async function deleteShow(showId: string): Promise<Fail | { ok: true; warning?: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not signed in.' }
@@ -240,18 +248,36 @@ export async function deleteShow(showId: string): Promise<Fail | { ok: true }> {
   if (!show) return { error: 'That show no longer exists.' }
   if (show.status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
 
-  const { data: expenseRows } = await supabase
+  const { data: expenseRows, error: readError } = await supabase
     .from('expenses').select('receipt_path, receipt_original').eq('show_id', showId)
 
   const { error } = await supabase.from('shows').delete().eq('id', showId)
   if (error) return { error: error.message }
 
+  revalidatePath('/shows')
+
+  if (readError) {
+    return {
+      ok: true,
+      warning: 'The show was deleted, but its receipt files could not be looked up, so they ' +
+        `may be left behind in storage: ${readError.message}`,
+    }
+  }
+
   const paths = (expenseRows ?? [])
     .flatMap((e) => [e.receipt_path, e.receipt_original])
     .filter((p): p is string => Boolean(p))
-  if (paths.length) await supabase.storage.from('receipts').remove(paths)
+  if (paths.length) {
+    const { error: storageError } = await supabase.storage.from('receipts').remove(paths)
+    if (storageError) {
+      return {
+        ok: true,
+        warning: 'The show was deleted, but its receipt file' +
+          `${paths.length === 1 ? '' : 's'} could not be removed from storage: ${storageError.message}`,
+      }
+    }
+  }
 
-  revalidatePath('/shows')
   return { ok: true }
 }
 

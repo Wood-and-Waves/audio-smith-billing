@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { deleteShow } from '@/app/shows/actions'
 
 // Deleting a show cascades to its days, punches, PM log and expenses — all
@@ -26,6 +27,7 @@ export default function DeleteShowButton({
   const router = useRouter()
   const [pending, start] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  const [warning, setWarning] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -60,6 +62,14 @@ export default function DeleteShowButton({
     start(async () => {
       const result = await deleteShow(showId)
       if ('error' in result) { setError(result.error); setConfirming(false); return }
+      // The show is gone either way — a storage warning here is not a
+      // rollback, just Dan's heads-up that a receipt file was left behind.
+      // Navigating away immediately (this page 404s the moment the show is
+      // gone) would unmount this component before he could read it, the
+      // same reason ExpenseLog keeps its warning on screen instead of
+      // silently refreshing past it — so hold here and show it, same alert
+      // box as the error case, instead of auto-navigating.
+      if (result.warning) { setWarning(result.warning); return }
       router.push('/shows')
       router.refresh()
     })
@@ -73,6 +83,19 @@ export default function DeleteShowButton({
       <p className="text-xs text-muted">
         This show is billed. Unlink it from its invoice before it can be deleted.
       </p>
+    )
+  }
+
+  // The show is already gone by the time a warning can exist — nothing left
+  // here to confirm or retry, just the heads-up and a way out.
+  if (warning) {
+    return (
+      <div className="inline-flex flex-col items-start gap-1">
+        <span role="alert" className="text-xs text-danger">{warning}</span>
+        <Link href="/shows" className="text-xs font-semibold text-accent hover:opacity-80">
+          Back to shows
+        </Link>
+      </div>
     )
   }
 
