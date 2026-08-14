@@ -37,9 +37,18 @@ const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name
  * can pull, and a photographed receipt must not pay for it.
  */
 async function pdfFirstPageToCanvas(file: File): Promise<HTMLCanvasElement> {
-  const pdfjs = await import('pdfjs-dist')
+  // The LEGACY build, deliberately — both here and for the worker.
+  //
+  // pdf.js 6's default build calls Map.prototype.getOrInsertComputed, a 2025
+  // proposal method Safari does not implement. Uploading a PDF in Safari died
+  // on "this.#rZ.getOrInsertComputed is not a function" before the file was
+  // even read. The legacy bundle ships the core-js polyfill for it; the modern
+  // one only calls it. Both the module and the worker need the legacy variant,
+  // since the worker parses the document in its own realm and would otherwise
+  // hit the same missing method with no polyfill in scope.
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
   pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-    'pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url,
+    'pdfjs-dist/legacy/build/pdf.worker.min.mjs', import.meta.url,
   ).toString()
 
   // Destroy the loading TASK, not the document — that is what releases the
