@@ -154,6 +154,9 @@ export default function ExpenseLog({
     start(async () => {
       const result = await deleteExpense(id)
       if ('error' in result) { setError(result.error); return }
+      // The expense is gone either way — a storage warning here is not a
+      // rollback, just Dan's heads-up that a receipt file was left behind.
+      if (result.warning) setError(result.warning)
       router.refresh()
     })
   }

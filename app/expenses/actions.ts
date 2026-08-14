@@ -67,7 +67,7 @@ export async function addExpense(input: {
 }
 
 /** Removes an expense and its receipt files. */
-export async function deleteExpense(expenseId: string): Promise<Fail | { ok: true }> {
+export async function deleteExpense(expenseId: string): Promise<Fail | { ok: true; warning?: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not signed in.' }
@@ -95,10 +95,20 @@ export async function deleteExpense(expenseId: string): Promise<Fail | { ok: tru
   // Files after the row: an orphaned file costs storage, an orphaned row costs
   // a receipt that cannot be opened.
   const paths = [row.receipt_path, row.receipt_original].filter(Boolean) as string[]
-  if (paths.length) await supabase.storage.from('receipts').remove(paths)
+  let warning: string | undefined
+  if (paths.length) {
+    const { error: storageError } = await supabase.storage.from('receipts').remove(paths)
+    // The row is already gone by this point — there is nothing to roll back,
+    // so a storage failure here is a warning about a leftover file, not a
+    // reason to report the delete itself as failed.
+    if (storageError) {
+      warning = `The expense was deleted, but its receipt file${paths.length === 1 ? '' : 's'} ` +
+        `could not be removed from storage: ${storageError.message}`
+    }
+  }
 
   revalidatePath(`/shows/${row.show_id}`)
-  return { ok: true }
+  return warning ? { ok: true, warning } : { ok: true }
 }
 
 /** Short-lived read URLs, keyed by storage path. */
