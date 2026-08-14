@@ -160,13 +160,10 @@ three columns that visibly fail to add up, on the one page whose purpose is to
 settle a question rather than raise one. So **ST + OT + DT always equals NET**,
 and that is a test.
 
-Because a client can read 12.5 off the clock times in the same row, the page
-discloses the rounding once, at the foot:
-
-> Hours are rounded up to the next whole hour each day.
-
-Without that line the page invites exactly the query it exists to prevent. With
-it, the arithmetic is complete: the client can derive every number on the row.
+The page does **not** explain the rounding. Dan: *"It does not need to be said.
+That is standard practice in this industry."* The accountants receiving these
+already expect a day to round up, so a sentence explaining it would be noise on
+a document meant to be scanned, not read.
 
 ## The invariant, as a test
 
