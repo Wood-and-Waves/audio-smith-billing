@@ -5,7 +5,7 @@ import { formatDateShort } from '@/lib/dates'
 import { lineTotal } from '@/lib/money'
 import { computeShowLines, rulesetAndRatesFor, type PmEntryLike } from '@/lib/showBuckets'
 import type { ShowDayLike } from '@/lib/payroll'
-import { expenseLines, type ExpenseCategory } from '@/lib/expenses'
+import { expenseLines, expensesMissingReceipts, type ExpenseCategory } from '@/lib/expenses'
 import AppShell from '@/components/AppShell'
 import UnbilledShows, { type UnbilledShow } from '@/components/UnbilledShows'
 
@@ -91,6 +91,12 @@ export default async function ShowsPage() {
       .filter((d) => isIncompleteDay(d.punches))
       .map((d) => formatDateShort(d.date))
 
+    // Shares expensesMissingReceipts with billShows and the show detail page
+    // so this list, the detail page's gate, and the server refusal can never
+    // disagree about which expenses block billing.
+    const expensesNeedingReceipts = expensesMissingReceipts(s.expenses ?? [])
+      .map((e) => e.where_spent)
+
     return {
       id: s.id,
       name: s.name,
@@ -101,6 +107,7 @@ export default async function ShowsPage() {
       totalCents,
       lines,
       incompleteDates,
+      expensesNeedingReceipts,
     }
   })
 

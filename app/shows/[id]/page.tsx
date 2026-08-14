@@ -5,7 +5,7 @@ import { formatDateLong, formatDateShort } from '@/lib/dates'
 import { formatUSD, formatQty, lineTotal } from '@/lib/money'
 import { computeShowLines, rulesetAndRatesFor, type PmEntryLike } from '@/lib/showBuckets'
 import { calculateNetHours, type ShowDayLike } from '@/lib/payroll'
-import { expenseLines, type ExpenseCategory } from '@/lib/expenses'
+import { expenseLines, expensesMissingReceipts, type ExpenseCategory } from '@/lib/expenses'
 import AppShell from '@/components/AppShell'
 import PunchClock from '@/components/PunchClock'
 import ShowDayControls from '@/components/ShowDayControls'
@@ -102,6 +102,14 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
   const incompleteDates = days
     .filter((d) => isIncompleteDay(d.punches))
     .map((d) => formatDateShort(d.date))
+
+  // Shares expensesMissingReceipts with billShows (app/shows/actions.ts) so
+  // this banner and the billing gate can never disagree about which expenses
+  // block billing. "Every expense has to have a receipt to bill" — the design
+  // asks for this to be predicted before the click, the same way an
+  // incomplete punch already is above.
+  const expensesNeedingReceipts = expensesMissingReceipts(s.expenses ?? [])
+    .map((e) => e.where_spent)
 
   // Counts DeleteShowButton needs to name what a delete destroys, and the
   // date ShowDayControls needs to default the next range's From to the day
@@ -246,6 +254,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
           invoiceId={s.invoice_id}
           hasLines={lines.length > 0}
           incompleteDates={incompleteDates}
+          expensesNeedingReceipts={expensesNeedingReceipts}
           lastDayDate={lastDayDate}
         />
       </section>

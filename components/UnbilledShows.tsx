@@ -36,6 +36,8 @@ export type UnbilledShow = {
   totalCents: number
   lines: BucketLine[]
   incompleteDates: string[]
+  /** where_spent of each expense missing a receipt — mirrors incompleteDates. */
+  expensesNeedingReceipts: string[]
 }
 
 export default function UnbilledShows({ shows }: { shows: UnbilledShow[] }) {
@@ -86,9 +88,14 @@ export default function UnbilledShows({ shows }: { shows: UnbilledShow[] }) {
           // so an empty show can never ride along on someone else's invoice
           // and get silently marked billed.
           const empty = s.lines.length === 0
+          // Mirrors ShowDayControls' expensesNeedingReceipts gate and
+          // billShows' own refusal (app/shows/actions.ts) — "every expense
+          // has to have a receipt to bill" — so a show missing one can never
+          // be selected here and fail only after the click.
+          const receiptsMissing = s.expensesNeedingReceipts.length > 0
           const checked = selected.has(s.id)
           const wrongClient = activeClientId !== null && s.clientId !== activeClientId && !checked
-          const disabled = incomplete || empty || wrongClient
+          const disabled = incomplete || empty || receiptsMissing || wrongClient
 
           // The show name stays a real Link to /shows/id (e.g. to finish an
           // incomplete punch) so it lives outside the <label> below — a link
@@ -122,6 +129,10 @@ export default function UnbilledShows({ shows }: { shows: UnbilledShow[] }) {
                   {incomplete ? (
                     <p className="text-xs text-accent mt-1">
                       Finish punches for {s.incompleteDates.join(', ')} before this can be billed.
+                    </p>
+                  ) : receiptsMissing ? (
+                    <p className="text-xs text-accent mt-1">
+                      {s.expensesNeedingReceipts.length} {s.expensesNeedingReceipts.length === 1 ? 'expense needs' : 'expenses need'} receipts: {s.expensesNeedingReceipts.join(', ')}.
                     </p>
                   ) : empty ? (
                     <p className="text-xs text-muted mt-1">Nothing to bill yet.</p>
