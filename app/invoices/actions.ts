@@ -299,6 +299,25 @@ export async function sendInvoice(
     }
   }))
 
+  // A receipt is what makes an expense billable (see the billing guard in
+  // lib/expenses.ts / billShows) — mailing a client an itemisation backed by
+  // zero receipt pages is worse than refusing to send. This only fires on a
+  // TOTAL wipeout: every expense that has a receipt_path failed to resolve
+  // to an image, which means signedReceiptUrls came back empty or the bucket
+  // is unreachable (see its own doc comment — it swallows storage errors
+  // into `{}`), i.e. a Storage outage rather than one dead file. A partial
+  // failure — one bad image among several good ones — must still send; that
+  // is the already-correct behaviour and this check must not touch it.
+  const expensesWithReceipts = withImages.filter((e) => e.receipt_path)
+  const allReceiptsFailed =
+    expensesWithReceipts.length > 0 && expensesWithReceipts.every((e) => !e.receiptDataUri)
+  if (allReceiptsFailed) {
+    return {
+      error: "This invoice's receipt images could not be attached (Storage may be down), " +
+        'so it was not sent. Try again.',
+    }
+  }
+
   const data: DocumentData = {
     number: inv.number,
     status: inv.status,
