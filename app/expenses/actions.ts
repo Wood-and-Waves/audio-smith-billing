@@ -47,6 +47,20 @@ export async function addExpense(input: {
   }
   if (!isPlainDate(input.spentOn)) return { error: 'Pick the date of the expense.' }
 
+  // Storage RLS constrains writes to folder[1] = auth.uid() but says nothing
+  // about the show id in folder[2] — a caller-supplied path pointing at a
+  // DIFFERENT show's key would let deleteShow on that other show remove this
+  // expense's own file, leaving a live row pointing at a deleted one, which
+  // is the exact invariant receipts are built around. Both paths are
+  // checked, before the insert.
+  const prefix = `${user.id}/${input.showId}/`
+  if (input.receiptPath !== null && !input.receiptPath.startsWith(prefix)) {
+    return { error: 'That receipt was not uploaded to this show.' }
+  }
+  if (input.receiptOriginal !== null && !input.receiptOriginal.startsWith(prefix)) {
+    return { error: 'That receipt was not uploaded to this show.' }
+  }
+
   const { data, error } = await supabase.from('expenses').insert({
     owner_id: user.id,
     show_id: input.showId,
