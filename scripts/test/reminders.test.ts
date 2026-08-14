@@ -1,0 +1,101 @@
+// The sweep is pure, so every boundary is pinned here exactly — no database,
+// no clock, no email. "Today" is always injected.
+//
+// Reference dates, checked against a calendar before this was written:
+//   2026-08-16 Sunday   2026-08-17 Monday   2026-08-18 Tuesday
+//   2026-08-24 Monday   2026-08-20 Thursday
+
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { sweep, isDigestDay, DUE_SOON_DAYS, type ReminderInvoice } from '../../lib/reminders.ts'
+
+const TODAY = '2026-08-20'   // a Thursday
+
+const inv = (over: Partial<ReminderInvoice> = {}): ReminderInvoice => ({
+  id: 'i1',
+  number: 400,
+  due_date: TODAY,
+  total_cents: 50000,
+  status: 'sent',
+  client_name: 'Journey Church',
+  alerted_overdue: false,
+  ...over,
+})
+
+test('due in 8 days is not yet due-soon; 7 days is', () => {
+  const far = sweep([inv({ due_date: '2026-08-28' })], TODAY)
+  assert.equal(far.dueSoon.length, 0, '8 days out is quiet')
+  assert.equal(far.overdue.length, 0)
+
+  const edge = sweep([inv({ due_date: '2026-08-27' })], TODAY)
+  assert.equal(edge.dueSoon.length, 1, `${DUE_SOON_DAYS} days out is due soon`)
+})
+
+test('due today is due-soon, NOT overdue', () => {
+  const s = sweep([inv({ due_date: TODAY })], TODAY)
+  assert.equal(s.dueSoon.length, 1, 'due today still counts as due soon')
+  assert.equal(s.overdue.length, 0, 'and is not yet overdue — lib/status.ts owns this rule')
+})
+
+test('due yesterday and never alerted is overdue AND newly overdue', () => {
+  const s = sweep([inv({ due_date: '2026-08-19', alerted_overdue: false })], TODAY)
+  assert.equal(s.overdue.length, 1)
+  assert.equal(s.newlyOverdue.length, 1)
+  assert.equal(s.dueSoon.length, 0)
+})
+
+test('already alerted is overdue but NOT newly overdue', () => {
+  // This is what stops the same invoice emailing every single morning.
+  const s = sweep([inv({ due_date: '2026-08-01', alerted_overdue: true })], TODAY)
+  assert.equal(s.overdue.length, 1)
+  assert.equal(s.newlyOverdue.length, 0)
+})
+
+test('draft, paid and void never appear, at any date', () => {
+  for (const status of ['draft', 'paid', 'void'] as const) {
+    for (const due of ['2026-08-01', TODAY, '2026-08-25']) {
+      const s = sweep([inv({ status, due_date: due })], TODAY)
+      assert.equal(s.dueSoon.length, 0, `${status} due ${due} is not due-soon`)
+      assert.equal(s.overdue.length, 0, `${status} due ${due} is not overdue`)
+      assert.equal(s.newlyOverdue.length, 0, `${status} due ${due} is not newly overdue`)
+      assert.equal(s.totalOutstandingCents, 0, `${status} owes nothing`)
+    }
+  }
+})
+
+test('outstanding sums stored cents across every chaseable invoice', () => {
+  // Including one due far in the future, which is owed but not yet chased.
+  const s = sweep([
+    inv({ id: 'a', total_cents: 655314, due_date: '2026-08-01' }),   // overdue
+    inv({ id: 'b', total_cents: 50000, due_date: '2026-08-22' }),    // due soon
+    inv({ id: 'c', total_cents: 234000, due_date: '2026-12-01' }),   // neither
+    inv({ id: 'd', total_cents: 999900, status: 'paid' }),           // ignored
+  ], TODAY)
+  assert.equal(s.totalOutstandingCents, 655314 + 50000 + 234000)
+  assert.equal(s.overdue.length, 1)
+  assert.equal(s.dueSoon.length, 1)
+})
+
+test('each bucket is ordered soonest first', () => {
+  const s = sweep([
+    inv({ id: 'late', due_date: '2026-08-19' }),
+    inv({ id: 'later', due_date: '2026-08-05' }),
+  ], TODAY)
+  assert.deepEqual(s.overdue.map((i) => i.id), ['later', 'late'], 'oldest overdue leads')
+})
+
+test('isDigestDay is true only on Monday, in Chicago', () => {
+  assert.equal(isDigestDay('2026-08-17'), true, 'Monday')
+  assert.equal(isDigestDay('2026-08-24'), true, 'the next Monday')
+  assert.equal(isDigestDay('2026-08-16'), false, 'Sunday')
+  assert.equal(isDigestDay('2026-08-18'), false, 'Tuesday')
+  assert.equal(isDigestDay('2026-08-20'), false, 'Thursday')
+})
+
+test('a Chicago Sunday that is already Monday in UTC is NOT a digest day', () => {
+  // 2026-08-16 is a Sunday in Chicago. At 8pm Chicago it is already 01:00
+  // Monday in UTC. todayInChicago() correctly returns the Sunday, and
+  // isDigestDay must agree with it — a naive UTC weekday check would fire the
+  // weekly digest a day early, every week.
+  assert.equal(isDigestDay('2026-08-16'), false)
+})

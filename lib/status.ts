@@ -43,4 +43,4 @@ export const STATUS_META: Record<DisplayStatus, { label: string; bar: string; te
   void:    { label: 'Void',    bar: 'bg-transparent', text: 'text-muted' },
 }
 
-export { todayInChicago } from './dates'
+export { todayInChicago } from './dates.ts'
