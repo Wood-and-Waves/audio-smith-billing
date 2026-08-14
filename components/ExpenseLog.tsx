@@ -1,13 +1,13 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { formatUSD, parseUSD } from '@/lib/money'
+import { formatAmount, formatUSD, parseUSD } from '@/lib/money'
 import { formatDateShort, todayInChicago } from '@/lib/dates'
 import { CATEGORY_LABEL, CATEGORY_ORDER, expensesMissingReceipts, type ExpenseCategory } from '@/lib/expenses'
 import { scaleToFit, contrastBounds, buildLut, JPEG_QUALITY } from '@/lib/receiptImage'
-import { addExpense, deleteExpense } from '@/app/expenses/actions'
+import { addExpense, deleteExpense, extractReceipt } from '@/app/expenses/actions'
 
 type Row = {
   id: string
@@ -147,6 +147,79 @@ async function enhance(file: File): Promise<Blob> {
   })
 }
 
+/**
+ * Enhances and uploads both receipt copies, all-or-nothing.
+ *
+ * This block is UNCHANGED from what used to run inside add() — only moved.
+ * It now runs at file-pick time rather than at Add time, so that by the time
+ * Add is clicked the receipt already exists in Storage (or the pick already
+ * failed and said so), instead of the upload racing the save.
+ *
+ * Both files BEFORE the row: a row pointing at a failed upload is a receipt
+ * that looks present and cannot be opened, and a receipt is what makes an
+ * expense billable.
+ *
+ * Together, not one after the other. The original is the untouched 3-5MB
+ * capture and the enhanced copy a few hundred KB; uploaded in sequence the
+ * wait is their sum, which on hotel wifi is long enough to look like the
+ * page has hung.
+ */
+async function uploadReceiptPair(
+  supabase: ReturnType<typeof createClient>,
+  showId: string,
+  file: File,
+  onStep: (s: string) => void,
+): Promise<{ error: string } | { enhancedPath: string; originalPath: string }> {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const base = `${user.id}/${showId}/${stamp}`
+
+  onStep(isPdf(file) ? 'Reading the PDF…' : 'Processing the photo…')
+  const enhanced = await enhance(file)
+
+  // The original keeps its own type. A PDF stored as .jpg downloads
+  // with an extension that lies about its contents.
+  const ext = isPdf(file) ? 'pdf' : 'jpg'
+  const enhancedPath = `${base}-enhanced.jpg`
+  const originalPath = `${base}-original.${ext}`
+
+  onStep('Uploading the receipt…')
+  const [up1, up2] = await Promise.all([
+    supabase.storage.from('receipts')
+      .upload(enhancedPath, enhanced, { contentType: 'image/jpeg' }),
+    supabase.storage.from('receipts')
+      .upload(originalPath, file, { contentType: file.type || 'image/jpeg' }),
+  ])
+
+  // Either failing means neither is kept: a half-uploaded pair would
+  // leave a receipt that cannot be opened behind a billable expense.
+  if (up1.error || up2.error) {
+    await supabase.storage.from('receipts').remove(
+      [up1.error ? null : enhancedPath, up2.error ? null : originalPath]
+        .filter(Boolean) as string[],
+    )
+    return { error: (up1.error ?? up2.error)!.message }
+  }
+
+  return { enhancedPath, originalPath }
+}
+
+/**
+ * Best-effort removal of a receipt pair nobody will ever attach to a row —
+ * a superseded pick, or a pair whose OCR read lost the token race.
+ *
+ * An orphaned file in Storage costs nothing but a few hundred KB; this
+ * project's established safe direction (see deleteExpense's own comment in
+ * app/expenses/actions.ts) is to risk that over ever blocking on, or
+ * surfacing, a cleanup failure.
+ */
+function removeSuperseded(paths: string[]) {
+  const supabase = createClient()
+  void supabase.storage.from('receipts').remove(paths).catch(() => {})
+}
+
 export default function ExpenseLog({
   showId, expenses, locked,
 }: {
@@ -157,15 +230,134 @@ export default function ExpenseLog({
   const router = useRouter()
   const [pending, start] = useTransition()
   const [error, setError] = useState<string | null>(null)
-  // What the upload is doing right now. Processing a photo and pushing a few
-  // megabytes takes long enough that a silent button reads as a hung page.
+  // What the SAVE is doing right now (addExpense only — see `pending`
+  // above). The upload no longer happens here; it happens at file pick.
   const [step, setStep] = useState<string | null>(null)
 
   const [category, setCategory] = useState<ExpenseCategory>('meals')
   const [whereSpent, setWhereSpent] = useState('')
   const [amount, setAmount] = useState('')
   const [spentOn, setSpentOn] = useState(todayInChicago())
-  const [file, setFile] = useState<File | null>(null)
+
+  // The picked file's already-uploaded receipt pair, ready to attach to the
+  // next Add. Null until upload finishes; also null again the instant a new
+  // file is picked, an upload fails, or a save consumes it.
+  type Capture = { file: File; enhancedPath: string; originalPath: string; token: number }
+  const [capture, setCapture] = useState<Capture | null>(null)
+  // True only while enhance+upload are running (between pick and capture).
+  // OCR, which runs after, deliberately does NOT set this — see onPickFile.
+  const [uploading, setUploading] = useState(false)
+  // Status line for the capture/OCR pipeline. Rendered under the file input,
+  // NEVER in the role="alert" paragraph below — that paragraph means "your
+  // expense was not saved" and nothing that happens before Add is clicked
+  // may borrow it.
+  const [ocrNote, setOcrNote] = useState<string | null>(null)
+
+  // Minted fresh on every file pick; an async result is applied only if it
+  // still matches. This one mechanism covers three otherwise-separate races:
+  // a pick superseded by a later pick, a save that landed while OCR was
+  // still reading, and an upload pair that got rolled back after failing.
+  const tokenRef = useRef(0)
+  // Which fields the user has personally edited via their own onChange —
+  // NOT which fields differ from their defaults. spentOn and category start
+  // with real (non-empty) defaults, so "differs from default" would forever
+  // block a receipt from correcting today's date or the guessed category;
+  // "the user moved the control" is the only signal that means "hands off".
+  const touchedRef = useRef<Set<'vendor' | 'amount' | 'date' | 'category'>>(new Set())
+
+  /**
+   * Reads a just-picked file: enhance, upload both copies, then OCR.
+   *
+   * The ONLY caller is the file input's onChange, below. No useEffect may
+   * ever key this off form state (category, whereSpent, amount, spentOn) —
+   * that is the plausible-looking future edit that turns one photo pick into
+   * a paid API call per keystroke.
+   *
+   * The OCR call deliberately runs outside useTransition, in its own state
+   * (`ocrNote`), so it never contributes to `pending` and never gates the
+   * Add button — a receipt that fails to read must never block recording
+   * the expense. Uploads finish first, so Add is already usable (once
+   * `capture` is set) while OCR is still going in the background.
+   */
+  async function onPickFile(f: File | null) {
+    // Whatever was previously picked (uploaded or still in flight) is
+    // superseded now, whether or not a new file follows it.
+    if (capture) removeSuperseded([capture.enhancedPath, capture.originalPath])
+    setCapture(null)
+    setOcrNote(null)
+
+    tokenRef.current += 1
+    const myToken = tokenRef.current
+    if (!f) return
+
+    const supabase = createClient()
+    setUploading(true)
+    let uploaded: { error: string } | { enhancedPath: string; originalPath: string }
+    try {
+      uploaded = await uploadReceiptPair(supabase, showId, f, (s) => {
+        if (myToken === tokenRef.current) setOcrNote(s)
+      })
+    } catch (e) {
+      uploaded = { error: e instanceof Error ? e.message : 'Could not process that file.' }
+    } finally {
+      setUploading(false)
+    }
+
+    if (myToken !== tokenRef.current) {
+      // A newer pick (or a save) won the race while this was uploading. If
+      // it actually finished, nobody will ever attach it — clean it up.
+      if (!('error' in uploaded)) removeSuperseded([uploaded.enhancedPath, uploaded.originalPath])
+      return
+    }
+
+    if ('error' in uploaded) {
+      setOcrNote(uploaded.error)
+      return
+    }
+
+    const { enhancedPath, originalPath } = uploaded
+    setCapture({ file: f, enhancedPath, originalPath, token: myToken })
+
+    setOcrNote('Reading the receipt…')
+    try {
+      const result = await extractReceipt(enhancedPath)
+      if (myToken !== tokenRef.current) return // superseded, or already saved
+
+      if ('error' in result) {
+        // The action's own message — shown verbatim, per its doc comment in
+        // app/expenses/actions.ts (e.g. a missing ANTHROPIC_API_KEY, named).
+        setOcrNote(result.error)
+        return
+      }
+      if (result.unreadable) {
+        setOcrNote("Couldn't read that one — type it in.")
+        return
+      }
+
+      const { fields } = result
+      let filled = false
+      if (fields.vendor !== null && !touchedRef.current.has('vendor')) {
+        setWhereSpent(fields.vendor)
+        filled = true
+      }
+      if (fields.amountCents !== null && !touchedRef.current.has('amount')) {
+        setAmount(formatAmount(fields.amountCents))
+        filled = true
+      }
+      if (fields.spentOn !== null && !touchedRef.current.has('date')) {
+        setSpentOn(fields.spentOn)
+        filled = true
+      }
+      if (fields.category !== null && !touchedRef.current.has('category')) {
+        setCategory(fields.category)
+        filled = true
+      }
+
+      setOcrNote(filled ? 'Filled in from the photo — check it.' : "Couldn't read that one — type it in.")
+    } catch {
+      if (myToken === tokenRef.current) setOcrNote("Couldn't read that one — type it in.")
+    }
+  }
 
   // Newest first, matching PmLog's ordering of its entries.
   const sorted = [...expenses].sort((a, b) => b.spent_on.localeCompare(a.spent_on))
@@ -180,70 +372,38 @@ export default function ExpenseLog({
     if (cents === null || cents <= 0) { setError('Enter an amount.'); return }
     if (!whereSpent.trim()) { setError('Say where the money went.'); return }
 
+    // Freeze what this Add attaches. Bumping the token here — before the
+    // async save even starts — means an OCR read still in flight for this
+    // same capture ("a save that landed mid-read") is guaranteed to find its
+    // token stale by the time it resolves and will not silently rewrite a
+    // field on whatever the NEXT expense turns out to be.
+    const attached = capture
+    tokenRef.current += 1
+
     start(async () => {
       try {
-        let receiptPath: string | null = null
-        let receiptOriginal: string | null = null
-
-        if (file) {
-          const supabase = createClient()
-          const { data: { user } } = await supabase.auth.getUser()
-          if (!user) { setError('Not signed in.'); return }
-
-          const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-          const base = `${user.id}/${showId}/${stamp}`
-
-          setStep(isPdf(file) ? 'Reading the PDF…' : 'Processing the photo…')
-          const enhanced = await enhance(file)
-
-          // The original keeps its own type. A PDF stored as .jpg downloads
-          // with an extension that lies about its contents.
-          const ext = isPdf(file) ? 'pdf' : 'jpg'
-          const enhancedPath = `${base}-enhanced.jpg`
-          const originalPath = `${base}-original.${ext}`
-
-          // Both files BEFORE the row: a row pointing at a failed upload is a
-          // receipt that looks present and cannot be opened, and a receipt is
-          // what makes an expense billable.
-          //
-          // Together, not one after the other. The original is the untouched
-          // 3-5MB capture and the enhanced copy a few hundred KB; uploaded in
-          // sequence the wait is their sum, which on hotel wifi is long enough
-          // to look like the page has hung.
-          setStep('Uploading the receipt…')
-          const [up1, up2] = await Promise.all([
-            supabase.storage.from('receipts')
-              .upload(enhancedPath, enhanced, { contentType: 'image/jpeg' }),
-            supabase.storage.from('receipts')
-              .upload(originalPath, file, { contentType: file.type || 'image/jpeg' }),
-          ])
-
-          // Either failing means neither is kept: a half-uploaded pair would
-          // leave a receipt that cannot be opened behind a billable expense.
-          if (up1.error || up2.error) {
-            await supabase.storage.from('receipts').remove(
-              [up1.error ? null : enhancedPath, up2.error ? null : originalPath]
-                .filter(Boolean) as string[],
-            )
-            setError((up1.error ?? up2.error)!.message)
-            return
-          }
-
-          receiptPath = enhancedPath
-          receiptOriginal = originalPath
-        }
-
         setStep('Saving…')
 
         const result = await addExpense({
           showId, category, whereSpent, amountCents: cents, spentOn,
-          receiptPath, receiptOriginal, note: '',
+          receiptPath: attached?.enhancedPath ?? null,
+          receiptOriginal: attached?.originalPath ?? null,
+          note: '',
         })
         if ('error' in result) { setError(result.error); return }
 
         setWhereSpent('')
         setAmount('')
-        setFile(null)
+        // THE SHARP EDGE: clear the capture — file, both paths, the token
+        // (already bumped above) and the touched set — right alongside the
+        // fields already reset above. Leaving any of it would let the next
+        // Add attach this SAME receipt_path to a second expense: two rows
+        // pointing at one file, where deleteExpense on either removes the
+        // file the other still depends on. category and spentOn are
+        // deliberately left alone, as before.
+        setCapture(null)
+        setOcrNote(null)
+        touchedRef.current = new Set()
         router.refresh()
       } catch (e) {
         setError(e instanceof Error ? e.message : 'That expense could not be saved.')
@@ -316,34 +476,48 @@ export default function ExpenseLog({
 
       <div className="grid gap-2 sm:grid-cols-[8rem_1fr_7rem_9rem_auto] items-center mb-3">
         <select aria-label="Category" className={field} value={category} disabled={locked || pending}
-                onChange={(e) => setCategory(e.target.value as ExpenseCategory)}>
+                onChange={(e) => {
+                  touchedRef.current.add('category')
+                  setCategory(e.target.value as ExpenseCategory)
+                }}>
           {CATEGORY_ORDER.map((c) => (
             <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
           ))}
         </select>
         <input aria-label="Where" className={field} placeholder="Where" value={whereSpent}
-               disabled={locked || pending} onChange={(e) => setWhereSpent(e.target.value)} />
+               disabled={locked || pending} onChange={(e) => {
+                 touchedRef.current.add('vendor')
+                 setWhereSpent(e.target.value)
+               }} />
         <input aria-label="Amount" inputMode="decimal" placeholder="0.00"
                className={`${field} tabular text-right`} value={amount} disabled={locked || pending}
-               onChange={(e) => setAmount(e.target.value)} />
+               onChange={(e) => {
+                 touchedRef.current.add('amount')
+                 setAmount(e.target.value)
+               }} />
         <input aria-label="Date" type="date" className={field} value={spentOn}
-               disabled={locked || pending} onChange={(e) => setSpentOn(e.target.value)} />
-        <button type="button" onClick={add} disabled={locked || pending}
+               disabled={locked || pending} onChange={(e) => {
+                 touchedRef.current.add('date')
+                 setSpentOn(e.target.value)
+               }} />
+        <button type="button" onClick={add} disabled={locked || pending || uploading}
                 className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
                            border border-line text-muted hover:text-ink disabled:opacity-40">
-          {pending ? (step ?? 'Saving…') : '+ Add'}
+          {pending ? (step ?? 'Saving…') : uploading ? 'Uploading…' : '+ Add'}
         </button>
 
         <label className="sm:col-span-5 text-xs text-muted">
           {/* capture="environment" opens the camera directly on a phone, which
               is where a receipt actually gets photographed. */}
-          <input type="file" accept="image/*,application/pdf" disabled={locked || pending}
-                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          <input type="file" accept="image/*,application/pdf" disabled={locked || pending || uploading}
+                 onChange={(e) => { void onPickFile(e.target.files?.[0] ?? null) }}
                  className="text-xs text-muted file:mr-3 file:px-3 file:py-1.5 file:rounded-field
                             file:border file:border-line file:bg-transparent file:text-muted
                             file:text-xs file:font-semibold file:uppercase file:tracking-wider
                             disabled:opacity-40" />
-          {file ? ` ${file.name}` : ' Photo or PDF. A receipt is required before this show can be billed.'}
+          {capture
+            ? ` ${capture.file.name}${ocrNote ? ` — ${ocrNote}` : ''}`
+            : (ocrNote ?? ' Photo or PDF. A receipt is required before this show can be billed.')}
         </label>
       </div>
 
