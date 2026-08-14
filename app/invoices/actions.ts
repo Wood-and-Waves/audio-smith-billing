@@ -544,3 +544,35 @@ export async function sendClientReminder(
   revalidatePath(`/invoices/${invoiceId}`)
   return { ok: true }
 }
+
+/**
+ * Flips only the `show_hours` flag inside an already-frozen snapshot.
+ *
+ * The rest of the snapshot is untouched: this changes whether the backup
+ * PRINTS, never what it says. An explicit act rather than silent drift, which
+ * is the whole reason the flag was frozen in the first place.
+ */
+export async function setInvoiceHours(
+  invoiceId: string, show: boolean,
+): Promise<{ error: string } | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const { data: inv } = await supabase
+    .from('invoices').select('backup_snapshot').eq('id', invoiceId).maybeSingle()
+  if (!inv) return { error: 'That invoice no longer exists.' }
+
+  const snapshot = inv.backup_snapshot as BackupSnapshot | null
+  if (!snapshot) {
+    return { error: 'This invoice has no hours recorded — it was not billed from a show.' }
+  }
+
+  const { error } = await supabase.from('invoices')
+    .update({ backup_snapshot: { ...snapshot, show_hours: show } })
+    .eq('id', invoiceId)
+  if (error) return { error: error.message }
+
+  revalidatePath(`/invoices/${invoiceId}`)
+  return { ok: true }
+}

@@ -8,6 +8,7 @@ import InvoiceDocument, { type DocumentData } from '@/components/InvoiceDocument
 import DownloadInvoiceButton from '@/components/DownloadInvoiceButton'
 import SendInvoicePanel from '@/components/SendInvoicePanel'
 import SendReminderButton from '@/components/SendReminderButton'
+import InvoiceHoursToggle from '@/components/InvoiceHoursToggle'
 import { signedReceiptUrls } from '@/app/expenses/actions'
 import type { ExpenseCategory } from '@/lib/expenses'
 import type { BackupSnapshot } from '@/lib/backupSnapshot'
@@ -219,6 +220,12 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
 
       {inv.notes && inv.imported && (
         <p className="mb-8 text-sm text-muted border-l-2 border-accent pl-4 py-1">{inv.notes}</p>
+      )}
+
+      {snapshot && (
+        <div className="flex justify-end mb-4">
+          <InvoiceHoursToggle invoiceId={inv.id} checked={snapshot.show_hours} />
+        </div>
       )}
 
       <InvoiceDocument data={docData} />
