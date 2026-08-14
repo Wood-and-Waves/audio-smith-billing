@@ -80,9 +80,7 @@ Shape:
       "net_hours": 12.0, "st_hours": 10.0, "ot_hours": 2.0, "dt_hours": 0,
       "travel_in": false, "travel_out": false, "half_day": false,
       "meal_penalties": 0
-    }],
-    "pm": [{ "worked_on": "2026-08-22", "minutes": 90, "note": "advance and patch" }],
-    "pm_billed_hours": 2.0
+    }]
   }],
   "expenses": [{
     "category": "meals", "where_spent": "HMS Host",
@@ -128,7 +126,6 @@ Fri  8/29   travel in
 Sat  8/30   8:00 AM – 8:30 PM   meal 30m    12.0    10.0 ST   2.0 OT
 Sun  8/31   9:00 AM – 7:00 PM   meal 30m     9.5     9.5 ST
 Mon  9/01   8:00 AM – 9:00 PM   meal 60m    12.0    10.0 ST   2.0 OT   meal penalty
-Prep · 8/22   90m — advance and patch
                                   TOTAL     33.5    29.5 ST   4.0 OT
 ```
 
@@ -140,27 +137,25 @@ reason — they are a billed line the client would otherwise have to infer.
 A show with no completed punches contributes a heading and its labelled days but
 no hours rows.
 
-### Rounding, and the one place the page must not simply mirror the clock
+### Prep time is deliberately absent
 
-Hours are computed with **exactly the rounding billing uses** — the same
+PM entries are **not** on this page. Dan's decision, and it makes the page
+sharper: this is a record of days on site, which is what a client reconciles
+against a call sheet. Prep is work done at home weeks earlier, it bills as its
+own `PM Hours` line, and putting it here invited a complication rather than
+answering a question — PM minutes are summed and rounded UP to the next whole
+hour, so 90 minutes bills as two, and the page would have had to explain that
+to avoid reading as an overcharge.
+
+The snapshot therefore stores no PM data and the page has no prep rows.
+
+### Rounding
+
+Day hours are computed with **exactly the rounding billing uses** — the same
 `roundingMinutes` argument `computeShowLines` passes to `calculateNetHours`. A
 page derived from the same punches but rounded differently would disagree with
-the invoice by a few minutes, which is worse than not showing it: it invites a
-query about a discrepancy that is purely cosmetic.
-
-Prep time is the exception and needs handling, not mirroring. PM minutes are
-summed across the show and then **rounded up to the next whole hour, once** —
-so 90 minutes of prep bills as `PM Hours x2`. Printing "90m" beside an invoice
-line reading 2 hours looks like an overcharge. The page therefore lists each
-prep entry at its real duration and then states the billed figure explicitly:
-
-```
-Prep · 8/22   90m — advance and patch
-              Billed as 2.0 hours (prep is rounded up to the next hour)
-```
-
-That sentence is the difference between the page answering a question and
-causing one.
+the invoice by a few minutes, which is worse than not showing it at all: it
+invites a query about a discrepancy that is purely cosmetic.
 
 ## The invariant, as a test
 
@@ -169,8 +164,8 @@ causing one.
 each other:
 
 - **The OT hours summed across the snapshot must equal the `Overtime` line's
-  quantity on the invoice.** Likewise double time, and PM hours against
-  `PM Hours`.
+  quantity on the invoice**, and likewise double time against `Double Time`.
+  PM hours are not on the page, so there is nothing to reconcile for them.
 
 Two views of the same work that can silently disagree is the failure this
 project keeps finding — a $1,560 overbill, a preview showing $5,850 against an
@@ -182,6 +177,7 @@ Also tested:
 - A client with the flag off produces no hours page, whatever the snapshot holds.
 - An invoice with a null snapshot renders exactly as it does today.
 - A travel-only day contributes a labelled row and zero hours.
+- A show with prep entries still renders no prep rows.
 - Frozen clock strings survive a later change to the show's timezone unchanged.
 
 **No test writes to the live database or sends mail.**
