@@ -352,7 +352,35 @@ test('an invoice with no snapshot renders exactly as it always did', () => {
 })
 
 test('a travel day is labelled instead of showing empty columns', () => {
-  const travelOnly: DocumentData = {
+  // A travel leg alongside a worked day, not a travel-only show — an
+  // all-travel show has total_net 0 and renders no hours page at all (see
+  // 'a show with zero net hours renders no hours page' below). This fixture
+  // proves the travel day within a show that DOES bill hours is labelled
+  // rather than shown with blank numeric columns.
+  const travelPlusWorked: DocumentData = {
+    ...INVOICE,
+    backup: {
+      show_hours: true,
+      shows: [{ name: 'PwC Orlando', zone_label: 'Eastern', days: [
+        { day: 'Fri 8/29', in: null, out: null, meal_minutes: 0,
+          net_hours: 0, st_hours: 0, ot_hours: 0, dt_hours: 0,
+          travel_in: true, travel_out: false, half_day: false, meal_penalties: 0 },
+        { day: 'Sat 8/30', in: '8:00 AM', out: '8:30 PM', meal_minutes: 30,
+          net_hours: 12, st_hours: 10, ot_hours: 2, dt_hours: 0,
+          travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
+      ] }],
+      total_net: 12, total_st: 10, total_ot: 2, total_dt: 0, expenses: [],
+    },
+  }
+  const joined = textOf(buildInvoicePdf(PARTS, travelPlusWorked, ASSETS)).join(' ')
+  assert.ok(joined.includes('travel in'), 'the day says what it is')
+})
+
+test('a show with zero net hours renders no hours page', () => {
+  // An expenses-only show, or one that is all travel legs, has nothing on
+  // this page to report but a heading, a column header and a bold TOTAL row
+  // with four blank cells — worse than no page at all.
+  const allTravel: DocumentData = {
     ...INVOICE,
     backup: {
       show_hours: true,
@@ -364,8 +392,9 @@ test('a travel day is labelled instead of showing empty columns', () => {
       total_net: 0, total_st: 0, total_ot: 0, total_dt: 0, expenses: [],
     },
   }
-  const joined = textOf(buildInvoicePdf(PARTS, travelOnly, ASSETS)).join(' ')
-  assert.ok(joined.includes('travel in'), 'the day says what it is')
+  const joined = textOf(buildInvoicePdf(PARTS, allTravel, ASSETS)).join(' ')
+  assert.ok(!/HOURS —/.test(joined), 'no hours page at all')
+  assert.ok(!joined.includes('PWC ORLANDO'), 'not even the show heading')
 })
 
 test('no Unicode minus reaches the page', () => {

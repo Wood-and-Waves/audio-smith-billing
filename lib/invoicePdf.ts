@@ -235,7 +235,12 @@ export function buildInvoicePdf(parts: PdfParts, data: DocumentData, assets: Pdf
   // an ordinary show is noise.
   const anyDt = Boolean(backup?.shows.some((sh) => sh.days.some((d) => d.dt_hours > 0)))
 
-  const hoursPages = !backup?.show_hours ? [] : [
+  // Also gated on total_net: an expenses-only show, or a show that is all
+  // travel legs, has nothing on this page to report but a heading, a column
+  // header and a bold TOTAL row with four blank cells — worse than no page,
+  // since it reads as data that failed to load rather than data that never
+  // existed.
+  const hoursPages = !backup?.show_hours || backup.total_net === 0 ? [] : [
     h(Page, { size: 'LETTER', style: s.page },
       V(s.body, [
         T(s.expenseHead, `HOURS — INVOICE #${data.number}`),
