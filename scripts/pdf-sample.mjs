@@ -29,6 +29,7 @@ const settings = {
 // #386 as issued: one line, no deposit.
 const simple = {
   number: 386,
+  status: 'sent',
   issue_date: '2026-08-07',
   due_date: '2026-09-06',
   terms_days: 30,
@@ -50,6 +51,7 @@ const simple = {
 const withDeposit = {
   ...simple,
   number: 340,
+  status: 'paid',
   bill_to_snapshot: 'Streamline Pictures',
   subtotal_cents: 688394,
   deposit_cents: 585000,

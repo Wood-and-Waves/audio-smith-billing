@@ -42,6 +42,15 @@
   --paper-ink: #121212;
   --paper-line: #cbd5e1;
 
+  /* Amber AS INK on the paper. The brand amber #f59e0b measures 2.15:1 on
+     white — it fails WCAG AA even at the 3:1 large-text threshold — so the
+     wordmark's "Smith" uses the darker amber the app already uses on light
+     grounds: 4.8:1. Deliberately NOT --accent, which flips with the viewer's
+     theme; a document a client receives must render the same for everyone.
+     The rule across the top stays #f59e0b: it is a fill, not text, and carries
+     no contrast requirement. */
+  --paper-accent: #b45309;
+
   --radius-card: 12px;    /* matches the site's service cards */
   --radius-field: 4px;    /* matches the site's buttons */
   --radius-pill: 999px;
@@ -94,6 +103,7 @@
   --color-paper: var(--paper);
   --color-paper-ink: var(--paper-ink);
   --color-paper-line: var(--paper-line);
+  --color-paper-accent: var(--paper-accent);
 
   --radius-card: var(--radius-card);
   --radius-field: var(--radius-field);

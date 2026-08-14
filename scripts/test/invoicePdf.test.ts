@@ -212,3 +212,22 @@ test('the filename names the invoice and the client', () => {
     'Invoice-386.pdf',
   )
 })
+
+// A paid invoice must not print "TOTAL DUE". The emailed body was fixed for
+// this; the document itself carried the same contradiction — the public page
+// banners "Paid — thank you" and the invoice underneath still demanded money.
+test('a paid invoice reads PAID IN FULL, not TOTAL DUE', () => {
+  const paid: DocumentData = { ...INVOICE, status: 'paid' }
+  const all = textOf(buildInvoicePdf(PARTS, paid, ASSETS))
+  assert.ok(all.includes('PAID IN FULL'), 'the label reads PAID IN FULL')
+  assert.ok(!all.includes('TOTAL DUE'), 'and never TOTAL DUE')
+  assert.ok(all.includes(formatUSD(50000)), 'the figure still prints')
+})
+
+test('an unpaid invoice still reads TOTAL DUE', () => {
+  for (const status of ['draft', 'sent', undefined] as const) {
+    const all = textOf(buildInvoicePdf(PARTS, { ...INVOICE, status }, ASSETS))
+    assert.ok(all.includes('TOTAL DUE'), `${status ?? 'no status'} reads TOTAL DUE`)
+    assert.ok(!all.includes('PAID IN FULL'), `${status ?? 'no status'} is not marked paid`)
+  }
+})

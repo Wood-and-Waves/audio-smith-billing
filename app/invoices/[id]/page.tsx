@@ -79,6 +79,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
 
   const docData: DocumentData = {
     number: inv.number,
+    status: inv.status,
     issue_date: inv.issue_date,
     due_date: inv.due_date,
     terms_days: inv.terms_days,

@@ -20,6 +20,12 @@ import { formatDateLong } from '@/lib/dates'
 
 export type DocumentData = {
   number: number
+  /**
+   * Optional, and only ever changes the total's LABEL. A paid invoice that
+   * still says "Total due" reads as a demand for money already received —
+   * which is exactly what the emailed copy used to do.
+   */
+  status?: 'draft' | 'sent' | 'paid' | 'void'
   issue_date: string
   due_date: string
   terms_days: number
@@ -82,7 +88,7 @@ export default function InvoiceDocument({ data }: { data: DocumentData }) {
             <Image src="/logo.png" alt="" width={44} height={44} />
             <div>
               <p className="display text-xl font-bold leading-none">
-                The Audio <span className="text-accent">Smith</span>
+                The Audio <span className="text-paper-accent">Smith</span>
               </p>
               <p className="text-[11px] uppercase tracking-[0.12em] text-neutral-500 mt-1">
                 {s?.legal_name ?? 'Smith Audio, LLC'}
@@ -162,7 +168,9 @@ export default function InvoiceDocument({ data }: { data: DocumentData }) {
             )}
 
             <div className="flex justify-between items-baseline pt-3 mt-2 border-t-2 border-paper-ink">
-              <dt className="display text-sm font-bold">Total due</dt>
+              <dt className="display text-sm font-bold">
+                {data.status === 'paid' ? 'Paid in full' : 'Total due'}
+              </dt>
               <dd className="tabular text-2xl font-bold">{formatUSD(data.total_cents)}</dd>
             </div>
           </dl>
