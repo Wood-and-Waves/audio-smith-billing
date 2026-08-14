@@ -35,6 +35,8 @@ test('a busy digest names each invoice, its client and its stored total', () => 
 })
 
 test('a quiet week still sends, and says so plainly', () => {
+  // A genuinely empty invoice list — every bucket empty, including later —
+  // is the one and only case that should say "nothing outstanding".
   const { subject, text } = buildDigestEmail(sweep([], TODAY), APP)
   assert.ok(/nothing outstanding/i.test(text), 'says there is nothing to do')
   assert.ok(!/undefined|NaN/.test(text), 'no leaked placeholders')
@@ -47,6 +49,47 @@ test('the digest total is the stored sum, never recomputed', () => {
   assert.ok(text.includes(formatUSD(655314 + 234000)), 'outstanding is $8,893.14')
 })
 
+test('invoices due far in the future are neither silent nor mislabeled "nothing outstanding"', () => {
+  // The bug this whole finding is about: a digest with real money open but
+  // nothing overdue or due soon used to print "Invoices: nothing
+  // outstanding" and a body saying 0 open invoices. This is the live-data
+  // case — four invoices, all more than 7 days out, $9,993.14 total.
+  const s = sweep([
+    inv({ id: 'a', number: 385, total_cents: 655314, due_date: '2026-09-19' }),
+    inv({ id: 'b', number: 386, total_cents: 50000, due_date: '2026-09-19' }),
+    inv({ id: 'c', number: 387, total_cents: 60000, due_date: '2026-09-19' }),
+    inv({ id: 'd', number: 388, total_cents: 234000, due_date: '2026-09-19' }),
+  ], TODAY)
+  assert.equal(s.dueSoon.length, 0)
+  assert.equal(s.overdue.length, 0)
+  assert.equal(s.later.length, 4)
+
+  const { subject, text, html } = buildDigestEmail(s, APP)
+  assert.ok(!/nothing outstanding/i.test(subject), 'subject must not claim nothing is owed')
+  assert.ok(!/nothing outstanding/i.test(text), 'body must not claim nothing is owed')
+  const total = formatUSD(655314 + 50000 + 60000 + 234000)
+  assert.ok(subject.includes(total) || text.includes(total), 'the $9,993.14 total appears')
+  for (const body of [text, html]) {
+    assert.ok(body.includes('#385'), 'the far-future invoices are actually listed')
+    assert.ok(body.includes('#388'))
+  }
+})
+
+test('the printed Outstanding figure equals the sum of every invoice named in the body', () => {
+  const s = sweep([
+    inv({ id: 'a', number: 385, total_cents: 655314, due_date: '2026-08-01' }),  // overdue
+    inv({ id: 'b', number: 386, total_cents: 50000, due_date: '2026-08-22' }),   // due soon
+    inv({ id: 'c', number: 387, total_cents: 234000, due_date: '2026-12-01' }),  // later
+  ], TODAY)
+  const { text } = buildDigestEmail(s, APP)
+
+  const named = [...s.overdue, ...s.dueSoon, ...s.later]
+  assert.equal(named.length, 3, 'every chaseable invoice is named in exactly one bucket')
+  const namedTotal = named.reduce((sum, i) => sum + i.total_cents, 0)
+  assert.equal(namedTotal, s.totalOutstandingCents, 'nothing is counted without being named')
+  assert.ok(text.includes(`Outstanding: ${formatUSD(s.totalOutstandingCents)}`))
+})
+
 test('the overdue alert names one invoice and how late it is', () => {
   const { subject, text, html } = buildOverdueAlertEmail(inv(), APP)
   assert.ok(subject.includes('385'), 'the number is in the subject')
@@ -57,10 +100,13 @@ test('the overdue alert names one invoice and how late it is', () => {
   }
 })
 
-test('neither email can carry bank details', () => {
-  // No path passes settings into these builders at all. This asserts the
-  // shape stays that way — if someone threads settings in later to print a
-  // remit-to block, this is what should stop them adding ach_details with it.
+test('neither owner-facing builder can carry bank details', () => {
+  // No path passes settings into buildDigestEmail or buildOverdueAlertEmail
+  // at all. This asserts the shape stays that way — if someone threads
+  // settings in later to print a remit-to block, this is what should stop
+  // them adding ach_details with it. (sendReminderEmail itself is a generic
+  // sender used for both owner-facing and client-facing mail — see its
+  // header comment — but these two builders specifically never see settings.)
   const s = sweep([inv()], TODAY)
   const bodies = [
     buildDigestEmail(s, APP).text, buildDigestEmail(s, APP).html,
@@ -68,7 +114,7 @@ test('neither email can carry bank details', () => {
   ]
   for (const b of bodies) {
     assert.ok(!/routing/i.test(b), 'no routing number')
-    assert.ok(!/ach/i.test(b), 'no ACH block — these go to Dan, not a client')
+    assert.ok(!/ach/i.test(b), 'no ACH block in the digest or overdue alert')
   }
 })
 

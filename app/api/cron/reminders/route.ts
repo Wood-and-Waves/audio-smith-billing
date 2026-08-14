@@ -42,6 +42,18 @@ export async function GET(request: NextRequest) {
     auth: { autoRefreshToken: false, persistSession: false },
   })
 
+  // settings.owner_id scopes the query below. This route bypasses RLS to read
+  // across all invoices, and with a second auth user that would mail their
+  // client names and amounts into Dan's digest — one owner today, but nothing
+  // stops a second, so the filter has to be here regardless.
+  const { data: settings } = await db
+    .from('settings').select('email, owner_id').eq('id', 1).maybeSingle()
+  const to = settings?.email
+  if (!to) return NextResponse.json({ error: 'No settings email to send to.' }, { status: 500 })
+  if (!settings?.owner_id) {
+    return NextResponse.json({ error: 'No settings owner_id to scope invoices to.' }, { status: 500 })
+  }
+
   // This query is the keepalive. It runs whatever today is.
   const { data: rows, error } = await db
     .from('invoices')
@@ -49,12 +61,8 @@ export async function GET(request: NextRequest) {
              clients(name),
              reminder_log(kind)`)
     .eq('status', 'sent')
+    .eq('owner_id', settings.owner_id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
-  const { data: settings } = await db
-    .from('settings').select('email').eq('id', 1).maybeSingle()
-  const to = settings?.email
-  if (!to) return NextResponse.json({ error: 'No settings email to send to.' }, { status: 500 })
 
   const invoices: ReminderInvoice[] = (rows ?? []).map((r) => {
     const row = r as unknown as {
@@ -110,6 +118,11 @@ export async function GET(request: NextRequest) {
     else sent.push(`overdue #${inv.number}`)
   }
 
+  // A non-empty `failed` must not come back as 200: Vercel's cron dashboard
+  // reads the status code, not this body, to decide whether a run succeeded.
+  // A 200 here — even with failures listed inside — buries a failed send or a
+  // failed log insert (which, pre-migration-0009, used to mean the same alert
+  // firing again every morning) somewhere nobody is looking.
   return NextResponse.json({
     today,
     digestDay: isDigestDay(today),
@@ -119,5 +132,5 @@ export async function GET(request: NextRequest) {
     outstandingCents: s.totalOutstandingCents,
     sent,
     failed,
-  })
+  }, { status: failed.length > 0 ? 500 : 200 })
 }

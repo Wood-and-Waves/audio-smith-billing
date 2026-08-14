@@ -82,6 +82,11 @@ export async function saveInvoice(input: InvoiceInput): Promise<SaveResult> {
   let invoiceId = input.id
 
   if (invoiceId) {
+    // Read the due date this row had BEFORE the update, so it can be compared
+    // against the new one below.
+    const { data: before } = await supabase
+      .from('invoices').select('due_date').eq('id', invoiceId).maybeSingle()
+
     const { error } = await supabase.from('invoices').update(row).eq('id', invoiceId)
     if (error) return { error: error.message }
     const { error: delError } = await supabase
@@ -89,6 +94,20 @@ export async function saveInvoice(input: InvoiceInput): Promise<SaveResult> {
       .delete()
       .eq('invoice_id', invoiceId)
     if (delError) return { error: delError.message }
+
+    // A new due date is a new deadline, so a new lapse deserves a new alert.
+    // Without this, pushing #385 from 8/18 to 9/30 after it has already
+    // alerted leaves the old reminder_log row in place, "already alerted"
+    // stays true, and the invoice can go overdue again on the new date
+    // without ever re-notifying anyone.
+    if (before && before.due_date !== row.due_date) {
+      const { error: clearError } = await supabase
+        .from('reminder_log')
+        .delete()
+        .eq('invoice_id', invoiceId)
+        .eq('kind', 'overdue_alert')
+      if (clearError) return { error: clearError.message }
+    }
   } else {
     const { data: number, error: numError } = await supabase.rpc('allocate_invoice_number')
     if (numError) return { error: `Couldn't allocate an invoice number: ${numError.message}` }
@@ -355,14 +374,24 @@ export async function sendClientReminder(
   const appUrl = process.env.APP_URL
   if (!appUrl) return { error: 'Email is not configured yet (APP_URL is missing).' }
 
-  const { data: invoice, error } = await supabase
-    .from('invoices')
-    .select(`id, number, due_date, total_cents, status, public_token,
-             clients(name, billing_email)`)
-    .eq('id', invoiceId)
-    .maybeSingle()
+  const [{ data: invoice, error }, { data: settings, error: settingsError }] = await Promise.all([
+    supabase
+      .from('invoices')
+      .select(`id, number, due_date, total_cents, status, public_token,
+               clients(name, billing_email)`)
+      .eq('id', invoiceId)
+      .maybeSingle(),
+    supabase
+      .from('settings')
+      // Explicit columns, same list sendInvoice uses — ach_details must never
+      // join this, or it would reach a client through this path too.
+      .select('business_name, email')
+      .eq('id', 1)
+      .maybeSingle(),
+  ])
   if (error) return { error: error.message }
   if (!invoice) return { error: 'That invoice no longer exists.' }
+  if (settingsError) return { error: settingsError.message }
 
   const inv = invoice as unknown as {
     id: string; number: number; due_date: string; total_cents: number
@@ -381,14 +410,26 @@ export async function sendClientReminder(
     }
   }
 
-  const link = inv.public_token ? `${appUrl.replace(/\/+$/, '')}/i/${inv.public_token}` : null
+  // Mint the link on first send, exactly like sendInvoice does. public_token
+  // is otherwise only ever set there, so a reminder for an invoice nobody has
+  // re-sent since the token feature shipped would go out with no link at all.
+  let token = inv.public_token
+  if (!token) {
+    token = crypto.randomUUID()
+    const { error: tokErr } = await supabase
+      .from('invoices').update({ public_token: token }).eq('id', invoiceId)
+    if (tokErr) return { error: tokErr.message }
+  }
+
+  const link = `${appUrl.replace(/\/+$/, '')}/i/${token}`
   const subject = `Reminder: invoice #${inv.number} from The Audio Smith`
   const text = [
     `A friendly reminder about invoice #${inv.number}.`,
     '',
     `Amount due: ${formatUSD(inv.total_cents)}`,
     `Due: ${formatDateLong(inv.due_date)}`,
-    ...(link ? ['', `View it online: ${link}`] : []),
+    '',
+    `View it online: ${link}`,
     '',
     'Thank you!',
   ].join('\n')
@@ -397,11 +438,20 @@ export async function sendClientReminder(
     `<p style="margin:0 0 16px">A friendly reminder about invoice <strong>#${inv.number}</strong>.</p>` +
     `<p style="margin:0 0 4px">Amount due: <strong>${formatUSD(inv.total_cents)}</strong></p>` +
     `<p style="margin:0 0 16px">Due: ${formatDateLong(inv.due_date)}</p>` +
-    (link ? `<p style="margin:0 0 16px"><a href="${link}">View this invoice online</a></p>` : '') +
+    `<p style="margin:0 0 16px"><a href="${link}">View this invoice online</a></p>` +
     '<p style="margin:0">Thank you!</p>' +
     '</div>'
 
-  const result = await sendReminderEmail({ to, subject, text, html })
+  const result = await sendReminderEmail({
+    to,
+    subject,
+    text,
+    html,
+    // From Settings, same reasoning as sendInvoice: a reply from the client
+    // must reach Dan, not INVOICE_FROM_EMAIL, which receives nothing.
+    replyTo: settings?.email ?? 'dan@theaudiosmith.com',
+    fromName: settings?.business_name,
+  })
   if (result.error) return { error: result.error }
 
   // Only after the send succeeded.

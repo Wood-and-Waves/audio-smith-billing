@@ -76,6 +76,18 @@ test('outstanding sums stored cents across every chaseable invoice', () => {
   assert.equal(s.dueSoon.length, 1)
 })
 
+test('an invoice due in 30 days lands in later, not dueSoon or overdue', () => {
+  // This is the case a 30-day-terms business actually lives in most of the
+  // time: DUE_SOON_DAYS is 7, so most of an invoice's life is neither
+  // overdue nor due soon. It still has to show up somewhere, or the digest's
+  // printed total stops matching the invoices named above it.
+  const s = sweep([inv({ due_date: '2026-09-19' })], TODAY)  // 30 days out
+  assert.equal(s.later.length, 1)
+  assert.equal(s.dueSoon.length, 0)
+  assert.equal(s.overdue.length, 0)
+  assert.equal(s.totalOutstandingCents, 50000)
+})
+
 test('each bucket is ordered soonest first', () => {
   const s = sweep([
     inv({ id: 'late', due_date: '2026-08-19' }),

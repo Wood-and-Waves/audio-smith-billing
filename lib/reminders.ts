@@ -33,6 +33,14 @@ export type Sweep = {
   overdue: ReminderInvoice[]
   /** Past due and never alerted about. A subset of overdue. */
   newlyOverdue: ReminderInvoice[]
+  /**
+   * Chaseable, but neither overdue nor due within DUE_SOON_DAYS — where a
+   * 30-day invoice spends most of its life. Already counted inside
+   * totalOutstandingCents like every other bucket; listing it here is what
+   * keeps that total reconciling with the invoices named above it. Soonest
+   * first.
+   */
+  later: ReminderInvoice[]
   /** Every chaseable invoice, including ones due far off. Stored cents. */
   totalOutstandingCents: number
 }
@@ -41,6 +49,7 @@ export function sweep(invoices: ReminderInvoice[], today: string): Sweep {
   const dueSoon: ReminderInvoice[] = []
   const overdue: ReminderInvoice[] = []
   const newlyOverdue: ReminderInvoice[] = []
+  const later: ReminderInvoice[] = []
   let totalOutstandingCents = 0
 
   for (const inv of invoices) {
@@ -59,6 +68,8 @@ export function sweep(invoices: ReminderInvoice[], today: string): Sweep {
       if (!inv.alerted_overdue) newlyOverdue.push(inv)
     } else if (daysUntilDue(inv.due_date, today) <= DUE_SOON_DAYS) {
       dueSoon.push(inv)
+    } else {
+      later.push(inv)
     }
   }
 
@@ -70,6 +81,7 @@ export function sweep(invoices: ReminderInvoice[], today: string): Sweep {
     dueSoon: dueSoon.sort(byDueDate),
     overdue: overdue.sort(byDueDate),
     newlyOverdue: newlyOverdue.sort(byDueDate),
+    later: later.sort(byDueDate),
     totalOutstandingCents,
   }
 }
