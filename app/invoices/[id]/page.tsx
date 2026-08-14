@@ -20,7 +20,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   const supabase = await createClient()
   const today = todayInChicago()
 
-  const [{ data: invoice, error }, { data: settings }] = await Promise.all([
+  const [{ data: invoice, error }, { data: settings }, { data: linkedShows }] = await Promise.all([
     supabase
       .from('invoices')
       .select(
@@ -44,6 +44,11 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
       .select('business_name, legal_name, address_line1, address_line2, phone, email, remit_to')
       .eq('id', 1)
       .maybeSingle(),
+    // Whether ANY show was ever billed onto this invoice — shows.invoice_id
+    // is the only edge back from a show to its invoice, so this is its own
+    // query. Used only to tell "no shows behind this invoice" apart from "a
+    // show billed this invoice before the backup snapshot existed" below.
+    supabase.from('shows').select('id').eq('invoice_id', id),
   ])
 
   if (error) {
@@ -90,6 +95,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   // one) — those render no backup pages, which is what they already did.
   const snapshot = inv.backup_snapshot
   const snapshotExpenses = snapshot?.expenses ?? []
+  const hasLinkedShows = (linkedShows ?? []).length > 0
 
   // Fetched here, not by the PDF renderer: letting it pull a dozen remote URLs
   // would serialise a dozen round trips inside a function with a timeout — the
@@ -222,11 +228,22 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
         <p className="mb-8 text-sm text-muted border-l-2 border-accent pl-4 py-1">{inv.notes}</p>
       )}
 
-      {snapshot && (
+      {snapshot ? (
         <div className="flex justify-end mb-4">
           <InvoiceHoursToggle invoiceId={inv.id} checked={snapshot.show_hours} />
         </div>
-      )}
+      ) : hasLinkedShows ? (
+        // No toggle to offer: there is nothing frozen to switch on. This
+        // invoice's show(s) were billed before the hours backup existed (or
+        // this invoice predates migration 0012 entirely), so it carries no
+        // breakdown and no expense itemisation — re-billing the show(s)
+        // would produce one.
+        <div className="flex justify-end mb-4">
+          <p className="text-xs text-muted">
+            Billed before hours backup existed, so it carries no breakdown. Re-billing the show would produce one.
+          </p>
+        </div>
+      ) : null}
 
       <InvoiceDocument data={docData} />
     </AppShell>
