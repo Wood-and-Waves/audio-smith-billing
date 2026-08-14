@@ -7,6 +7,7 @@ import AppShell from '@/components/AppShell'
 import InvoiceDocument, { type DocumentData } from '@/components/InvoiceDocument'
 import DownloadInvoiceButton from '@/components/DownloadInvoiceButton'
 import SendInvoicePanel from '@/components/SendInvoicePanel'
+import SendReminderButton from '@/components/SendReminderButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,7 +23,8 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
         `id, number, issue_date, due_date, terms_days, status, bill_to_snapshot,
          subtotal_cents, tax_bp, tax_cents, deposit_cents, total_cents, notes, imported,
          clients(name, address_line1, address_line2, billing_email),
-         invoice_lines(id, position, description, qty_hundredths, unit_price_cents, line_total_cents)`,
+         invoice_lines(id, position, description, qty_hundredths, unit_price_cents, line_total_cents),
+         reminder_log(kind, sent_at)`,
       )
       .eq('id', id)
       .maybeSingle(),
@@ -69,6 +71,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
       | (NonNullable<DocumentData['client']> & { billing_email: string | null })
       | null
     invoice_lines: DocumentData['lines'] & { position: number }[]
+    reminder_log?: { kind: string; sent_at: string }[]
   }
 
   const s = displayStatus(inv, today)
@@ -107,6 +110,15 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
     settings: settings ?? null,
   }
 
+  // Most recent client reminder, as a plain date for display. reminder_log
+  // stores an instant; formatDateShort takes a calendar date.
+  const lastReminder = (inv.reminder_log ?? [])
+    .filter((r) => r.kind === 'client_reminder')
+    .map((r) => r.sent_at)
+    .sort()
+    .pop() ?? null
+  const lastReminderDate = lastReminder ? lastReminder.slice(0, 10) : null
+
   return (
     <AppShell current="invoices">
       <div className="flex items-center justify-between mb-8">
@@ -130,6 +142,15 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
             status={inv.status}
             publicUrlBase={process.env.APP_URL ?? ''}
           />
+          {/* `sent` covers overdue too — overdue is derived from a sent
+              invoice being past due, never a separate stored status. */}
+          {inv.status === 'sent' ? (
+            <SendReminderButton
+              invoiceId={inv.id}
+              to={(inv.clients as { billing_email?: string | null } | null)?.billing_email?.trim() || null}
+              lastSentDate={lastReminderDate}
+            />
+          ) : null}
           <DownloadInvoiceButton data={docData} />
           <Link
             href={`/invoices/${inv.id}/edit`}

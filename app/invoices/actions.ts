@@ -2,10 +2,11 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { computeTotals } from '@/lib/money'
-import { addDays } from '@/lib/dates'
+import { computeTotals, formatUSD } from '@/lib/money'
+import { addDays, formatDateLong } from '@/lib/dates'
 import { buildInvoicePdf } from '@/lib/invoicePdf'
 import { sendInvoiceEmail } from '@/lib/invoiceEmail'
+import { sendReminderEmail } from '@/lib/reminderEmail'
 import type { DocumentData } from '@/components/InvoiceDocument'
 
 export type LineInput = {
@@ -331,5 +332,91 @@ export async function sendInvoice(
 
   revalidatePath(`/invoices/${invoiceId}`)
   revalidatePath('/invoices')
+  return { ok: true }
+}
+
+/**
+ * Nudges one client about one unpaid invoice.
+ *
+ * Deliberately manual. An automatic chase eventually reaches somebody who has
+ * already paid an invoice that has not been marked paid yet, and that email
+ * cannot be recalled.
+ *
+ * A second send is NOT blocked — chasing twice is legitimate. The button shows
+ * when the last one went instead.
+ */
+export async function sendClientReminder(
+  invoiceId: string,
+): Promise<{ error: string } | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const appUrl = process.env.APP_URL
+  if (!appUrl) return { error: 'Email is not configured yet (APP_URL is missing).' }
+
+  const { data: invoice, error } = await supabase
+    .from('invoices')
+    .select(`id, number, due_date, total_cents, status, public_token,
+             clients(name, billing_email)`)
+    .eq('id', invoiceId)
+    .maybeSingle()
+  if (error) return { error: error.message }
+  if (!invoice) return { error: 'That invoice no longer exists.' }
+
+  const inv = invoice as unknown as {
+    id: string; number: number; due_date: string; total_cents: number
+    status: 'draft' | 'sent' | 'paid' | 'void'; public_token: string | null
+    clients: { name: string; billing_email: string | null } | null
+  }
+
+  if (inv.status !== 'sent') {
+    return { error: `Invoice #${inv.number} is ${inv.status}. Only a sent invoice is chased.` }
+  }
+  const to = inv.clients?.billing_email?.trim()
+  if (!to) {
+    return {
+      error: `${inv.clients?.name ?? 'This client'} has no billing email on file. ` +
+        'Add one on the client screen.',
+    }
+  }
+
+  const link = inv.public_token ? `${appUrl.replace(/\/+$/, '')}/i/${inv.public_token}` : null
+  const subject = `Reminder: invoice #${inv.number} from The Audio Smith`
+  const text = [
+    `A friendly reminder about invoice #${inv.number}.`,
+    '',
+    `Amount due: ${formatUSD(inv.total_cents)}`,
+    `Due: ${formatDateLong(inv.due_date)}`,
+    ...(link ? ['', `View it online: ${link}`] : []),
+    '',
+    'Thank you!',
+  ].join('\n')
+  const html =
+    '<div style="font-family:system-ui,-apple-system,sans-serif;font-size:14px;color:#121212;line-height:1.5">' +
+    `<p style="margin:0 0 16px">A friendly reminder about invoice <strong>#${inv.number}</strong>.</p>` +
+    `<p style="margin:0 0 4px">Amount due: <strong>${formatUSD(inv.total_cents)}</strong></p>` +
+    `<p style="margin:0 0 16px">Due: ${formatDateLong(inv.due_date)}</p>` +
+    (link ? `<p style="margin:0 0 16px"><a href="${link}">View this invoice online</a></p>` : '') +
+    '<p style="margin:0">Thank you!</p>' +
+    '</div>'
+
+  const result = await sendReminderEmail({ to, subject, text, html })
+  if (result.error) return { error: result.error }
+
+  // Only after the send succeeded.
+  const { error: logErr } = await supabase.from('reminder_log').insert({
+    owner_id: user.id,
+    invoice_id: inv.id,
+    kind: 'client_reminder',
+    sent_to: to,
+  })
+  if (logErr) {
+    return {
+      error: `The reminder went to ${to}, but recording it failed: ${logErr.message}.`,
+    }
+  }
+
+  revalidatePath(`/invoices/${invoiceId}`)
   return { ok: true }
 }
