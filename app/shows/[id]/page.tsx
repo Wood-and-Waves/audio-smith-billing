@@ -5,6 +5,7 @@ import { formatDateLong, formatDateShort } from '@/lib/dates'
 import { formatUSD, formatQty, lineTotal } from '@/lib/money'
 import { computeShowLines, rulesetAndRatesFor, type PmEntryLike } from '@/lib/showBuckets'
 import { calculateNetHours, type ShowDayLike } from '@/lib/payroll'
+import type { ExpenseCategory } from '@/lib/expenses'
 import AppShell from '@/components/AppShell'
 import PunchClock from '@/components/PunchClock'
 import ShowDayControls from '@/components/ShowDayControls'
@@ -13,6 +14,7 @@ import HalfDayToggle from '@/components/HalfDayToggle'
 import RemoveDayButton from '@/components/RemoveDayButton'
 import TravelLegToggle from '@/components/TravelLegToggle'
 import PmLog from '@/components/PmLog'
+import ExpenseLog from '@/components/ExpenseLog'
 import DeleteShowButton from '@/components/DeleteShowButton'
 
 export const dynamic = 'force-dynamic'
@@ -23,6 +25,10 @@ type Day = {
   pay_as_half_day: boolean; punches: Punch[]
 }
 type PmEntry = { id: string; worked_on: string; minutes: number; note: string | null }
+type Expense = {
+  id: string; category: ExpenseCategory; where_spent: string
+  amount_cents: number; spent_on: string; receipt_path: string | null
+}
 type ShowRow = {
   id: string; name: string; venue: string | null; notes: string | null; timezone: string
   status: string; invoice_id: string | null
@@ -34,6 +40,7 @@ type ShowRow = {
   clients: { name: string } | null
   show_days: Day[]
   pm_entries: PmEntry[]
+  expenses: Expense[]
 }
 
 export default async function ShowPage({ params }: { params: Promise<{ id: string }> }) {
@@ -50,7 +57,8 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
              clients(name),
              show_days(id, date, travel_in, travel_out, pay_as_half_day,
                        punches(id, punch_type, punched_at)),
-             pm_entries(id, worked_on, minutes, note)`)
+             pm_entries(id, worked_on, minutes, note),
+             expenses(id, category, where_spent, amount_cents, spent_on, receipt_path)`)
     .eq('id', id)
     .maybeSingle()
 
@@ -190,6 +198,8 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
       </section>
 
       <PmLog showId={s.id} entries={s.pm_entries} locked={locked} />
+
+      <ExpenseLog showId={s.id} expenses={s.expenses} locked={locked} />
 
       <section className="mb-10">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-4">
