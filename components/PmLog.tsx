@@ -45,6 +45,14 @@ export default function PmLog({
   const [note, setNote] = useState('')
   const [customMinutes, setCustomMinutes] = useState('')
 
+  // Mirrors NewShowForm's dateOrderError: computed live so the box turns red
+  // before a tap, rather than only after addPmEntry's own check (see its
+  // "a positive multiple of 15 minutes") round-trips back an error.
+  const customMinutesValue = Number(customMinutes)
+  const customMinutesInvalid = customMinutes.trim() !== ''
+    && Number.isFinite(customMinutesValue) && customMinutesValue > 0
+    && customMinutesValue % 15 !== 0
+
   const sorted = [...entries].sort((a, b) => b.worked_on.localeCompare(a.worked_on))
 
   // Sessions sum first, THEN round up once for the whole show — mirrors
@@ -158,7 +166,7 @@ export default function PmLog({
           className={`${FIELD} w-24`}
         />
         <button
-          type="button" disabled={locked || pending || !customMinutes}
+          type="button" disabled={locked || pending || !customMinutes || customMinutesInvalid}
           onClick={addCustom}
           className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider rounded-field
                      border border-line text-muted hover:text-ink disabled:opacity-40"
@@ -167,6 +175,9 @@ export default function PmLog({
         </button>
       </div>
 
+      {customMinutesInvalid && (
+        <p role="alert" className="text-xs text-danger mt-3">Custom minutes must be a multiple of 15.</p>
+      )}
       {locked && (
         <p className="text-xs text-muted mt-3">This show is billed, so prep time is locked.</p>
       )}

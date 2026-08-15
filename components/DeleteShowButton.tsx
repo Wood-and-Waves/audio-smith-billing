@@ -111,6 +111,7 @@ export default function DeleteShowButton({
           type="button"
           disabled={pending}
           onClick={remove}
+          aria-label="Confirm delete this show"
           className="text-danger hover:opacity-80 transition-opacity text-xs font-semibold disabled:opacity-40"
         >
           {pending
@@ -122,6 +123,7 @@ export default function DeleteShowButton({
           type="button"
           disabled={pending}
           onClick={arm}
+          aria-label="Delete this show"
           className="text-muted hover:text-danger transition-colors text-xs disabled:opacity-40"
         >
           Delete this show
