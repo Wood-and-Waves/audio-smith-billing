@@ -303,7 +303,12 @@ export async function sendInvoice(
         // Explicit columns. ach_details must never join this list — it would then
         // travel into the email builder and, from there, to a client.
         .select('business_name, legal_name, address_line1, address_line2, phone, email, remit_to')
-        .eq('id', 1)
+        // owner_id, not `id = 1`, for the reason the cron route's invoice sweep
+        // gives: keying on the singleton row asks for whoever's letterhead
+        // happens to be first, and here that letterhead goes out on a PDF to a
+        // real client. One owner today, but nothing stops a second, so the
+        // filter has to be here regardless of what RLS is doing underneath.
+        .eq('owner_id', user.id)
         .maybeSingle(),
     ])
 
@@ -559,7 +564,10 @@ export async function sendClientReminder(
       // Explicit columns, same list sendInvoice uses — ach_details must never
       // join this, or it would reach a client through this path too.
       .select('legal_name, email')
-      .eq('id', 1)
+      // owner_id, same reason sendInvoice gives: the legal name read here is
+      // the From name on a chaser email, and `id = 1` would let a second
+      // owner's entity sign it.
+      .eq('owner_id', user.id)
       .maybeSingle(),
   ])
   if (error) return { error: error.message }

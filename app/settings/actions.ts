@@ -42,8 +42,11 @@ export async function saveSettings(input: SettingsInput): Promise<Fail | { ok: t
   // Lowering this would hand out an invoice number that already exists, and
   // the unique index on (owner_id, number) would reject the next invoice
   // with a database error the user cannot interpret. Refuse it here, clearly.
+  // Owner-scoped for the same reason the update below is: unscoped, a second
+  // owner's invoice numbers would set the floor for Dan's counter.
   const { data: maxRow } = await supabase
-    .from('invoices').select('number').order('number', { ascending: false }).limit(1).maybeSingle()
+    .from('invoices').select('number').eq('owner_id', user.id)
+    .order('number', { ascending: false }).limit(1).maybeSingle()
   const highest = maxRow?.number ?? 0
   if (input.next_invoice_number <= highest) {
     return { error: `Next invoice number must be above ${highest}, the highest already used.` }
@@ -62,7 +65,12 @@ export async function saveSettings(input: SettingsInput): Promise<Fail | { ok: t
     next_invoice_number: input.next_invoice_number,
   }
 
-  const { error } = await supabase.from('settings').update(row).eq('id', 1)
+  // owner_id, not `id = 1`. This is a WRITE: keyed on the singleton row it
+  // would overwrite whoever's business details happen to live there, and those
+  // details print on every invoice that entity sends. RLS refuses it today,
+  // but the filter belongs in the query rather than being borrowed from a
+  // policy — one owner today, but nothing stops a second.
+  const { error } = await supabase.from('settings').update(row).eq('owner_id', user.id)
   if (error) return { error: error.message }
 
   revalidatePath('/settings')
