@@ -9,6 +9,7 @@ import {
 } from '@/lib/money'
 import { todayInChicago, addDays } from '@/lib/dates'
 import { saveInvoice, type InvoiceInput } from '@/app/invoices/actions'
+import { FIELD_FULL } from '@/components/ui/field'
 
 export type EditorClient = {
   id: string
@@ -34,9 +35,6 @@ const newLine = (over: Partial<Line> = {}): Line => ({
   description: '', qty: '1', price: '', ...over,
 })
 
-const field =
-  'w-full px-3 py-2 bg-surface border border-line rounded-field text-ink text-sm ' +
-  'focus:border-accent focus:outline-none'
 
 export default function InvoiceEditor({
   clients, items, initial, invoiceId, invoiceNumber,
@@ -170,7 +168,7 @@ export default function InvoiceEditor({
       <div className="grid gap-4 sm:grid-cols-2 mb-8">
         <div className="sm:col-span-2">
           <label className="eyebrow block mb-2" htmlFor="client">Client</label>
-          <select id="client" className={field} value={clientId}
+          <select id="client" className={FIELD_FULL} value={clientId}
                   onChange={(e) => {
                     setClientId(e.target.value)
                     const c = clients.find((x) => x.id === e.target.value)
@@ -197,13 +195,13 @@ export default function InvoiceEditor({
 
         <div>
           <label className="eyebrow block mb-2" htmlFor="issue">Date</label>
-          <input id="issue" type="date" className={field} value={issueDate}
+          <input id="issue" type="date" className={FIELD_FULL} value={issueDate}
                  onChange={(e) => setIssueDate(e.target.value)} />
         </div>
 
         <div>
           <label className="eyebrow block mb-2" htmlFor="terms">Terms (days)</label>
-          <input id="terms" type="number" min={0} className={field} value={termsDays}
+          <input id="terms" type="number" min={0} className={FIELD_FULL} value={termsDays}
                  onChange={(e) => setTermsDays(e.target.value)} />
           <p className="text-xs text-muted mt-1.5">Due {dueDate}</p>
         </div>
@@ -227,12 +225,12 @@ export default function InvoiceEditor({
             <div key={l.key}
                  className="grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_4.5rem_7rem_6.5rem_2rem]
                             gap-2 items-center py-2 border-b border-line">
-              <input aria-label="Description" placeholder="Description" className={`${field} col-span-2 sm:col-span-1`}
+              <input aria-label="Description" placeholder="Description" className={`${FIELD_FULL} col-span-2 sm:col-span-1`}
                      value={l.description} onChange={(e) => setLine(l.key, { description: e.target.value })} />
-              <input aria-label="Quantity" inputMode="decimal" className={`${field} tabular text-right`}
+              <input aria-label="Quantity" inputMode="decimal" className={`${FIELD_FULL} tabular text-right`}
                      value={l.qty} onChange={(e) => setLine(l.key, { qty: e.target.value })} />
               <input aria-label="Unit price" inputMode="decimal" placeholder="0.00"
-                     className={`${field} tabular text-right`}
+                     className={`${FIELD_FULL} tabular text-right`}
                      value={l.price} onChange={(e) => setLine(l.key, { price: e.target.value })} />
               <span className="tabular text-sm text-right pr-1">{formatUSD(total)}</span>
               <button type="button" aria-label={`Remove ${l.description || 'line'}`}
@@ -261,7 +259,7 @@ export default function InvoiceEditor({
             <dt className="text-muted shrink-0">Deposit received</dt>
             <dd className="w-32">
               <input aria-label="Deposit received" inputMode="decimal" placeholder="0.00"
-                     className={`${field} tabular text-right`}
+                     className={`${FIELD_FULL} tabular text-right`}
                      value={deposit} onChange={(e) => setDeposit(e.target.value)} />
             </dd>
           </div>
@@ -274,7 +272,7 @@ export default function InvoiceEditor({
 
       <div className="mb-8">
         <label className="eyebrow block mb-2" htmlFor="notes">Notes on this invoice</label>
-        <textarea id="notes" rows={3} className={field} value={notes}
+        <textarea id="notes" rows={3} className={FIELD_FULL} value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Anything this client needs to see. Your remit-to details print automatically." />
       </div>

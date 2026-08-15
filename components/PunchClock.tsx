@@ -6,6 +6,7 @@ import { PUNCH_ORDER, PUNCH_LABELS, type PunchType } from '@/lib/punchTypes'
 import { formatDateLong } from '@/lib/dates'
 import { wallToInstant, instantToWall, nearest15, friendlyTime } from '@/lib/zonedTime'
 import { recordPunch, deletePunch } from '@/app/shows/actions'
+import { FIELD_FULL } from '@/components/ui/field'
 
 // One row per day. The next expected punch is the prominent button; the rest
 // stay available because a real show floor doesn't run in order.
@@ -16,9 +17,6 @@ import { recordPunch, deletePunch } from '@/app/shows/actions'
 // or testing one, impossible. The picker prefills the day being punched and the
 // nearest quarter hour, so the common case is still two taps.
 
-const field =
-  'w-full px-3 py-2 bg-surface border border-line rounded-field text-ink text-sm ' +
-  'focus:border-accent focus:outline-none disabled:opacity-50'
 
 export default function PunchClock({
   showId, showDayId, date, timezone, punches, locked,
@@ -157,13 +155,13 @@ export default function PunchClock({
             <div className="grid gap-3 grid-cols-[1fr_auto] mb-2">
               <div>
                 <label className="eyebrow block mb-1.5" htmlFor="punch-date">Date</label>
-                <input id="punch-date" type="date" className={field} value={atDate}
+                <input id="punch-date" type="date" className={FIELD_FULL} value={atDate}
                        disabled={pending} onChange={(e) => setAtDate(e.target.value)} />
               </div>
               <div>
                 <label className="eyebrow block mb-1.5" htmlFor="punch-time">Time</label>
                 <input id="punch-time" ref={timeRef} type="time" step={900}
-                       className={`${field} tabular`} value={atTime}
+                       className={`${FIELD_FULL} tabular`} value={atTime}
                        disabled={pending} onChange={(e) => setAtTime(e.target.value)} />
               </div>
             </div>

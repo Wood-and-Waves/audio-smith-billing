@@ -4,10 +4,8 @@ import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatAmount, formatUSD, parseUSD, travelRateFrom, overtimeRateFrom } from '@/lib/money'
 import { saveClient } from '@/app/clients/actions'
+import { FIELD_FULL } from '@/components/ui/field'
 
-const field =
-  'w-full px-3 py-2 bg-surface border border-line rounded-field text-ink text-sm ' +
-  'focus:border-accent focus:outline-none'
 
 export type EditorClient = {
   id: string
@@ -88,38 +86,38 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
       <div className="grid gap-4 sm:grid-cols-2 mb-8">
         <div className="sm:col-span-2">
           <label className="eyebrow block mb-2" htmlFor="name">Name</label>
-          <input id="name" className={field} value={name}
+          <input id="name" className={FIELD_FULL} value={name}
                  onChange={(e) => setName(e.target.value)} />
         </div>
 
         <div>
           <label className="eyebrow block mb-2" htmlFor="contact-name">Contact</label>
-          <input id="contact-name" className={field} value={contactName}
+          <input id="contact-name" className={FIELD_FULL} value={contactName}
                  onChange={(e) => setContactName(e.target.value)} />
         </div>
 
         <div>
           <label className="eyebrow block mb-2" htmlFor="phone">Phone</label>
-          <input id="phone" className={field} value={phone}
+          <input id="phone" className={FIELD_FULL} value={phone}
                  onChange={(e) => setPhone(e.target.value)} />
         </div>
 
         <div className="sm:col-span-2">
           <label className="eyebrow block mb-2" htmlFor="billing-email">Billing email</label>
-          <input id="billing-email" type="email" className={field} value={billingEmail}
+          <input id="billing-email" type="email" className={FIELD_FULL} value={billingEmail}
                  onChange={(e) => setBillingEmail(e.target.value)} />
         </div>
 
         <div>
           <label className="eyebrow block mb-2" htmlFor="address1">Address</label>
-          <input id="address1" className={field} value={addressLine1}
+          <input id="address1" className={FIELD_FULL} value={addressLine1}
                  placeholder="Line 1"
                  onChange={(e) => setAddressLine1(e.target.value)} />
         </div>
 
         <div>
           <label className="eyebrow block mb-2 sm:invisible" htmlFor="address2">Address 2</label>
-          <input id="address2" className={field} value={addressLine2}
+          <input id="address2" className={FIELD_FULL} value={addressLine2}
                  placeholder="Line 2 (optional)"
                  onChange={(e) => setAddressLine2(e.target.value)} />
         </div>
@@ -129,20 +127,20 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
       <div className="grid gap-4 sm:grid-cols-2 mb-8">
         <div>
           <label className="eyebrow block mb-2" htmlFor="terms">Terms (days)</label>
-          <input id="terms" type="number" min={0} className={field} value={termsDays}
+          <input id="terms" type="number" min={0} className={FIELD_FULL} value={termsDays}
                  onChange={(e) => setTermsDays(e.target.value)} />
           <p className="text-xs text-muted mt-1.5">Leave blank for the default of 30 days.</p>
         </div>
 
         <div>
           <label className="eyebrow block mb-2" htmlFor="ot-hours">OT after (hours)</label>
-          <input id="ot-hours" type="number" min={0} step="0.1" className={field}
+          <input id="ot-hours" type="number" min={0} step="0.1" className={FIELD_FULL}
                  value={otAfterHours} onChange={(e) => setOtAfterHours(e.target.value)} />
         </div>
 
         <div className="sm:col-span-2">
           <label className="eyebrow block mb-2" htmlFor="day-rate">Day rate</label>
-          <input id="day-rate" inputMode="decimal" placeholder="e.g. 780" className={field}
+          <input id="day-rate" inputMode="decimal" placeholder="e.g. 780" className={FIELD_FULL}
                  value={dayRate} onChange={(e) => setDayRate(e.target.value)} />
           {rateCents !== null && rateCents > 0 && (
             <p className="text-xs text-muted mt-1.5 tabular">
@@ -161,7 +159,7 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
 
       <h2 className="eyebrow mb-3">Notes</h2>
       <div className="mb-8">
-        <textarea id="notes" rows={3} className={field} value={notes}
+        <textarea id="notes" rows={3} className={FIELD_FULL} value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Anything about this client worth remembering." />
 

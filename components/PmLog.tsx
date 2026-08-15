@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { addPmEntry, deletePmEntry } from '@/app/shows/actions'
 import { formatDateShort, todayInChicago } from '@/lib/dates'
 import { formatQty } from '@/lib/money'
+import { FIELD } from '@/components/ui/field'
 
 type PmEntry = { id: string; worked_on: string; minutes: number; note: string | null }
 
@@ -20,9 +21,6 @@ const PRESETS: { label: string; minutes: number }[] = [
   { label: '2h', minutes: 120 },
 ]
 
-const field =
-  'px-3 py-2 bg-surface border border-line rounded-field text-ink text-sm ' +
-  'focus:border-accent focus:outline-none disabled:opacity-50'
 
 /** "15m", "1h", "1h30" — matches the vocabulary of the preset buttons above. */
 function formatMinutes(minutes: number): string {
@@ -131,12 +129,12 @@ export default function PmLog({
       <div className="flex flex-wrap items-end gap-3 mb-3">
         <div>
           <label className="eyebrow block mb-1.5" htmlFor="pmDate">Date</label>
-          <input id="pmDate" type="date" className={field} value={date} disabled={locked || pending}
+          <input id="pmDate" type="date" className={FIELD} value={date} disabled={locked || pending}
                  onChange={(e) => setDate(e.target.value)} />
         </div>
         <div className="flex-1 min-w-[10rem]">
           <label className="eyebrow block mb-1.5" htmlFor="pmNote">Note (optional)</label>
-          <input id="pmNote" type="text" className={`${field} w-full`} value={note}
+          <input id="pmNote" type="text" className={`${FIELD} w-full`} value={note}
                  disabled={locked || pending}
                  onChange={(e) => setNote(e.target.value)} />
         </div>
@@ -157,7 +155,7 @@ export default function PmLog({
           type="number" min={15} step={15} placeholder="minutes" aria-label="Custom PM minutes"
           value={customMinutes} disabled={locked || pending}
           onChange={(e) => setCustomMinutes(e.target.value)}
-          className={`${field} w-24`}
+          className={`${FIELD} w-24`}
         />
         <button
           type="button" disabled={locked || pending || !customMinutes}

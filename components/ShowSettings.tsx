@@ -5,10 +5,8 @@ import { useRouter } from 'next/navigation'
 import { formatAmount, parseUSD } from '@/lib/money'
 import { updateShow } from '@/app/shows/actions'
 import { TIMEZONES, DEFAULT_TIMEZONE } from '@/lib/timezones'
+import { FIELD_FULL } from '@/components/ui/field'
 
-const field =
-  'w-full px-3 py-2 bg-surface border border-line rounded-field text-ink text-sm ' +
-  'focus:border-accent focus:outline-none disabled:opacity-50'
 
 export type EditorShow = {
   id: string
@@ -110,17 +108,17 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
         <div className="grid gap-4 sm:grid-cols-2 mb-8">
           <div className="sm:col-span-2">
             <label className="eyebrow block mb-2" htmlFor="show-name">Name</label>
-            <input id="show-name" className={field} value={name} disabled={locked || pending}
+            <input id="show-name" className={FIELD_FULL} value={name} disabled={locked || pending}
                    onChange={(e) => setName(e.target.value)} />
           </div>
           <div className="sm:col-span-2">
             <label className="eyebrow block mb-2" htmlFor="show-venue">Venue</label>
-            <input id="show-venue" className={field} value={venue} disabled={locked || pending}
+            <input id="show-venue" className={FIELD_FULL} value={venue} disabled={locked || pending}
                    onChange={(e) => setVenue(e.target.value)} />
           </div>
           <div className="sm:col-span-2">
             <label className="eyebrow block mb-2" htmlFor="show-tz">Timezone</label>
-            <select id="show-tz" className={field} value={timezone} disabled={locked || pending}
+            <select id="show-tz" className={FIELD_FULL} value={timezone} disabled={locked || pending}
                     onChange={(e) => setTimezone(e.target.value)}>
               {TIMEZONES.map((tz) => (
                 <option key={tz.value} value={tz.value}>{tz.label}</option>
@@ -137,29 +135,29 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
         <div className="grid gap-4 sm:grid-cols-2 mb-8">
           <div>
             <label className="eyebrow block mb-2" htmlFor="day-rate">Day rate</label>
-            <input id="day-rate" inputMode="decimal" className={field} value={dayRate}
+            <input id="day-rate" inputMode="decimal" className={FIELD_FULL} value={dayRate}
                    disabled={locked || pending} onChange={(e) => setDayRate(e.target.value)} />
           </div>
           <div>
             <label className="eyebrow block mb-2" htmlFor="travel-rate">Travel rate</label>
-            <input id="travel-rate" inputMode="decimal" className={field} value={travelRate}
+            <input id="travel-rate" inputMode="decimal" className={FIELD_FULL} value={travelRate}
                    disabled={locked || pending} onChange={(e) => setTravelRate(e.target.value)} />
           </div>
           <div>
             <label className="eyebrow block mb-2" htmlFor="pm-rate">PM rate (per hour)</label>
-            <input id="pm-rate" inputMode="decimal" className={field} value={pmRate}
+            <input id="pm-rate" inputMode="decimal" className={FIELD_FULL} value={pmRate}
                    disabled={locked || pending} onChange={(e) => setPmRate(e.target.value)} />
           </div>
           <div>
             <label className="eyebrow block mb-2" htmlFor="ot-after">OT after (hours)</label>
-            <input id="ot-after" type="number" min={0.1} step="0.1" className={field}
+            <input id="ot-after" type="number" min={0.1} step="0.1" className={FIELD_FULL}
                    value={otAfterHours} disabled={locked || pending}
                    onChange={(e) => setOtAfterHours(e.target.value)} />
           </div>
           <div>
             <label className="eyebrow block mb-2" htmlFor="dt-after">DT after (hours)</label>
             <input id="dt-after" type="number" min={0} step="0.1" placeholder="No double time"
-                   className={field} value={dtAfterHours} disabled={locked || pending}
+                   className={FIELD_FULL} value={dtAfterHours} disabled={locked || pending}
                    onChange={(e) => setDtAfterHours(e.target.value)} />
             <p className="text-xs text-muted mt-1.5">
               Leave blank for no double time. {dayRateCents !== null && dayRateCents > 0 && dtAfterHours.trim() !== ''
@@ -174,7 +172,7 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
             <label className="eyebrow block mb-2" htmlFor="min-meal-break">
               Minimum meal break (minutes)
             </label>
-            <input id="min-meal-break" type="number" min={0} step="1" className={field}
+            <input id="min-meal-break" type="number" min={0} step="1" className={FIELD_FULL}
                    value={minMealBreak} disabled={locked || pending}
                    onChange={(e) => setMinMealBreak(e.target.value)} />
           </div>
@@ -182,7 +180,7 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
             <label className="eyebrow block mb-2" htmlFor="meal-break-cap">
               Meal break deduction cap (minutes)
             </label>
-            <input id="meal-break-cap" type="number" min={0} step="1" className={field}
+            <input id="meal-break-cap" type="number" min={0} step="1" className={FIELD_FULL}
                    value={mealBreakCap} disabled={locked || pending}
                    onChange={(e) => setMealBreakCap(e.target.value)} />
           </div>
@@ -190,13 +188,13 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
             <label className="eyebrow block mb-2" htmlFor="meal-penalty-grace">
               Meal penalty grace (hours)
             </label>
-            <input id="meal-penalty-grace" type="number" min={0} step="0.1" className={field}
+            <input id="meal-penalty-grace" type="number" min={0} step="0.1" className={FIELD_FULL}
                    value={mealPenaltyGrace} disabled={locked || pending}
                    onChange={(e) => setMealPenaltyGrace(e.target.value)} />
           </div>
           <div>
             <label className="eyebrow block mb-2" htmlFor="meal-penalty">Meal penalty</label>
-            <input id="meal-penalty" inputMode="decimal" placeholder="0.00" className={field}
+            <input id="meal-penalty" inputMode="decimal" placeholder="0.00" className={FIELD_FULL}
                    value={mealPenalty} disabled={locked || pending}
                    onChange={(e) => setMealPenalty(e.target.value)} />
             <p className="text-xs text-muted mt-1.5">Zero disables meal penalties for this show.</p>
@@ -205,7 +203,7 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
             <label className="eyebrow block mb-2" htmlFor="short-turn-rest">
               Short-turn rest (hours)
             </label>
-            <input id="short-turn-rest" type="number" min={0} step="0.1" className={field}
+            <input id="short-turn-rest" type="number" min={0} step="0.1" className={FIELD_FULL}
                    value={shortTurnRest} disabled={locked || pending}
                    onChange={(e) => setShortTurnRest(e.target.value)} />
           </div>
@@ -221,7 +219,7 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
 
         <h2 className="eyebrow mb-3">Notes</h2>
         <div className="mb-8">
-          <textarea id="show-notes" rows={3} className={field} value={notes}
+          <textarea id="show-notes" rows={3} className={FIELD_FULL} value={notes}
                     disabled={locked || pending}
                     onChange={(e) => setNotes(e.target.value)}
                     placeholder="Anything about this show worth remembering." />

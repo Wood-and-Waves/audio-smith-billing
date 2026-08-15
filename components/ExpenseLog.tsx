@@ -8,6 +8,7 @@ import { formatDateShort, todayInChicago } from '@/lib/dates'
 import { CATEGORY_LABEL, CATEGORY_ORDER, expensesMissingReceipts, type ExpenseCategory } from '@/lib/expenses'
 import { scaleToFit, contrastBounds, buildLut, JPEG_QUALITY } from '@/lib/receiptImage'
 import { addExpense, deleteExpense, extractReceipt } from '@/app/expenses/actions'
+import { FIELD_FULL } from '@/components/ui/field'
 
 type Row = {
   id: string
@@ -18,9 +19,6 @@ type Row = {
   receipt_path: string | null
 }
 
-const field =
-  'w-full px-3 py-2 bg-surface border border-line rounded-field text-ink text-sm ' +
-  'focus:border-accent focus:outline-none disabled:opacity-50'
 
 /** Receipts arrive as photographs or as emailed PDFs. Both end up a JPEG. */
 const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name)
@@ -543,7 +541,7 @@ export default function ExpenseLog({
       )}
 
       <div className="grid gap-2 sm:grid-cols-[8rem_1fr_7rem_9rem_auto] items-center mb-3">
-        <select aria-label="Category" className={field} value={category} disabled={locked || pending}
+        <select aria-label="Category" className={FIELD_FULL} value={category} disabled={locked || pending}
                 onChange={(e) => {
                   touchedRef.current.add('category')
                   setCategory(e.target.value as ExpenseCategory)
@@ -552,18 +550,18 @@ export default function ExpenseLog({
             <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
           ))}
         </select>
-        <input aria-label="Where" className={field} placeholder="Where" value={whereSpent}
+        <input aria-label="Where" className={FIELD_FULL} placeholder="Where" value={whereSpent}
                disabled={locked || pending} onChange={(e) => {
                  touchedRef.current.add('vendor')
                  setWhereSpent(e.target.value)
                }} />
         <input aria-label="Amount" inputMode="decimal" placeholder="0.00"
-               className={`${field} tabular text-right`} value={amount} disabled={locked || pending}
+               className={`${FIELD_FULL} tabular text-right`} value={amount} disabled={locked || pending}
                onChange={(e) => {
                  touchedRef.current.add('amount')
                  setAmount(e.target.value)
                }} />
-        <input aria-label="Date" type="date" className={field} value={spentOn}
+        <input aria-label="Date" type="date" className={FIELD_FULL} value={spentOn}
                disabled={locked || pending} onChange={(e) => {
                  touchedRef.current.add('date')
                  setSpentOn(e.target.value)

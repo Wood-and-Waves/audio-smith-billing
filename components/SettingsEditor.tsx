@@ -3,10 +3,8 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { saveSettings } from '@/app/settings/actions'
+import { FIELD_FULL } from '@/components/ui/field'
 
-const field =
-  'w-full px-3 py-2 bg-surface border border-line rounded-field text-ink text-sm ' +
-  'focus:border-accent focus:outline-none'
 
 export type EditorSettings = {
   business_name: string
@@ -70,40 +68,40 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
       <div className="grid gap-4 sm:grid-cols-2 mb-8">
         <div>
           <label className="eyebrow block mb-2" htmlFor="business-name">Trading name</label>
-          <input id="business-name" className={field} value={businessName}
+          <input id="business-name" className={FIELD_FULL} value={businessName}
                  onChange={(e) => setBusinessName(e.target.value)} />
         </div>
 
         <div>
           <label className="eyebrow block mb-2" htmlFor="legal-name">Legal name</label>
-          <input id="legal-name" className={field} value={legalName}
+          <input id="legal-name" className={FIELD_FULL} value={legalName}
                  onChange={(e) => setLegalName(e.target.value)} />
           <p className="text-xs text-muted mt-1.5">Appears in the remit-to block.</p>
         </div>
 
         <div>
           <label className="eyebrow block mb-2" htmlFor="address1">Address</label>
-          <input id="address1" className={field} value={addressLine1}
+          <input id="address1" className={FIELD_FULL} value={addressLine1}
                  placeholder="Line 1"
                  onChange={(e) => setAddressLine1(e.target.value)} />
         </div>
 
         <div>
           <label className="eyebrow block mb-2 sm:invisible" htmlFor="address2">Address 2</label>
-          <input id="address2" className={field} value={addressLine2}
+          <input id="address2" className={FIELD_FULL} value={addressLine2}
                  placeholder="Line 2 (optional)"
                  onChange={(e) => setAddressLine2(e.target.value)} />
         </div>
 
         <div>
           <label className="eyebrow block mb-2" htmlFor="phone">Phone</label>
-          <input id="phone" className={field} value={phone}
+          <input id="phone" className={FIELD_FULL} value={phone}
                  onChange={(e) => setPhone(e.target.value)} />
         </div>
 
         <div>
           <label className="eyebrow block mb-2" htmlFor="email">Email</label>
-          <input id="email" type="email" className={field} value={email}
+          <input id="email" type="email" className={FIELD_FULL} value={email}
                  onChange={(e) => setEmail(e.target.value)} />
         </div>
       </div>
@@ -112,14 +110,14 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
       <div className="grid gap-4 sm:grid-cols-2 mb-8">
         <div>
           <label className="eyebrow block mb-2" htmlFor="next-number">Next invoice number</label>
-          <input id="next-number" type="number" className={field} value={nextInvoiceNumber}
+          <input id="next-number" type="number" className={FIELD_FULL} value={nextInvoiceNumber}
                  onChange={(e) => setNextInvoiceNumber(e.target.value)} />
           <p className="text-xs text-muted mt-1.5">The spreadsheet ended at 388.</p>
         </div>
 
         <div>
           <label className="eyebrow block mb-2" htmlFor="terms">Default terms (days)</label>
-          <input id="terms" type="number" min={0} className={field} value={termsDays}
+          <input id="terms" type="number" min={0} className={FIELD_FULL} value={termsDays}
                  onChange={(e) => setTermsDays(e.target.value)} />
         </div>
       </div>
@@ -128,14 +126,14 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
       <div className="mb-8">
         <div className="mb-4">
           <label className="eyebrow block mb-2" htmlFor="remit-to">Remit to</label>
-          <textarea id="remit-to" rows={3} className={field} value={remitTo}
+          <textarea id="remit-to" rows={3} className={FIELD_FULL} value={remitTo}
                     onChange={(e) => setRemitTo(e.target.value)} />
           <p className="text-xs text-muted mt-1.5">Prints on every invoice.</p>
         </div>
 
         <div>
           <label className="eyebrow block mb-2" htmlFor="ach-details">ACH details</label>
-          <textarea id="ach-details" rows={3} className={field} value={achDetails}
+          <textarea id="ach-details" rows={3} className={FIELD_FULL} value={achDetails}
                      onChange={(e) => setAchDetails(e.target.value)} />
           <p className="text-xs text-muted mt-1.5">
             Never printed on an invoice. A client who wants to pay by transfer asks, and you send

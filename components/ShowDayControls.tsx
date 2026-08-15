@@ -5,10 +5,8 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { addShowDays, billShows, unlinkShow } from '@/app/shows/actions'
 import { todayInChicago, addDays } from '@/lib/dates'
+import { FIELD_FULL } from '@/components/ui/field'
 
-const field =
-  'w-full px-3 py-2 bg-surface border border-line rounded-field text-ink text-sm ' +
-  'focus:border-accent focus:outline-none'
 
 // From defaults to the day after the show's last existing day, not today —
 // on an in-progress multi-day trip "today" is nearly always wrong, and every
@@ -105,12 +103,12 @@ export default function ShowDayControls({
         <div className="flex flex-wrap items-end gap-3">
           <div>
             <label className="eyebrow block mb-1.5" htmlFor="showDayStart">From</label>
-            <input id="showDayStart" type="date" className={field} value={startDate}
+            <input id="showDayStart" type="date" className={FIELD_FULL} value={startDate}
                    onChange={(e) => setStartDate(e.target.value)} />
           </div>
           <div>
             <label className="eyebrow block mb-1.5" htmlFor="showDayEnd">To</label>
-            <input id="showDayEnd" type="date" className={field} value={endDate}
+            <input id="showDayEnd" type="date" className={FIELD_FULL} value={endDate}
                    onChange={(e) => setEndDate(e.target.value)} />
           </div>
           {/* A date input can be cleared, which submits "". The action refuses

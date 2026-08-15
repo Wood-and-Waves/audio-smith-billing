@@ -3,10 +3,8 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createShow } from '@/app/shows/actions'
+import { FIELD_FULL } from '@/components/ui/field'
 
-const field =
-  'w-full px-3 py-2 bg-surface border border-line rounded-field text-ink text-sm ' +
-  'focus:border-accent focus:outline-none'
 
 type Client = { id: string; name: string; day_rate_cents: number | null }
 
@@ -40,7 +38,7 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
 
       <div className="mb-4">
         <label className="eyebrow block mb-2" htmlFor="client">Client</label>
-        <select id="client" className={field} value={clientId}
+        <select id="client" className={FIELD_FULL} value={clientId}
                 onChange={(e) => setClientId(e.target.value)}>
           <option value="">Choose a client…</option>
           {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -58,13 +56,13 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
 
       <div className="mb-4">
         <label className="eyebrow block mb-2" htmlFor="name">Name</label>
-        <input id="name" className={field} value={name} placeholder="GLS 2026"
+        <input id="name" className={FIELD_FULL} value={name} placeholder="GLS 2026"
                onChange={(e) => setName(e.target.value)} />
       </div>
 
       <div className="mb-8">
         <label className="eyebrow block mb-2" htmlFor="venue">Venue (optional)</label>
-        <input id="venue" className={field} value={venue}
+        <input id="venue" className={FIELD_FULL} value={venue}
                onChange={(e) => setVenue(e.target.value)} />
       </div>
 
