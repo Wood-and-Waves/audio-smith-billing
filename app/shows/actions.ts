@@ -149,14 +149,26 @@ export async function createShow(input: {
   // instead of leaving them at what $780 would have implied.
   const derived = deriveFromDayRate(day, hours, card.travel_full_day)
 
+  // Reject a zero override the same way a zero day rate already is, not
+  // just a negative one: overrideCents only returns 0 here if the box
+  // genuinely contains "0" (a blank box is `undefined`, filtered out above)
+  // — but a $0.00 travel or PM rate is never something Dan means to enter,
+  // and lib/showBuckets.ts prints any line with unit_price_cents >= 0
+  // straight onto an invoice. This is also the backstop for
+  // NewShowForm's onDayRateChange guard: if that client-side check is ever
+  // bypassed, a $0 override still can't reach the shows table.
   const travelOverride = overrideCents(input.travel_rate)
   if (travelOverride === null) return { error: `Couldn't read "${input.travel_rate}" as a travel rate.` }
-  if (travelOverride !== undefined && travelOverride < 0) return { error: 'Travel rate cannot be negative.' }
+  if (travelOverride !== undefined && travelOverride <= 0) {
+    return { error: 'Travel rate must be more than $0.00 — leave it blank to use the rate card.' }
+  }
   const travel = travelOverride ?? derived.travel_rate_cents
 
   const pmOverride = overrideCents(input.pm_rate)
   if (pmOverride === null) return { error: `Couldn't read "${input.pm_rate}" as a PM rate.` }
-  if (pmOverride !== undefined && pmOverride < 0) return { error: 'PM rate cannot be negative.' }
+  if (pmOverride !== undefined && pmOverride <= 0) {
+    return { error: 'PM rate must be more than $0.00 — leave it blank to use the rate card.' }
+  }
   const pm = pmOverride ?? derived.pm_rate_cents
 
   const { data, error } = await supabase.from('shows').insert({

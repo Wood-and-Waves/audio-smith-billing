@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { defaultCardOf, deriveFromDayRate } from '../../lib/rateCards.ts'
+import { defaultCardOf, deriveFromDayRate, isDerivableDayRate } from '../../lib/rateCards.ts'
 
 test('defaultCardOf picks the unnamed card', () => {
   const cards = [{ name: 'PM', v: 1 }, { name: null, v: 2 }]
@@ -38,4 +38,22 @@ test('deriveFromDayRate rounds the PM rate to the nearest cent', () => {
 
 test('deriveFromDayRate treats a zero overtime threshold as no PM rate rather than dividing by zero', () => {
   assert.deepEqual(deriveFromDayRate(78000, 0, false), { travel_rate_cents: 39000, pm_rate_cents: 0 })
+})
+
+test('isDerivableDayRate rejects an emptied box (parseUSD("") === 0), not just junk', () => {
+  // The bug this exists to prevent: a `=== null` check alone lets a
+  // cleared day-rate box (parseUSD("") -> 0) re-derive travel/PM from $0.
+  assert.equal(isDerivableDayRate(0), false)
+})
+
+test('isDerivableDayRate rejects junk input (parseUSD returns null)', () => {
+  assert.equal(isDerivableDayRate(null), false)
+})
+
+test('isDerivableDayRate rejects a negative day rate', () => {
+  assert.equal(isDerivableDayRate(-100), false)
+})
+
+test('isDerivableDayRate accepts a real positive day rate', () => {
+  assert.equal(isDerivableDayRate(78000), true)
 })

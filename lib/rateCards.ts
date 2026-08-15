@@ -38,3 +38,16 @@ export function deriveFromDayRate(
     pm_rate_cents: otAfterHours > 0 ? Math.round(dayRateCents / otAfterHours) : 0,
   }
 }
+
+/**
+ * True when a parsed day rate is a usable basis for `deriveFromDayRate`.
+ *
+ * `parseUSD` returns `null` for junk and `0` for an emptied box — neither
+ * means "derive from zero". NewShowForm's day-rate/OT handlers must check
+ * this instead of `=== null`, or a cleared day-rate box re-derives travel
+ * and PM from $0.00 and silently overwrites both boxes with "0.00" (see
+ * app/shows/actions.ts overrideCents for the matching server-side guard).
+ */
+export function isDerivableDayRate(parsedDayRate: number | null): parsedDayRate is number {
+  return parsedDayRate !== null && parsedDayRate > 0
+}

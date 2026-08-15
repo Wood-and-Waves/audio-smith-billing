@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createShow } from '@/app/shows/actions'
 import { formatUSD, formatAmount, parseUSD } from '@/lib/money'
-import { deriveFromDayRate } from '@/lib/rateCards'
+import { deriveFromDayRate, isDerivableDayRate } from '@/lib/rateCards'
 import { TIMEZONES } from '@/lib/timezones'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select from '@/components/ui/Select'
@@ -129,7 +129,11 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
     setDayRate(value)
     if (!selectedCard) return
     const parsed = parseUSD(value)
-    if (parsed === null) return
+    // Not `=== null`: parseUSD('') is 0, not null, so a cleared box would
+    // otherwise pass this guard and re-derive travel/PM from $0.00 — the
+    // exact bug rate cards exist to prevent. Leave both boxes as they are
+    // until a real, positive day rate is typed again.
+    if (!isDerivableDayRate(parsed)) return
     const hours = Number(otAfterHours) || Number(selectedCard.ot_after_hours) || 10
     const derived = deriveFromDayRate(parsed, hours, selectedCard.travel_full_day)
     if (!travelDirty) setTravelRate(formatAmount(derived.travel_rate_cents))
