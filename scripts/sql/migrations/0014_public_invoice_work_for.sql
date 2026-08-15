@@ -1,4 +1,8 @@
--- 0014 — the public invoice link gains a FOR: heading
+-- 0014 — the public invoice link gains a FOR: heading, and a missing guard
+-- on client_rate_cards is closed
+--
+-- Two unrelated fixes, one migration: neither changes existing data, and
+-- both were found in the same review pass.
 --
 -- There are THREE places that assemble the document a client sees, not two.
 -- The app page (app/invoices/[id]/page.tsx) and the emailed PDF
@@ -84,3 +88,14 @@ $fn$;
 -- CREATE OR REPLACE preserves ownership and existing grants (see the
 -- CREATE FUNCTION docs), so the 0006 grants to anon/authenticated need no
 -- restatement here.
+
+-- day_rate_cents already has a CHECK (migration 0013); ot_after_hours never
+-- got one. parseCards (app/clients/actions.ts) rejects a zero or negative
+-- value before it ever reaches the database, but createShow's
+-- `Number(card.ot_after_hours ?? 10)` does NOT catch a stored zero — `??`
+-- only falls back on null/undefined, and 0 is neither. A zero would freeze
+-- onto the show and produce a `pm_rate_cents` of Infinity-turned-0 and an
+-- "Overtime x N @ $0.00" line. No existing row violates this (verified
+-- against dev before writing this migration).
+alter table client_rate_cards
+  add constraint client_rate_cards_ot_after_hours_positive check (ot_after_hours > 0);

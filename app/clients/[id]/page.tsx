@@ -22,6 +22,9 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
          client_rate_cards(id, name, day_rate_cents, ot_after_hours, travel_full_day)`,
       )
       .eq('id', id)
+      // Otherwise this client's card editor lists its cards in whatever
+      // order Postgres happens to return them, which reads as random.
+      .order('name', { referencedTable: 'client_rate_cards' })
       .maybeSingle(),
     supabase
       .from('invoices')

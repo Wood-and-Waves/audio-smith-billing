@@ -11,6 +11,9 @@ export default async function NewShowPage() {
     .select('id, name, client_rate_cards(id, name, day_rate_cents)')
     .eq('archived', false)
     .order('name')
+    // Otherwise the rate-card picker lists a client's cards in whatever
+    // order Postgres happens to return them, which reads as random.
+    .order('name', { referencedTable: 'client_rate_cards' })
 
   // The query joins client_rate_cards under its table name; NewShowForm
   // wants it as `cards`, the same rename ClientEditor's page does.

@@ -177,8 +177,13 @@ export async function saveClient(input: ClientInput): Promise<Fail | { ok: true;
       travel_full_day: card.travel_full_day,
     }
     if (card.id) {
+      // Scoped to THIS client's id too, not a bare lookup by card id — a
+      // caller-supplied card id is only trusted once it's confirmed to
+      // belong to the client being saved, the same way createShow and
+      // deletePunch derive authorisation from a record's own foreign keys
+      // rather than trusting a caller-supplied pair.
       const { error: updError } = await supabase
-        .from('client_rate_cards').update(cardValues).eq('id', card.id)
+        .from('client_rate_cards').update(cardValues).eq('id', card.id).eq('client_id', id)
       if (updError) return { error: updError.message }
     } else {
       const { error: insError } = await supabase
