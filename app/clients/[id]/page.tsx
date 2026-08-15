@@ -17,7 +17,9 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
       .from('clients')
       .select(
         `id, name, billing_email, contact_name, phone, address_line1, address_line2,
-         terms_days, day_rate_cents, ot_after_hours, notes, archived, show_hours_on_invoice`,
+         city, state, postal_code,
+         terms_days, notes, archived, show_hours_on_invoice,
+         client_rate_cards(id, name, day_rate_cents, ot_after_hours, travel_full_day)`,
       )
       .eq('id', id)
       .maybeSingle(),
@@ -42,6 +44,13 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
   const rows = (invoices ?? []) as unknown as InvoiceRowData[]
   const today = todayInChicago()
 
+  // The query joins client_rate_cards under its table name; EditorClient
+  // wants it as `cards`.
+  const { client_rate_cards, ...clientFields } = client as unknown as EditorClient & {
+    client_rate_cards: EditorClient['cards']
+  }
+  const editorClient: EditorClient = { ...clientFields, cards: client_rate_cards }
+
   return (
     <AppShell current="clients">
       <Link
@@ -52,7 +61,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
         ← All clients
       </Link>
 
-      <ClientEditor initial={client as unknown as EditorClient} />
+      <ClientEditor initial={editorClient} />
 
       <div className="max-w-xl mt-14">
         <h2 className="eyebrow mb-4">Invoice history</h2>

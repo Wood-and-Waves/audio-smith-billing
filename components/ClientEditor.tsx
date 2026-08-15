@@ -3,9 +3,18 @@
 import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatAmount, formatUSD, parseUSD, travelRateFrom, overtimeRateFrom } from '@/lib/money'
-import { saveClient } from '@/app/clients/actions'
+import { saveClient, type CardInput } from '@/app/clients/actions'
 import { FIELD_FULL } from '@/components/ui/field'
 
+export type RateCard = {
+  id: string
+  // NULL is the default (unnamed) card. See saveClient for why there can be
+  // only one.
+  name: string | null
+  day_rate_cents: number
+  ot_after_hours: number
+  travel_full_day: boolean
+}
 
 export type EditorClient = {
   id: string
@@ -15,12 +24,48 @@ export type EditorClient = {
   phone: string | null
   address_line1: string | null
   address_line2: string | null
+  city: string | null
+  state: string | null
+  postal_code: string | null
   terms_days: number
-  day_rate_cents: number | null
-  ot_after_hours: number
   notes: string | null
   archived: boolean
   show_hours_on_invoice: boolean
+  cards: RateCard[]
+}
+
+// Local editing shape for one card row. `key` is stable for React even
+// before a new card has an id; `id` is only set once the card exists in
+// client_rate_cards, and its presence is what tells saveClient to update
+// rather than insert.
+type CardRow = {
+  key: string
+  id?: string
+  name: string
+  dayRate: string
+  otAfterHours: string
+  travelFullDay: boolean
+}
+
+let tempKeySeq = 0
+function tempKey() {
+  tempKeySeq += 1
+  return `new-${tempKeySeq}`
+}
+
+function toCardRow(card: RateCard): CardRow {
+  return {
+    key: card.id,
+    id: card.id,
+    name: card.name ?? '',
+    dayRate: formatAmount(card.day_rate_cents),
+    otAfterHours: String(card.ot_after_hours),
+    travelFullDay: card.travel_full_day,
+  }
+}
+
+function blankDefaultRow(): CardRow {
+  return { key: 'default', dayRate: '', otAfterHours: '10', travelFullDay: false, name: '' }
 }
 
 export default function ClientEditor({ initial }: { initial?: EditorClient }) {
@@ -34,24 +79,70 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
   const [phone, setPhone] = useState(initial?.phone ?? '')
   const [addressLine1, setAddressLine1] = useState(initial?.address_line1 ?? '')
   const [addressLine2, setAddressLine2] = useState(initial?.address_line2 ?? '')
+  const [city, setCity] = useState(initial?.city ?? '')
+  const [stateField, setStateField] = useState(initial?.state ?? '')
+  const [postalCode, setPostalCode] = useState(initial?.postal_code ?? '')
   const [termsDays, setTermsDays] = useState(String(initial?.terms_days ?? 30))
-  const [dayRate, setDayRate] = useState(
-    initial?.day_rate_cents != null ? formatAmount(initial.day_rate_cents) : '',
-  )
-  const [otAfterHours, setOtAfterHours] = useState(String(initial?.ot_after_hours ?? 10))
   const [notes, setNotes] = useState(initial?.notes ?? '')
   const [archived, setArchived] = useState(initial?.archived ?? false)
   const [showHours, setShowHours] = useState(initial?.show_hours_on_invoice ?? false)
 
-  // Preview only — parseUSD returns null on junk, which just hides the
-  // preview rather than blocking typing. The real validation happens in
-  // saveClient when the form is submitted.
-  const rateCents = useMemo(() => parseUSD(dayRate), [dayRate])
-  const otHours = Number(otAfterHours) || 0
+  const initialDefault = initial?.cards.find((c) => c.name === null)
+  const initialNamed = initial?.cards.filter((c) => c.name !== null) ?? []
+  const [defaultCard, setDefaultCard] = useState<CardRow>(
+    initialDefault ? toCardRow(initialDefault) : blankDefaultRow(),
+  )
+  const [namedCards, setNamedCards] = useState<CardRow[]>(initialNamed.map(toCardRow))
+
+  function updateDefault(patch: Partial<CardRow>) {
+    setDefaultCard((c) => ({ ...c, ...patch }))
+  }
+  function updateNamed(key: string, patch: Partial<CardRow>) {
+    setNamedCards((cards) => cards.map((c) => (c.key === key ? { ...c, ...patch } : c)))
+  }
+  function addNamedCard() {
+    setNamedCards((cards) => [
+      ...cards,
+      { key: tempKey(), name: '', dayRate: '', otAfterHours: '10', travelFullDay: false },
+    ])
+  }
+  function removeNamedCard(key: string) {
+    setNamedCards((cards) => cards.filter((c) => c.key !== key))
+  }
+
+  const hasAnyCard = defaultCard.dayRate.trim() !== '' || namedCards.length > 0
+
+  // Preview only, same disclaimer as the day-rate preview this replaces:
+  // parseUSD returns null on junk, which just hides the preview rather than
+  // blocking typing. Real validation happens in saveClient.
+  function preview(card: CardRow) {
+    const cents = parseUSD(card.dayRate)
+    if (cents === null || cents <= 0) return null
+    const hours = Number(card.otAfterHours) || 0
+    const travel = card.travelFullDay ? cents : travelRateFrom(cents)
+    return { travel, ot: overtimeRateFrom(cents, hours), hours }
+  }
 
   function submit() {
     setError(null)
     start(async () => {
+      const cards: CardInput[] = [
+        {
+          id: defaultCard.id,
+          name: null,
+          day_rate: defaultCard.dayRate,
+          ot_after_hours: Number(defaultCard.otAfterHours) || 0,
+          travel_full_day: defaultCard.travelFullDay,
+        },
+        ...namedCards.map((c) => ({
+          id: c.id,
+          name: c.name,
+          day_rate: c.dayRate,
+          ot_after_hours: Number(c.otAfterHours) || 0,
+          travel_full_day: c.travelFullDay,
+        })),
+      ]
+
       const result = await saveClient({
         id: initial?.id,
         name,
@@ -60,15 +151,17 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
         phone,
         address_line1: addressLine1,
         address_line2: addressLine2,
+        city,
+        state: stateField,
+        postal_code: postalCode,
         // A cleared box is not "Net 0" — Number('') is 0, which would make
         // the due date equal to the issue date. Blank means "use the
         // default" the way it already does for ShowSettings' dt_after_hours.
         terms_days: termsDays.trim() === '' ? 30 : Number(termsDays),
-        day_rate: dayRate,
-        ot_after_hours: Number(otAfterHours),
         notes,
         archived,
         show_hours_on_invoice: showHours,
+        cards,
       })
       if ('error' in result) { setError(result.error); return }
       router.push(`/clients/${result.id}`)
@@ -120,6 +213,29 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
           <input id="address2" className={FIELD_FULL} value={addressLine2}
                  placeholder="Line 2 (optional)"
                  onChange={(e) => setAddressLine2(e.target.value)} />
+          <p className="text-xs text-muted mt-1.5">
+            If the city, state and ZIP are still here, move them to the fields below.
+          </p>
+        </div>
+
+        <div>
+          <label className="eyebrow block mb-2" htmlFor="city">City</label>
+          <input id="city" className={FIELD_FULL} value={city}
+                 onChange={(e) => setCity(e.target.value)} />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="eyebrow block mb-2" htmlFor="state">State</label>
+            <input id="state" className={FIELD_FULL} value={stateField}
+                   placeholder="IL"
+                   onChange={(e) => setStateField(e.target.value)} />
+          </div>
+          <div>
+            <label className="eyebrow block mb-2" htmlFor="postal-code">ZIP</label>
+            <input id="postal-code" className={FIELD_FULL} value={postalCode}
+                   onChange={(e) => setPostalCode(e.target.value)} />
+          </div>
         </div>
       </div>
 
@@ -131,30 +247,103 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
                  onChange={(e) => setTermsDays(e.target.value)} />
           <p className="text-xs text-muted mt-1.5">Leave blank for the default of 30 days.</p>
         </div>
+      </div>
 
-        <div>
-          <label className="eyebrow block mb-2" htmlFor="ot-hours">OT after (hours)</label>
-          <input id="ot-hours" type="number" min={0} step="0.1" className={FIELD_FULL}
-                 value={otAfterHours} onChange={(e) => setOtAfterHours(e.target.value)} />
+      <h2 className="eyebrow mb-3">Rate cards</h2>
+      <div className="mb-8 space-y-5">
+        <div className="border border-line rounded-field p-4">
+          <p className="eyebrow mb-3">Default rate</p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="eyebrow block mb-2" htmlFor="default-day-rate">Day rate</label>
+              <input id="default-day-rate" inputMode="decimal" placeholder="e.g. 780"
+                     className={FIELD_FULL} value={defaultCard.dayRate}
+                     onChange={(e) => updateDefault({ dayRate: e.target.value })} />
+            </div>
+            <div>
+              <label className="eyebrow block mb-2" htmlFor="default-ot-hours">OT after (hours)</label>
+              <input id="default-ot-hours" type="number" min={0} step="0.1" className={FIELD_FULL}
+                     value={defaultCard.otAfterHours}
+                     onChange={(e) => updateDefault({ otAfterHours: e.target.value })} />
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-muted mt-4">
+            <input type="checkbox" className="h-4 w-4 accent-accent" checked={defaultCard.travelFullDay}
+                   onChange={(e) => updateDefault({ travelFullDay: e.target.checked })} />
+            Travel bills a full day rate
+          </label>
+          <p className="text-xs text-muted mt-1.5">
+            Travel bills per leg, so this doubles a fly-in/fly-out trip from one day rate to two —
+            unchecked, that trip bills a half rate each way instead.
+          </p>
+          {(() => {
+            const p = preview(defaultCard)
+            return p && (
+              <p className="text-xs text-muted mt-1.5 tabular">
+                Travel {formatUSD(p.travel)} · OT {formatUSD(p.ot)} after {p.hours}h
+              </p>
+            )
+          })()}
         </div>
 
-        <div className="sm:col-span-2">
-          <label className="eyebrow block mb-2" htmlFor="day-rate">Day rate</label>
-          <input id="day-rate" inputMode="decimal" placeholder="e.g. 780" className={FIELD_FULL}
-                 value={dayRate} onChange={(e) => setDayRate(e.target.value)} />
-          {rateCents !== null && rateCents > 0 && (
-            <p className="text-xs text-muted mt-1.5 tabular">
-              Travel {formatUSD(travelRateFrom(rateCents))} · OT{' '}
-              {formatUSD(overtimeRateFrom(rateCents, otHours))} after {otHours}h
-            </p>
-          )}
-          {dayRate.trim() === '' && (
+        {namedCards.map((card) => (
+          <div key={card.key} className="border border-line rounded-field p-4">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <label className="eyebrow" htmlFor={`card-name-${card.key}`}>Name</label>
+              <button type="button" onClick={() => removeNamedCard(card.key)}
+                      className="text-xs font-semibold uppercase tracking-wider text-muted hover:text-danger">
+                Remove
+              </button>
+            </div>
+            <input id={`card-name-${card.key}`} className={FIELD_FULL} value={card.name}
+                   placeholder="e.g. PM"
+                   onChange={(e) => updateNamed(card.key, { name: e.target.value })} />
+
+            <div className="grid gap-4 sm:grid-cols-2 mt-4">
+              <div>
+                <label className="eyebrow block mb-2" htmlFor={`card-rate-${card.key}`}>Day rate</label>
+                <input id={`card-rate-${card.key}`} inputMode="decimal" placeholder="e.g. 900"
+                       className={FIELD_FULL} value={card.dayRate}
+                       onChange={(e) => updateNamed(card.key, { dayRate: e.target.value })} />
+              </div>
+              <div>
+                <label className="eyebrow block mb-2" htmlFor={`card-ot-${card.key}`}>OT after (hours)</label>
+                <input id={`card-ot-${card.key}`} type="number" min={0} step="0.1" className={FIELD_FULL}
+                       value={card.otAfterHours}
+                       onChange={(e) => updateNamed(card.key, { otAfterHours: e.target.value })} />
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2 text-sm text-muted mt-4">
+              <input type="checkbox" className="h-4 w-4 accent-accent" checked={card.travelFullDay}
+                     onChange={(e) => updateNamed(card.key, { travelFullDay: e.target.checked })} />
+              Travel bills a full day rate
+            </label>
             <p className="text-xs text-muted mt-1.5">
-              No rate card — this client is billed ad hoc. Shows can&rsquo;t be tracked for them
-              until a day rate is set here.
+              Travel bills per leg, so this doubles a fly-in/fly-out trip from one day rate to two —
+              unchecked, that trip bills a half rate each way instead.
             </p>
-          )}
-        </div>
+            {(() => {
+              const p = preview(card)
+              return p && (
+                <p className="text-xs text-muted mt-1.5 tabular">
+                  Travel {formatUSD(p.travel)} · OT {formatUSD(p.ot)} after {p.hours}h
+                </p>
+              )
+            })()}
+          </div>
+        ))}
+
+        <button type="button" onClick={addNamedCard}
+                className="text-xs font-semibold uppercase tracking-wider text-accent hover:opacity-80">
+          + Add rate card
+        </button>
+
+        {!hasAnyCard && (
+          <p className="text-sm text-muted border-l-2 border-accent pl-4 py-1">
+            No rate card yet — a show cannot be created for this client until one exists.
+          </p>
+        )}
       </div>
 
       <h2 className="eyebrow mb-3">Notes</h2>

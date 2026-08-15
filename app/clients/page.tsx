@@ -9,10 +9,14 @@ type ClientRow = {
   id: string
   name: string
   billing_email: string | null
-  day_rate_cents: number | null
-  ot_after_hours: number
   legacy_names: string[]
   invoices: { total_cents: number; status: string }[]
+  client_rate_cards: {
+    name: string | null
+    day_rate_cents: number
+    ot_after_hours: number
+    travel_full_day: boolean
+  }[]
 }
 
 export default async function ClientsPage() {
@@ -21,7 +25,8 @@ export default async function ClientsPage() {
   const { data, error } = await supabase
     .from('clients')
     .select(
-      'id, name, billing_email, day_rate_cents, ot_after_hours, legacy_names, invoices(total_cents, status)',
+      `id, name, billing_email, legacy_names, invoices(total_cents, status),
+       client_rate_cards(name, day_rate_cents, ot_after_hours, travel_full_day)`,
     )
     .eq('archived', false)
     .order('name')
@@ -41,6 +46,8 @@ export default async function ClientsPage() {
       ...c,
       count: c.invoices.length,
       billed: c.invoices.reduce((t, i) => t + i.total_cents, 0),
+      defaultCard: c.client_rate_cards.find((card) => card.name === null) ?? null,
+      cardCount: c.client_rate_cards.length,
     }))
     .sort((a, b) => b.billed - a.billed)
 
@@ -81,7 +88,8 @@ export default async function ClientsPage() {
 
       <ul className="border-t border-line">
         {clients.map((c) => {
-          const day = c.day_rate_cents
+          const day = c.defaultCard?.day_rate_cents ?? null
+          const otAfterHours = c.defaultCard?.ot_after_hours ?? 0
           return (
             <li key={c.id}>
               <Link
@@ -102,11 +110,15 @@ export default async function ClientsPage() {
                   </span>
                   {day ? (
                     <span className="tabular">
-                      Day {formatUSD(day)} · Travel {formatUSD(travelRateFrom(day))} · OT{' '}
-                      {formatUSD(overtimeRateFrom(day, c.ot_after_hours))} after {c.ot_after_hours}h
+                      Day {formatUSD(day)} · Travel{' '}
+                      {formatUSD(c.defaultCard!.travel_full_day ? day : travelRateFrom(day))} · OT{' '}
+                      {formatUSD(overtimeRateFrom(day, otAfterHours))} after {otAfterHours}h
                     </span>
                   ) : (
                     <span>No rate card</span>
+                  )}
+                  {c.cardCount > 1 && (
+                    <span className="tabular">{c.cardCount} rate cards</span>
                   )}
                 </div>
 
