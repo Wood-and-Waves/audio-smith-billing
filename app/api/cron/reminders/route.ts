@@ -145,7 +145,20 @@ export async function GET(request: NextRequest) {
 
   // Last, and deliberately so: the reminders are the job people notice, and
   // this stage is allowed to take its time or fail without disturbing them.
-  const archive = await archiveOriginals(db)
+  //
+  // The try is what makes "without disturbing them" true. archiveOriginals is
+  // written to return its failures rather than throw, but it awaits things that
+  // can reject on their own — a Blob whose body fails mid-read was reproduced
+  // doing exactly this — and one of those escaping here 500s a run whose
+  // reminders all sent and all logged. The catch turns that back into the
+  // ordinary reported failure the stage already knows how to express, so the
+  // reasoning below about archive.failed keeps holding.
+  let archive: ArchiveResult
+  try {
+    archive = await archiveOriginals(db, settings.owner_id)
+  } catch (e) {
+    archive = { archived: 0, paths: [], failed: [e instanceof Error ? e.message : 'Archive stage failed.'] }
+  }
 
   // A non-empty `failed` must not come back as 200: Vercel's cron dashboard
   // reads the status code, not this body, to decide whether a run succeeded.
@@ -175,6 +188,25 @@ export async function GET(request: NextRequest) {
 const ARCHIVE_BATCH = 8
 
 /**
+ * How many failed nights make a receipt worth naming in the response.
+ *
+ * Small on purpose. Three consecutive failures is no longer a Dropbox hiccup or
+ * a slow night — it is a row that needs looking at, and the counter below is
+ * only useful if the number it reports crosses a threshold a human would act on.
+ */
+const ARCHIVE_STUCK_AFTER = 3
+
+type ArchiveResult = {
+  archived: number
+  /** Where each archived file actually landed — see uploadAndVerify on autorename. */
+  paths: string[]
+  failed: string[]
+  /** Waiting rows that have now failed ARCHIVE_STUCK_AFTER times or more. */
+  stuck?: number
+  skipped?: string
+}
+
+/**
  * The columns the archive needs, and nothing else.
  *
  * Cast rather than inferred: this client is created without a generated
@@ -187,6 +219,7 @@ type ArchiveRow = {
   where_spent: string | null
   amount_cents: number
   receipt_original: string
+  receipt_archive_attempts: number | null
   shows: { name: string | null; dates: { date: string }[] | null } | null
 }
 
@@ -201,10 +234,12 @@ type ArchiveRow = {
  *
  * Missing credentials skip the stage rather than failing the request. The cron
  * still has reminders to send, and a receipt archive is not worth losing those.
+ *
+ * REQUIRES MIGRATION 0020, which adds receipt_archive_attempts. The column is
+ * selected, ordered by and written below; deploying this ahead of the migration
+ * makes every night's select fail with an unknown column.
  */
-async function archiveOriginals(db: SupabaseClient): Promise<{
-  archived: number; failed: string[]; skipped?: string
-}> {
+async function archiveOriginals(db: SupabaseClient, ownerId: string): Promise<ArchiveResult> {
   const appKey = process.env.DROPBOX_APP_KEY
   const appSecret = process.env.DROPBOX_APP_SECRET
   const refreshToken = process.env.DROPBOX_REFRESH_TOKEN
@@ -218,32 +253,53 @@ async function archiveOriginals(db: SupabaseClient): Promise<{
       !appSecret && 'DROPBOX_APP_SECRET',
       !refreshToken && 'DROPBOX_REFRESH_TOKEN',
     ].filter(Boolean) as string[]
-    return { archived: 0, failed: [], skipped: `Not configured: ${missing.join(', ')}.` }
+    return { archived: 0, paths: [], failed: [], skipped: `Not configured: ${missing.join(', ')}.` }
   }
 
-  // needsArchiving's rule, written as SQL so migration 0019's partial index on
-  // (created_at) where receipt_original is not null and receipt_archived_at is
-  // null can serve it — the alternative is dragging every expense ever recorded
-  // across the wire each night to filter eight rows out of it.
+  // needsArchiving's rule, written as SQL so migration 0020's partial index on
+  // (receipt_archive_attempts, created_at) where receipt_original is not null
+  // and receipt_archived_at is null can serve it — the alternative is dragging
+  // every expense ever recorded across the wire each night to filter eight rows
+  // out of it.
+  //
+  // owner_id, for the reason the invoice query 150 lines above gives: this
+  // client bypasses RLS. Without the filter a second auth user's receipts would
+  // be uploaded into DAN'S Dropbox and marked archived — which then licenses the
+  // deletion stage to destroy originals belonging to someone else entirely. One
+  // owner today, but that is not a property the code should depend on.
+  //
+  // ATTEMPTS FIRST, then age. Ordering by created_at alone meant a row that
+  // could never succeed — a storage object that has gone missing, a path Dropbox
+  // refuses — was re-selected at the head of the batch every night forever,
+  // because a failure changes no state. Simulated over five nights with forty
+  // waiting receipts: eight poisoned rows archived NOTHING, ever; three poisoned
+  // rows cut throughput to five a night permanently. Counting the failures and
+  // sorting by them lets a bad row drift to the back instead of blocking
+  // everything behind it, and the count is what makes it visible rather than
+  // merely slow.
   const { data, error } = await db
     .from('expenses')
-    .select('id, spent_on, where_spent, amount_cents, receipt_original, shows(name, dates:show_days(date))')
+    .select(`id, spent_on, where_spent, amount_cents, receipt_original,
+             receipt_archive_attempts, shows(name, dates:show_days(date))`)
+    .eq('owner_id', ownerId)
     .not('receipt_original', 'is', null)
     .is('receipt_archived_at', null)
+    .order('receipt_archive_attempts', { ascending: true })
     .order('created_at', { ascending: true })
     .limit(ARCHIVE_BATCH)
-  if (error) return { archived: 0, failed: [error.message] }
+  if (error) return { archived: 0, paths: [], failed: [error.message] }
 
   const rows = (data ?? []) as unknown as ArchiveRow[]
   // Nothing waiting: return before exchanging the refresh token, so the steady
   // state costs one query a night rather than a needless round trip to Dropbox.
-  if (rows.length === 0) return { archived: 0, failed: [] }
+  // Nothing waiting also means nothing stuck — a stuck row is a waiting row.
+  if (rows.length === 0) return { archived: 0, paths: [], failed: [] }
 
   let accessToken: string
   try {
     accessToken = await getAccessToken({ appKey, appSecret, refreshToken })
   } catch (e) {
-    return { archived: 0, failed: [e instanceof Error ? e.message : 'Dropbox auth failed.'] }
+    return { archived: 0, paths: [], failed: [e instanceof Error ? e.message : 'Dropbox auth failed.'] }
   }
 
   // Named as a batch, not one at a time: two $6 coffees at the same airport
@@ -259,7 +315,25 @@ async function archiveOriginals(db: SupabaseClient): Promise<{
   })))
 
   let archived = 0
+  const paths: string[] = []
   const failed: string[] = []
+
+  /**
+   * Records a failed attempt against the row, then reports it.
+   *
+   * The increment is the whole point: a failure used to change no state at all,
+   * so tomorrow's query saw exactly the same row in exactly the same place. The
+   * update is deliberately not checked for its own error — if the counter cannot
+   * be written the archive is no worse off than it was before this existed, and
+   * a second failure message about the first failure helps nobody.
+   */
+  async function noteFailure(row: ArchiveRow, name: string, reason: string) {
+    failed.push(`${name}: ${reason}`)
+    await db
+      .from('expenses')
+      .update({ receipt_archive_attempts: (row.receipt_archive_attempts ?? 0) + 1 })
+      .eq('id', row.id)
+  }
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
@@ -276,15 +350,28 @@ async function archiveOriginals(db: SupabaseClient): Promise<{
     const { data: blob, error: downloadError } = await db.storage
       .from('receipts').download(row.receipt_original)
     if (downloadError || !blob) {
-      failed.push(`${names[i]}: ${downloadError?.message ?? 'could not download'}`)
+      await noteFailure(row, names[i], downloadError?.message ?? 'could not download')
       continue
     }
 
-    const result = await uploadAndVerify(accessToken, path, new Uint8Array(await blob.arrayBuffer()))
+    // Reading the body is its own try. download() resolves as soon as it has a
+    // Blob, so a connection that dies mid-body rejects HERE instead — reproduced
+    // escaping archiveOriginals entirely and 500ing the cron. The route's outer
+    // catch would now hold it, but that would abandon the seven other receipts
+    // in the batch for one bad read.
+    let bytes: Uint8Array
+    try {
+      bytes = new Uint8Array(await blob.arrayBuffer())
+    } catch (e) {
+      await noteFailure(row, names[i], e instanceof Error ? e.message : 'could not read the downloaded file')
+      continue
+    }
+
+    const result = await uploadAndVerify(accessToken, path, bytes)
     // ok only when Dropbox's stored size AND content hash both match what went
     // out. Anything less and the mark below must not happen, because the mark
     // is the whole licence for Task 8 to delete the Supabase copy.
-    if (!result.ok) { failed.push(`${names[i]}: ${result.error}`); continue }
+    if (!result.ok) { await noteFailure(row, names[i], result.error); continue }
 
     const { error: markError } = await db
       .from('expenses')
@@ -293,12 +380,30 @@ async function archiveOriginals(db: SupabaseClient): Promise<{
     if (markError) {
       // The file IS in Dropbox but the mark failed. Safe: the next run
       // re-uploads it, and mode:'add' with autorename means a duplicate lands
-      // beside it rather than overwriting anything.
-      failed.push(`${names[i]}: uploaded but not marked — ${markError.message}`)
+      // beside it rather than overwriting anything. Counted as an attempt all
+      // the same — a row whose mark can never be written is exactly the kind
+      // that used to sit at the head of the queue forever.
+      await noteFailure(row, names[i], `uploaded but not marked — ${markError.message}`)
       continue
     }
     archived++
+    // Where it actually landed, which with autorename is not always where it was
+    // asked to go. Nothing stores this, and nothing should yet; this line is the
+    // only record that a collision happened at all.
+    paths.push(result.storedPath)
   }
 
-  return { archived, failed }
+  // Counted after the loop so tonight's increments are included. A number that
+  // stays above zero across runs is a receipt that will never archive on its
+  // own, which the ordering above has otherwise made invisible: it drifts to the
+  // back of the queue and stops showing up in `failed` at all.
+  const { count } = await db
+    .from('expenses')
+    .select('id', { count: 'exact', head: true })
+    .eq('owner_id', ownerId)
+    .not('receipt_original', 'is', null)
+    .is('receipt_archived_at', null)
+    .gte('receipt_archive_attempts', ARCHIVE_STUCK_AFTER)
+
+  return { archived, paths, failed, stuck: count ?? 0 }
 }
