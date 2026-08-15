@@ -156,6 +156,13 @@ test('bank details can never reach either body', () => {
   }
   const { text, html } = buildInvoiceEmail(leaky)
   for (const body of [text, html]) {
+    // The positive control comes FIRST, and it is not decoration. Without it
+    // this test passes just as happily against a builder that returns an empty
+    // string — two assertions about what is absent prove nothing unless
+    // something is known to be present. remit_to is the right control because
+    // it is the payment detail that DOES belong in an invoice email, so it
+    // fails the moment the builder stops emitting payment information at all.
+    assert.ok(body.includes(SETTINGS.remit_to as string), 'remit_to still prints')
     assert.ok(!body.includes('071000013'), 'no routing number')
     assert.ok(!body.includes('1234567890'), 'no account number')
   }
