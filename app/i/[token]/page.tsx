@@ -16,6 +16,11 @@ import InvoiceDocument, { type DocumentData } from '@/components/InvoiceDocument
 
 export const dynamic = 'force-dynamic'
 
+// `$` here means end of input and nothing else. JavaScript is not Perl or
+// Python: without the `m` flag `$` does NOT also match before a trailing line
+// terminator, so `<uuid>%0A` — which arrives decoded as "<uuid>\n" — fails this
+// test and is turned away as not-found rather than reaching Postgres. Checked
+// against \n, \r and \r\n; stated because the claim below depends on it.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export default async function PublicInvoicePage(
@@ -30,7 +35,35 @@ export default async function PublicInvoicePage(
 
   const supabase = await createClient()
   const { data, error } = await supabase.rpc('public_invoice', { p_token: token })
-  if (error || !data) notFound()
+
+  // A database error and a token that matches nothing are NOT the same answer,
+  // and collapsing both into notFound() made a Supabase outage indistinguishable
+  // from a dead link: the client saw "invoice not found", assumed Dan had pulled
+  // it, and nothing was logged for anyone to notice. Separate them.
+  //
+  // The error branch says only that something broke — never error.message, which
+  // can carry schema detail, and never anything that would confirm the token
+  // exists. The miss branch stays a 404 for exactly that reason: a stranger
+  // guessing tokens must not be able to tell a real one from a fake one.
+  if (error) {
+    console.error('[public-invoice] public_invoice() failed', {
+      code: error.code, message: error.message,
+    })
+    return (
+      <main className="min-h-screen bg-bg px-4 py-10">
+        <div className="mx-auto max-w-3xl text-center">
+          <p role="alert" className="text-danger">
+            This invoice couldn&rsquo;t be loaded right now.
+          </p>
+          <p className="mt-3 text-xs text-muted">
+            It&rsquo;s a problem on our side, not a broken link. Please try again in a
+            few minutes, or reply to the email this link came with.
+          </p>
+        </div>
+      </main>
+    )
+  }
+  if (!data) notFound()
 
   const invoice = data as DocumentData & { status: 'draft' | 'sent' | 'paid' | 'void' }
   const today = todayInChicago()
