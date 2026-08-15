@@ -37,7 +37,15 @@ export default function AppShell({
                 key={item.key}
                 href={item.href}
                 aria-current={item.key === current ? 'page' : undefined}
-                className={`px-3 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
+                // text-[12px] rather than text-xs, deliberately: the phone type
+                // scale raises text-xs, and this bar is the tightest thing in
+                // the app — four uppercase labels plus the logo inside 335px,
+                // already tight enough that the wordmark is hidden below sm. It
+                // is the first thing that would overflow, and nav labels are
+                // found by position more than by reading. Tracking tightens on
+                // a phone for the same reason.
+                className={`px-2.5 sm:px-3 py-2 text-[12px] font-semibold uppercase
+                            tracking-wide sm:tracking-wider rounded-field
                             transition-colors ${
                               item.key === current
                                 ? 'text-accent'

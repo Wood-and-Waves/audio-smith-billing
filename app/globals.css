@@ -139,6 +139,35 @@ body {
   color: var(--muted);
 }
 
+/* --- Phones ------------------------------------------------------------
+   This app is used standing on a show site, on an iPhone, installed to the
+   home screen — so there is no browser chrome and no pinch-to-zoom to fall
+   back on. 167 of 181 sized elements were 12-14px at every width, and every
+   section heading and form label is .eyebrow: 12px uppercase Oswald with
+   0.14em tracking, which is the least legible combination on the screen.
+
+   The scale is bumped, not the 181 individual utilities, and only below the
+   sm breakpoint so the desktop layout is untouched. This works because
+   Tailwind emits `font-size: var(--text-xs)` rather than a literal — checked
+   in the compiled CSS, not assumed. The line heights are unitless ratios, so
+   they follow automatically.
+
+   Deliberately NOT `html { font-size }`: that would scale rem padding and
+   gaps too, and a phone already has only 335px of usable width. */
+@media (max-width: 639px) {
+  :root {
+    --text-xs: 0.8125rem;  /* 12 -> 13 */
+    --text-sm: 0.9375rem;  /* 14 -> 15 */
+  }
+
+  .eyebrow {
+    font-size: 0.8125rem;
+    /* Wide tracking is what makes small uppercase hard to read; at this size
+       it costs more than it buys. */
+    letter-spacing: 0.08em;
+  }
+}
+
 /* Money and invoice numbers only — the places digits must line up in a
    column. Deliberately not used anywhere else. */
 .tabular {
