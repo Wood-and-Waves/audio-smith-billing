@@ -228,17 +228,28 @@ export async function createShow(input: {
     if (!daysCreated) {
       warnings.push('Travel legs were not set — no days were added to apply them to.')
     } else {
-      const { data: days } = await supabase
+      const { data: days, error: daysReadError } = await supabase
         .from('show_days').select('id, date').eq('show_id', data.id).order('date')
-      const first = days?.[0]
-      const last = days?.[days.length - 1]
-      if (input.travel_in && first) {
-        const legResult = await setTravelLeg(first.id, 'in', true)
-        if ('error' in legResult) warnings.push(`Travel-in was not set: ${legResult.error}`)
-      }
-      if (input.travel_out && last) {
-        const legResult = await setTravelLeg(last.id, 'out', true)
-        if ('error' in legResult) warnings.push(`Travel-out was not set: ${legResult.error}`)
+      // daysCreated is true here, so this readback failing or coming back
+      // empty is itself a problem worth a warning — every other failure in
+      // this block warns, and silently dropping the leg (first/last both
+      // undefined, both `if` branches below just falling through) was the
+      // one exception.
+      if (!days || days.length === 0) {
+        warnings.push(daysReadError
+          ? `Travel legs were not set — the show's days could not be read back: ${daysReadError.message}`
+          : 'Travel legs were not set — the days that were just created could not be found.')
+      } else {
+        const first = days[0]
+        const last = days[days.length - 1]
+        if (input.travel_in) {
+          const legResult = await setTravelLeg(first.id, 'in', true)
+          if ('error' in legResult) warnings.push(`Travel-in was not set: ${legResult.error}`)
+        }
+        if (input.travel_out) {
+          const legResult = await setTravelLeg(last.id, 'out', true)
+          if ('error' in legResult) warnings.push(`Travel-out was not set: ${legResult.error}`)
+        }
       }
     }
   }
