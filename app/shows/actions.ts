@@ -171,6 +171,20 @@ export async function createShow(input: {
   }
   const pm = pmOverride ?? derived.pm_rate_cents
 
+  // Validated BEFORE the insert below, even though addShowDays repeats the
+  // same checks: its three checks (isPlainDate, ordering, MAX_RANGE_DAYS)
+  // need no database and no show id, so there is no reason a bad range
+  // ("From 2026-03-10, To 2026-03-01", or a mistyped year like 2062) should
+  // ever be allowed to commit a day-less show first and complain after. A
+  // genuine error here means nothing has been created yet — refuse
+  // outright rather than warn.
+  const startDate = input.start_date?.trim()
+  const endDate = input.end_date?.trim()
+  if (startDate && endDate) {
+    const rangeCheck = walkDateRange(startDate, endDate)
+    if ('error' in rangeCheck) return rangeCheck
+  }
+
   const { data, error } = await supabase.from('shows').insert({
     owner_id: user.id,
     client_id: input.client_id,
@@ -194,12 +208,13 @@ export async function createShow(input: {
   // Everything below is best-effort on a show that already exists: a
   // failure here is reported as a warning, never as though createShow
   // itself failed — the row is committed and Dan would otherwise be told
-  // "it didn't work" about a show he can already see in the list.
+  // "it didn't work" about a show he can already see in the list. The date
+  // range itself was already validated above, before the insert, so the
+  // only way addShowDays fails here is something that genuinely needs the
+  // database (e.g. the write itself).
   const warnings: string[] = []
   let daysCreated = false
 
-  const startDate = input.start_date?.trim()
-  const endDate = input.end_date?.trim()
   if (startDate && endDate) {
     const daysResult = await addShowDays(data.id, startDate, endDate)
     if ('error' in daysResult) {
@@ -234,22 +249,14 @@ export async function createShow(input: {
 const MAX_RANGE_DAYS = 60
 
 /**
- * Creates a day per date across [startDate, endDate], inclusive. Dates that
- * already exist for this show are SKIPPED, not errors: re-running an
- * overlapping range (e.g. adding a trip that already had its first two days
- * entered) must not fail halfway through and leave a partial trip behind.
+ * Walks [startDate, endDate] into a list of plain dates, inclusive, or
+ * refuses before returning anything. Pure — no database, no show id — so
+ * createShow can run it as a pre-flight before the `shows` insert (see
+ * above) and addShowDays (which actually creates the day rows) can run the
+ * exact same check, rather than this being a second implementation that
+ * could drift out of sync with the first.
  */
-export async function addShowDays(
-  showId: string, startDate: string, endDate: string,
-): Promise<Fail | { ok: true; created: number; skipped: number }> {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not signed in.' }
-
-  const { data: show } = await supabase.from('shows').select('status').eq('id', showId).maybeSingle()
-  if (!show) return { error: 'That show no longer exists.' }
-  if (show.status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
-
+function walkDateRange(startDate: string, endDate: string): Fail | { ok: true; dates: string[] } {
   // Before any date arithmetic: a cleared date input submits "", and addDays("")
   // throws rather than returning, which would surface as a crash instead of this
   // message.
@@ -273,6 +280,29 @@ export async function addShowDays(
     }
     cursor = addDays(cursor, 1)
   }
+  return { ok: true, dates }
+}
+
+/**
+ * Creates a day per date across [startDate, endDate], inclusive. Dates that
+ * already exist for this show are SKIPPED, not errors: re-running an
+ * overlapping range (e.g. adding a trip that already had its first two days
+ * entered) must not fail halfway through and leave a partial trip behind.
+ */
+export async function addShowDays(
+  showId: string, startDate: string, endDate: string,
+): Promise<Fail | { ok: true; created: number; skipped: number }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const { data: show } = await supabase.from('shows').select('status').eq('id', showId).maybeSingle()
+  if (!show) return { error: 'That show no longer exists.' }
+  if (show.status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
+
+  const range = walkDateRange(startDate, endDate)
+  if ('error' in range) return range
+  const { dates } = range
 
   const { data: existingRows, error: existingError } = await supabase
     .from('show_days').select('date').eq('show_id', showId).in('date', dates)

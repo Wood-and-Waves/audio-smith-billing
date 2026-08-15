@@ -86,6 +86,13 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
   const needsCardChoice = cards.length > 1
   const selectedCard = needsCardChoice ? cards.find((c) => c.id === rateCardId) : cards[0]
   const hasRange = !!fromDate && !!toDate
+  // Mirrors the ordering half of app/shows/actions.ts's walkDateRange
+  // pre-flight, so the common typo (a swapped From/To, or a mistyped year
+  // like 2062) is caught here instead of round-tripping to the server —
+  // createShow still refuses it either way, this is only for faster
+  // feedback.
+  const dateOrderError = hasRange && toDate < fromDate
+    ? 'End date must be on or after the start date.' : null
 
   function clearRates() {
     setDayRate('')
@@ -186,6 +193,7 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
   }
 
   const canSubmit = !pending && !noDayRate && !!timezone && (!needsCardChoice || !!rateCardId)
+    && !dateOrderError
 
   if (createdId) {
     return (
@@ -297,6 +305,11 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
         <p className="text-xs text-muted mt-1.5">
           Give both to create the show&rsquo;s days now. Leave both blank to add days later.
         </p>
+        {dateOrderError && (
+          <p role="alert" className="text-xs text-danger mt-1.5 border-l-2 border-danger pl-3 py-1">
+            {dateOrderError}
+          </p>
+        )}
       </div>
 
       <div className="mb-8">
