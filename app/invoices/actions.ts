@@ -119,9 +119,16 @@ export async function saveInvoice(input: InvoiceInput): Promise<SaveResult> {
       // that hundredths round-trip and float noise is expected, not a real
       // divergence.
       const TOLERANCE_HOURS = 0.01
+      // Match on the base description, not the whole string. A show billed
+      // from a NAMED rate card produces "Overtime — PM", so an equality test
+      // against "Overtime" finds nothing, every save reads as a divergence,
+      // and the hours page is silently switched off on an invoice nobody
+      // edited. Splitting on the em-dash separator that lib/showBuckets.ts
+      // adds is what keeps these two features from fighting.
+      const baseOf = (d: string) => d.split(' — ')[0]
       const qtyFor = (description: string) =>
         lines
-          .filter((l) => l.description === description)
+          .filter((l) => baseOf(l.description) === description)
           .reduce((t, l) => t + l.qty_hundredths, 0) / 100
       const otMatches = Math.abs(qtyFor('Overtime') - snapshot.total_ot) < TOLERANCE_HOURS
       const dtMatches = Math.abs(qtyFor('Double Time') - snapshot.total_dt) < TOLERANCE_HOURS

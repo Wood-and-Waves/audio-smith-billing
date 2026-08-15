@@ -349,3 +349,16 @@ test('the suffix uses an em dash, never a Unicode minus', () => {
   assert.ok(joined.includes('—'), 'em dash')
   assert.ok(!joined.includes('−'), 'never U+2212')
 })
+
+test('a card name with stray whitespace does not reach the invoice', () => {
+  // The DB constraint validates length(btrim(name)) > 0 but stores the value
+  // verbatim, and shows.rate_card_name carries no constraint at all — so " PM"
+  // would print "Day Rate —  PM" on a document an accountant reads closely.
+  const padded = computeShowLines(CARD_DAYS, [], { ...RATES, rate_card_name: '  PM  ' }, RULES)
+  assert.ok(padded.every((l) => !l.description.includes('  ')), 'no doubled space')
+  assert.ok(padded.some((l) => l.description === 'Day Rate — PM'))
+
+  // And a name that is nothing but whitespace decorates nothing at all.
+  const blank = computeShowLines(CARD_DAYS, [], { ...RATES, rate_card_name: '   ' }, RULES)
+  assert.ok(blank.every((l) => !l.description.includes('—')), 'blank is not a name')
+})

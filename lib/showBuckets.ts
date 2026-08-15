@@ -91,7 +91,7 @@ export function computeShowLines(
   // the standard $117, so a mixed invoice would otherwise show two "Overtime"
   // lines at different prices with nothing to distinguish them.
   const label = (base: string) =>
-    rates.rate_card_name ? `${base} — ${rates.rate_card_name}` : base
+    rates.rate_card_name?.trim() ? `${base} — ${rates.rate_card_name.trim()}` : base
 
   push(label('Day Rate'), dayRateDays, rates.day_rate_cents)
   push(label('Day Rate (half)'), halfDays, Math.round(rates.day_rate_cents / 2))
