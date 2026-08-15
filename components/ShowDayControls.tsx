@@ -31,6 +31,10 @@ export default function ShowDayControls({
   const router = useRouter()
   const [pending, start] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  // Set when the invoice has already gone out. Held in its own state rather
+  // than `error`: nothing has failed, and the alert paragraph means "that did
+  // not work".
+  const [unlinkWarning, setUnlinkWarning] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
   const [startDate, setStartDate] = useState(() => defaultRangeStart(lastDayDate))
   const [endDate, setEndDate] = useState(() => defaultRangeStart(lastDayDate))
@@ -67,11 +71,17 @@ export default function ShowDayControls({
     })
   }
 
-  function unlink() {
+  function unlink(confirmed = false) {
     setError(null)
+    setUnlinkWarning(null)
     start(async () => {
-      const result = await unlinkShow(showId)
+      const result = await unlinkShow(showId, confirmed)
       if ('error' in result) { setError(result.error); return }
+      // The invoice has already gone out. Unlinking stays allowed — it is how
+      // a mistake gets fixed — but billing this show again would charge its
+      // days and expenses a second time, and both invoices would look
+      // internally correct. So it is asked, once, in words.
+      if ('needsConfirm' in result) { setUnlinkWarning(result.needsConfirm); return }
       router.refresh()
     })
   }
@@ -86,12 +96,35 @@ export default function ShowDayControls({
               View invoice →
             </Link>
           )}
-          <button type="button" onClick={unlink} disabled={pending}
+          <button type="button" onClick={() => unlink()} disabled={pending}
                   className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
                              border border-line text-muted hover:text-ink disabled:opacity-50">
             {pending ? 'Unlinking…' : 'Unlink'}
           </button>
         </div>
+
+        {/* Amber, not red: nothing has failed and this is allowed. It asks
+            once, because unlink-then-rebill charges the same days and expenses
+            on a second invoice and BOTH invoices look internally correct —
+            there is no later moment at which this announces itself. */}
+        {unlinkWarning && (
+          <div className="mt-3 border-l-2 border-accent pl-3 py-1">
+            <p className="text-xs text-ink">{unlinkWarning}</p>
+            <div className="flex items-center gap-3 mt-2">
+              <button type="button" onClick={() => unlink(true)} disabled={pending}
+                      className="px-3 py-1.5 text-xs font-bold uppercase tracking-wider rounded-field
+                                 bg-accent-surface text-accent-ink disabled:opacity-50">
+                {pending ? 'Unlinking…' : 'Unlink anyway'}
+              </button>
+              <button type="button" onClick={() => setUnlinkWarning(null)} disabled={pending}
+                      className="text-xs font-semibold uppercase tracking-wider text-muted
+                                 hover:text-ink disabled:opacity-40">
+                Keep it linked
+              </button>
+            </div>
+          </div>
+        )}
+
         {error && <p role="alert" className="mt-3 text-xs text-danger">{error}</p>}
       </div>
     )

@@ -498,10 +498,46 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
 }
 
 /** Returns a show to unbilled so its punches can be edited again. */
-export async function unlinkShow(showId: string): Promise<Fail | { ok: true }> {
+/**
+ * Returns a show to unbilled so its punches can be edited again.
+ *
+ * Warns first when the invoice has already gone out. Unlinking is how a
+ * mistake gets fixed, so it stays allowed — but unlink-then-rebill charges
+ * that show's labour AND its expenses a second time, on a second invoice, and
+ * both invoices are internally consistent so nothing looks wrong.
+ *
+ * That used to be self-announcing: before the backup was frozen, the old
+ * invoice's expense itemisation re-derived live and visibly stopped matching
+ * its own page 1. Freezing the snapshot removed that symptom without removing
+ * the problem, so the warning has to be deliberate now.
+ */
+export async function unlinkShow(
+  showId: string, confirmed = false,
+): Promise<Fail | { ok: true } | { needsConfirm: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not signed in.' }
+
+  if (!confirmed) {
+    // Read through the show's OWN foreign key rather than trusting a caller to
+    // say which invoice this is — the same rule deletePunch and deleteExpense
+    // already follow.
+    const { data: show } = await supabase
+      .from('shows').select('name, invoices(number, status)').eq('id', showId).maybeSingle()
+    const invoice = (show as unknown as {
+      invoices: { number: number; status: string } | null
+    } | null)?.invoices
+
+    if (invoice && (invoice.status === 'sent' || invoice.status === 'paid')) {
+      const state = invoice.status === 'paid' ? 'already been paid' : 'already been sent'
+      return {
+        needsConfirm:
+          `Invoice #${invoice.number} has ${state}. Unlinking this show does not change that ` +
+          `invoice — it stays as it went out. But billing the show again will charge its days ` +
+          `and expenses a second time, on a second invoice. Unlink anyway?`,
+      }
+    }
+  }
 
   const { data, error } = await supabase
     .from('shows').update({ status: 'open', invoice_id: null }).eq('id', showId)
