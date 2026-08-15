@@ -7,7 +7,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  needsArchiving, mayDelete, deletable, GRACE_DAYS, type RetentionRow,
+  needsArchiving, mayDelete, deletable, deletionBlocker, settlementDate,
+  toReclaimCandidates, GRACE_DAYS,
+  type RetentionRow, type ReclaimQueryRow,
 } from '../../lib/receiptRetention.ts'
 
 const TODAY = '2026-08-15'
@@ -79,6 +81,162 @@ test('deletable filters a mixed list and keeps order', () => {
     row({ expenseId: 'yes-2' }),
   ]
   assert.deepEqual(deletable(rows, TODAY).map((r) => r.expenseId), ['yes-1', 'yes-2'])
+})
+
+// --------------------------------------------------------------------------
+// The refusal reasons, which the dry run prints
+// --------------------------------------------------------------------------
+
+test('a deletable row has no blocker', () => {
+  assert.equal(deletionBlocker(row(), TODAY), null)
+})
+
+test('every refusal says which rule refused it', () => {
+  // The dry run is how a human confirms the guard before it is trusted, and a
+  // list of refusals with no reasons confirms nothing.
+  const cases: [Partial<RetentionRow>, RegExp][] = [
+    [{ receiptOriginal: null }, /no original/],
+    [{ receiptArchivedAt: null }, /not archived/],
+    [{ invoiceStatus: 'void' }, /void, not paid/],
+    [{ invoiceStatus: null }, /absent, not paid/],
+    [{ paidOn: null, invoiceUpdatedAt: null }, /no payment date/],
+    [{ paidOn: '2026-08-01' }, /settled 14 of 30 days ago/],
+  ]
+  for (const [over, expected] of cases) {
+    assert.match(deletionBlocker(row(over), TODAY) ?? '', expected)
+  }
+})
+
+test('mayDelete and deletionBlocker cannot disagree', () => {
+  // mayDelete is a reading of deletionBlocker, so the dry run's explanation and
+  // the guard that deletes are one piece of logic rather than two.
+  const rows = [
+    row(), row({ receiptArchivedAt: null }), row({ invoiceStatus: 'sent' }),
+    row({ paidOn: '2026-08-14' }), row({ receiptOriginal: null }),
+    row({ paidOn: null, invoiceUpdatedAt: null }),
+  ]
+  for (const r of rows) {
+    assert.equal(mayDelete(r, TODAY), deletionBlocker(r, TODAY) === null, r.expenseId)
+  }
+})
+
+test('the settlement date prefers a real payment, then falls back to updated_at', () => {
+  assert.equal(settlementDate(row()), '2026-07-01')
+  assert.equal(settlementDate(row({ paidOn: null, invoiceUpdatedAt: '2026-05-04T18:30:00Z' })), '2026-05-04')
+  assert.equal(settlementDate(row({ paidOn: null, invoiceUpdatedAt: null })), null)
+})
+
+test('deletable hands back the caller own rows, extra fields intact', () => {
+  // The deletion stage carries a show name and invoice number alongside each
+  // row so it can report what it did. Losing them here would mean re-joining
+  // the filtered result to the candidates by id, in the one code path where a
+  // wrong lookup means deleting the wrong file.
+  const rows = [{ ...row({ expenseId: 'keep' }), showName: 'PwC Tax Start' }]
+  assert.equal(deletable(rows, TODAY)[0].showName, 'PwC Tax Start')
+})
+
+// --------------------------------------------------------------------------
+// Reading the deletion stage's query result
+// --------------------------------------------------------------------------
+
+const queryRow = (over: Partial<ReclaimQueryRow> = {}): ReclaimQueryRow => ({
+  id: 'e1',
+  receipt_original: 'user/show/1-original.jpg',
+  receipt_archived_at: '2026-06-01T00:00:00Z',
+  shows: {
+    name: 'PwC Tax Start',
+    invoices: {
+      number: 118,
+      status: 'paid',
+      updated_at: '2026-07-01T00:00:00Z',
+      payments: [{ paid_on: '2026-07-01' }],
+    },
+  },
+  ...over,
+})
+
+test('a query row becomes a candidate carrying what the report needs', () => {
+  assert.deepEqual(toReclaimCandidates([queryRow()]), [{
+    expenseId: 'e1',
+    receiptOriginal: 'user/show/1-original.jpg',
+    receiptArchivedAt: '2026-06-01T00:00:00Z',
+    invoiceStatus: 'paid',
+    paidOn: '2026-07-01',
+    invoiceUpdatedAt: '2026-07-01T00:00:00Z',
+    showName: 'PwC Tax Start',
+    invoiceNumber: 118,
+  }])
+})
+
+test('the settlement date is the LAST partial payment, not the first', () => {
+  // Partial payments are why payments is a table. An invoice paid in two
+  // instalments is not settled until the second lands, and taking the earliest
+  // would start the 30-day clock early on an invoice still being paid.
+  const rows = toReclaimCandidates([queryRow({
+    shows: {
+      name: 'Two payments',
+      invoices: {
+        number: 9, status: 'paid', updated_at: '2026-05-01T00:00:00Z',
+        payments: [{ paid_on: '2026-05-02' }, { paid_on: '2026-08-01' }, { paid_on: '2026-06-10' }],
+      },
+    },
+  })])
+  assert.equal(rows[0].paidOn, '2026-08-01')
+  assert.equal(mayDelete(rows[0], TODAY), false)   // 14 days, not 105
+})
+
+test('an unrecognised invoice status reads as null, so it can never be paid', () => {
+  const rows = toReclaimCandidates([queryRow({
+    shows: { name: 'S', invoices: { number: 1, status: 'PAID', updated_at: null, payments: [] } },
+  })])
+  assert.equal(rows[0].invoiceStatus, null)
+  assert.equal(mayDelete(rows[0], TODAY), false)
+})
+
+test('a show with no invoice at all yields nothing deletable', () => {
+  // Today this is every show with expenses on it, so it is the case the first
+  // real run will actually hit.
+  const rows = toReclaimCandidates([queryRow({
+    shows: { name: 'Unbilled show', invoices: null },
+  })])
+  assert.deepEqual(
+    [rows[0].invoiceStatus, rows[0].paidOn, rows[0].invoiceUpdatedAt, rows[0].invoiceNumber],
+    [null, null, null, null],
+  )
+  assert.equal(mayDelete(rows[0], TODAY), false)
+})
+
+test('an embed arriving as an array reads the same as one arriving as an object', () => {
+  // PostgREST returns a to-one embed as an object and a to-many as an array,
+  // and nothing type-checks which it decided. Guessing wrong fails safe but
+  // fails SILENTLY, and a stage that quietly never deletes anything looks
+  // exactly like one that works.
+  const asArrays = toReclaimCandidates([queryRow({
+    shows: [{
+      name: 'PwC Tax Start',
+      invoices: [{
+        number: 118, status: 'paid', updated_at: '2026-07-01T00:00:00Z',
+        payments: [{ paid_on: '2026-07-01' }],
+      }],
+    }],
+  })])
+  assert.deepEqual(asArrays, toReclaimCandidates([queryRow()]))
+  assert.equal(mayDelete(asArrays[0], TODAY), true)
+})
+
+test('a missing show, or a payment with no date, does not throw', () => {
+  const rows = toReclaimCandidates([
+    queryRow({ id: 'no-show', shows: null }),
+    queryRow({
+      id: 'blank-payment',
+      shows: { name: null, invoices: { number: null, status: 'paid', updated_at: null, payments: [{ paid_on: null }] } },
+    }),
+  ])
+  assert.equal(rows[0].showName, 'Unknown show')
+  assert.equal(rows[0].invoiceStatus, null)
+  assert.equal(rows[1].paidOn, null)
+  assert.equal(rows[1].invoiceNumber, null)
+  for (const r of rows) assert.equal(mayDelete(r, TODAY), false)
 })
 
 test('archiving wants every unarchived original, regardless of payment', () => {

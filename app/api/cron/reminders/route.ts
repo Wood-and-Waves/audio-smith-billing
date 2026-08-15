@@ -7,6 +7,10 @@ import {
 } from '@/lib/reminderEmail'
 import { archiveNames, sanitizeSegment } from '@/lib/receiptArchiveName'
 import { getAccessToken, uploadAndVerify } from '@/lib/dropbox'
+import {
+  deletable, deletionBlocker, settlementDate, toReclaimCandidates,
+  GRACE_DAYS, type ReclaimCandidate, type ReclaimQueryRow,
+} from '@/lib/receiptRetention'
 
 // The reminder sweep, called by Vercel Cron once a morning.
 //
@@ -26,6 +30,13 @@ import { getAccessToken, uploadAndVerify } from '@/lib/dropbox'
 //
 // /api/cron is allowlisted in proxy.ts. Without that it would 307 to /login and
 // the cron would look like it was working while doing nothing.
+//
+// THIS ROUTE IS THE ONLY THING IN THE APP THAT DESTROYS A RECEIPT. The last
+// stage removes receipt_original — the untouched upload — once it is proven to
+// be in Dropbox and its invoice has been settled for 30 days. receipt_path, the
+// enhanced copy that went on the invoice, is never touched by anything here.
+// `?dryRun=1` reports what that stage would remove and returns before any of
+// the rest of this route runs.
 
 export const dynamic = 'force-dynamic'
 
@@ -77,6 +88,48 @@ export async function GET(request: NextRequest) {
   if (!to) return NextResponse.json({ error: 'No settings email to send to.' }, { status: 500 })
   if (!settings?.owner_id) {
     return NextResponse.json({ error: 'No settings owner_id to scope invoices to.' }, { status: 500 })
+  }
+
+  // ?dryRun=1 — what the deletion stage WOULD destroy tonight, and why each
+  // other candidate was spared. Nothing is removed from Storage and no row is
+  // written.
+  //
+  // It returns HERE, ahead of everything below, and that placement is the point:
+  // the sweep sends email and inserts reminder_log, and the archive stage
+  // uploads to Dropbox. A switch that promises to touch nothing and then mails a
+  // client digest is not one.
+  //
+  // THIS BRANCH IS PERMANENT. It is how a human confirms the guard before
+  // trusting it with the only untouched copy of a financial record, and it costs
+  // one query on a URL nobody without CRON_SECRET can reach. It shares
+  // selectReclaimable with the real stage on purpose — a dry run with a query of
+  // its own would prove nothing about the query that does the deleting.
+  if (request.nextUrl.searchParams.get('dryRun') === '1') {
+    const day = todayInChicago()
+    const { considered, error: selectError } = await selectReclaimable(db, settings.owner_id)
+    if (selectError) return NextResponse.json({ dryRun: true, error: selectError }, { status: 500 })
+
+    const targets = deletable(considered, day)
+    const targeted = new Set(targets.map((t) => t.expenseId))
+
+    return NextResponse.json({
+      dryRun: true,
+      today: day,
+      graceDays: GRACE_DAYS,
+      // Only rows that still hold an original AND are already archived reach
+      // here; the query cannot return an unarchived one. Every entry below
+      // therefore carries an archivedAt, and it is printed rather than assumed
+      // so the reader can see that for themselves.
+      considered: considered.length,
+      wouldDelete: targets.length,
+      candidates: targets.map(describeCandidate),
+      // The refusals, each with the rule that produced it. A dry run listing
+      // nothing is ambiguous — a guard working correctly and a query matching
+      // nothing at all look identical — and this is what tells them apart.
+      spared: considered
+        .filter((c) => !targeted.has(c.expenseId))
+        .map((c) => ({ ...describeCandidate(c), reason: deletionBlocker(c, day) })),
+    })
   }
 
   // This query is the keepalive. It runs whatever today is.
@@ -160,6 +213,25 @@ export async function GET(request: NextRequest) {
     archive = { archived: 0, paths: [], failed: [e instanceof Error ? e.message : 'Archive stage failed.'] }
   }
 
+  // AFTER the archive, and last of everything, because this is the only stage
+  // in the route that destroys anything.
+  //
+  // Wrapped exactly as the archive is, and for the same reason: reclaimOriginals
+  // returns its failures rather than throwing, but it awaits Storage and
+  // Postgres, either of which can reject on its own. One of those escaping here
+  // 500s a run whose reminders all sent and all logged. A deletion that fails is
+  // a deletion that simply happens tomorrow — the row keeps its receipt_original
+  // and its receipt_archived_at, so nothing has been lost and nothing is stuck.
+  let reclaimed: ReclaimResult
+  try {
+    reclaimed = await reclaimOriginals(db, settings.owner_id, today)
+  } catch (e) {
+    reclaimed = {
+      deleted: 0, bytesFreed: 0,
+      failed: [e instanceof Error ? e.message : 'Deletion stage failed.'],
+    }
+  }
+
   // A non-empty `failed` must not come back as 200: Vercel's cron dashboard
   // reads the status code, not this body, to decide whether a run succeeded.
   // A 200 here — even with failures listed inside — buries a failed send or a
@@ -171,6 +243,14 @@ export async function GET(request: NextRequest) {
   // receipt_archived_at null, so nothing can delete it in the meantime — and
   // turning that into a red cron run would train Dan to ignore the one signal
   // that means a reminder never reached a client.
+  //
+  // `reclaimed.failed` is excluded on the same reasoning, which holds here only
+  // because of the ordering inside the stage. A failed delete leaves the file
+  // and the column alone. A delete that succeeded and then failed to null the
+  // column leaves a row pointing at an object that is already gone, which the
+  // next run fixes: it re-selects the row, remove() no-ops on the missing
+  // object, and the update is retried. Neither outcome loses anything, so
+  // neither is worth spending the one alarm this route has.
   return NextResponse.json({
     today,
     digestDay: isDigestDay(today),
@@ -181,6 +261,7 @@ export async function GET(request: NextRequest) {
     sent,
     failed,
     archive,
+    reclaimed,
   }, { status: failed.length > 0 ? 500 : 200 })
 }
 
@@ -406,4 +487,145 @@ async function archiveOriginals(db: SupabaseClient, ownerId: string): Promise<Ar
     .gte('receipt_archive_attempts', ARCHIVE_STUCK_AFTER)
 
   return { archived, paths, failed, stuck: count ?? 0 }
+}
+
+/** Bounded like the archive stage — a delete is cheap, but the query behind it is not free. */
+const DELETE_BATCH = 50
+
+type ReclaimResult = {
+  deleted: number
+  /** What the run gave back to the 1GB free tier. Reporting only. */
+  bytesFreed: number
+  failed: string[]
+}
+
+/** One candidate, flattened into something readable without the database in front of you. */
+function describeCandidate(c: ReclaimCandidate) {
+  return {
+    expenseId: c.expenseId,
+    showName: c.showName,
+    invoiceNumber: c.invoiceNumber,
+    invoiceStatus: c.invoiceStatus,
+    /** The date the grace period is counted from — max(payments.paid_on), or updated_at. */
+    settledOn: settlementDate(c),
+    archivedAt: c.receiptArchivedAt,
+    originalPath: c.receiptOriginal,
+  }
+}
+
+/**
+ * Everything the deletion stage will consider tonight — NOT everything it will
+ * delete. Deciding that is `deletable`'s job and nothing here duplicates it.
+ *
+ * Shared by the real stage and by ?dryRun=1, deliberately. The dry run exists to
+ * let a human confirm the guard before it is trusted with the only untouched
+ * copy of a financial record; confirming a different query than the one that
+ * deletes would confirm nothing.
+ */
+async function selectReclaimable(
+  db: SupabaseClient, ownerId: string,
+): Promise<{ considered: ReclaimCandidate[]; error: string | null }> {
+  // Both `.not(...)` clauses restate rules that deletionBlocker enforces again
+  // on every row that comes back. That repetition is wanted: it keeps the batch
+  // limit from being spent on rows that were never eligible, and it means an
+  // unarchived original is refused by the database as well as by the code.
+  //
+  // owner_id, for the reason the invoice query and the archive stage both give:
+  // this client bypasses RLS. Unscoped, a second auth user's receipts would be
+  // judged against Dan's invoices and destroyed.
+  const { data, error } = await db
+    .from('expenses')
+    .select(`id, receipt_original, receipt_archived_at,
+             shows!inner(name, invoices(number, status, updated_at, payments(paid_on)))`)
+    .eq('owner_id', ownerId)
+    .not('receipt_original', 'is', null)
+    .not('receipt_archived_at', 'is', null)
+    .order('created_at', { ascending: true })
+    .limit(DELETE_BATCH)
+  if (error) return { considered: [], error: error.message }
+
+  // Cast for the same reason the archive stage casts: no generated Database
+  // type, so the embedded shape is not something TypeScript can know. What the
+  // shape actually is at runtime is handled inside toReclaimCandidates.
+  return { considered: toReclaimCandidates((data ?? []) as unknown as ReclaimQueryRow[]), error: null }
+}
+
+/**
+ * Removes originals whose copy is verified and whose invoice has been settled
+ * for GRACE_DAYS. `receipt_path` — the enhanced copy that went on the invoice
+ * and into the client's inbox — is never read, never nulled and never removed.
+ *
+ * The ORDER matters and is not the obvious one: the file goes first, THEN the
+ * column is nulled. Nulling first and failing the delete would leave an object
+ * whose path is recorded nowhere — an orphan that can never be found again, and
+ * never freed. This way a failed null is retried tomorrow, where the delete is a
+ * harmless no-op against an object that is already gone.
+ */
+async function reclaimOriginals(
+  db: SupabaseClient, ownerId: string, today: string,
+): Promise<ReclaimResult> {
+  const { considered, error } = await selectReclaimable(db, ownerId)
+  if (error) return { deleted: 0, bytesFreed: 0, failed: [error] }
+
+  // The guard. Every rule lives in deletionBlocker, which is tested against all
+  // of them, rather than being spelled out again here where a second copy could
+  // drift from the first.
+  const targets = deletable(considered, today).filter((t) => t.receiptOriginal !== null)
+  if (targets.length === 0) return { deleted: 0, bytesFreed: 0, failed: [] }
+
+  // The last gate, and yes it duplicates deletionBlocker's second clause. That
+  // is exactly why it is here: the query refuses an unarchived row, and
+  // deletable refuses it again, which means a mistake in either one would be
+  // invisible. An original with no verified copy in Dropbox is the ONLY copy of
+  // that receipt. If one ever reaches this line the whole batch stops rather
+  // than the code finding out afterwards.
+  if (targets.some((t) => t.receiptArchivedAt === null)) {
+    return {
+      deleted: 0, bytesFreed: 0,
+      failed: ['refused: a selected row had no receipt_archived_at — nothing was deleted'],
+    }
+  }
+
+  const paths = targets.map((t) => t.receiptOriginal as string)
+
+  // Size is read BEFORE the delete, purely so the run can report what it
+  // reclaimed. A failure here must not stop the delete, hence the try and the
+  // empty catch — a byte count nobody acts on is not worth holding up the one
+  // job this stage has.
+  let bytesFreed = 0
+  try {
+    for (const path of paths) {
+      const slash = path.lastIndexOf('/')
+      const dir = slash < 0 ? '' : path.slice(0, slash)
+      const file = path.slice(slash + 1)
+      const { data: listed } = await db.storage
+        .from('receipts')
+        .list(dir, { search: file })
+      // Matched by exact name: `search` is a substring match, so a receipt whose
+      // stem is a prefix of another's would otherwise be reported at the wrong
+      // file's size.
+      bytesFreed += listed?.find((o) => o.name === file)?.metadata?.size ?? 0
+    }
+  } catch { /* reporting only */ }
+
+  const { error: removeError } = await db.storage.from('receipts').remove(paths)
+  // An object that is already missing is not an error here — that is what makes
+  // the stage idempotent, and it is what lets a failed null be retried.
+  if (removeError) return { deleted: 0, bytesFreed: 0, failed: [removeError.message] }
+
+  // Only now is the column cleared — see the note on ordering above. Note what
+  // is NOT in this update: receipt_path is not mentioned, so no failure mode of
+  // this statement can reach it.
+  const { error: nullError } = await db
+    .from('expenses')
+    .update({ receipt_original: null })
+    .in('id', targets.map((t) => t.expenseId))
+  if (nullError) {
+    return {
+      deleted: 0, bytesFreed,
+      failed: [`files removed, rows not updated: ${nullError.message}`],
+    }
+  }
+
+  return { deleted: targets.length, bytesFreed, failed: [] }
 }
