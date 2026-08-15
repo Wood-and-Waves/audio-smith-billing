@@ -192,16 +192,28 @@ test('bank details can never reach the document', () => {
   // ach_details is not part of DocumentData. This attaches it the way a
   // careless future widening of the type would, and proves the builder still
   // does not print it. The type is the real guard; this catches its removal.
-  const leaky = {
+  //
+  // This used to assert the absence of two digit strings that the fixture on
+  // the line above had just supplied, which is weaker than it looks: it held
+  // for any builder that printed ach_details in some other form, and it held
+  // just as well on a document that rendered no payment footer at all. Render
+  // the same invoice with and without the field and require the two to come
+  // out IDENTICAL instead — that cannot pass unless the field has no effect on
+  // the page whatsoever.
+  const clean = joined(INVOICE)
+  const leaky = joined({
     ...INVOICE,
     settings: { ...SETTINGS, ach_details: 'Routing 071000013 Account 1234567890' },
-  } as unknown as DocumentData
-  const all = joined(leaky)
-  assert.ok(!all.includes('071000013'), 'no routing number')
-  assert.ok(!all.includes('1234567890'), 'no account number')
+  } as unknown as DocumentData)
+  assert.equal(leaky, clean, 'ach_details changes nothing the document prints')
+
+  // The control the old test lacked: the block those numbers would have leaked
+  // into is genuinely on the page, so the equality above compares two rendered
+  // payment footers rather than two documents that both skipped one.
+  assert.ok(clean.includes('2610 Melbourne Lane'), 'the remit-to block really rendered')
   // The INVITATION to ask about ACH is not the ACH details, and it must print —
   // InvoiceDocument shows it, and the PDF mirrors that component exactly.
-  assert.ok(all.includes('Paying by ACH?'), 'the invitation to ask still prints')
+  assert.ok(clean.includes('Paying by ACH?'), 'the invitation to ask still prints')
 })
 
 test('the closing line always prints', () => {
@@ -213,6 +225,37 @@ test('the filename names the invoice and the client', () => {
   assert.equal(
     invoiceFilename({ ...INVOICE, client: null, bill_to_snapshot: null }),
     'Invoice-386.pdf',
+  )
+})
+
+test('the filename follows the snapshot the document actually prints', () => {
+  // An invoice whose client row has been unlinked still carries the frozen
+  // snapshot, and the BILL TO block prints it. The filename read client.name
+  // only, so this downloaded as the anonymous `Invoice-386.pdf` — a file Dan
+  // cannot identify in a downloads folder, and cannot identify by opening
+  // either, since the name on the document is not the name on the file.
+  const unlinked: DocumentData = {
+    ...INVOICE,
+    client: null,
+    bill_to_snapshot: 'Streamline Pictures\n10700 75th St\nElgin, IL 60123',
+  }
+  assert.equal(invoiceFilename(unlinked), 'Invoice-386-Streamline-Pictures.pdf')
+
+  // Only the first line — the name. The street and the city/state/ZIP under it
+  // are address, not identity, and would make the filename unreadable.
+  assert.ok(!invoiceFilename(unlinked).includes('75th'), 'the address is not in the name')
+
+  // And the snapshot WINS over a live client row that has since been renamed,
+  // because the snapshot is what the document prints. The two must agree.
+  const renamed: DocumentData = {
+    ...INVOICE,
+    bill_to_snapshot: 'Journey Church',
+    client: { ...INVOICE.client!, name: 'Renamed Since Billing' },
+  }
+  assert.equal(invoiceFilename(renamed), 'Invoice-386-Journey-Church.pdf')
+  assert.ok(
+    joined(renamed).includes('Journey Church'),
+    'and that is the name the BILL TO block prints',
   )
 })
 

@@ -165,7 +165,14 @@ const s = {
 
 /** `Invoice-386-Journey-Church.pdf` */
 export function invoiceFilename(data: DocumentData): string {
-  const raw = data.client?.name ?? ''
+  // Same precedence as `billTo` in the builder below, and for the same reason:
+  // the snapshot is who the invoice was actually billed to. Reading client.name
+  // alone meant an invoice whose client had since been unlinked downloaded as
+  // the bare `Invoice-386.pdf` while the document inside it still said Journey
+  // Church — a file Dan cannot identify in his downloads folder, and cannot
+  // identify by opening it either, since the name it shows is not the name it
+  // carries. bill_to_snapshot is newline-joined with the name on the first line.
+  const raw = data.bill_to_snapshot?.split('\n')[0]?.trim() || data.client?.name || ''
   const name = raw.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
   return name ? `Invoice-${data.number}-${name}.pdf` : `Invoice-${data.number}.pdf`
 }
