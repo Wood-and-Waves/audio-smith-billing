@@ -21,6 +21,12 @@ import type { DocumentData } from '@/components/InvoiceDocument'
 // and the email that actually goes out can differ. That window is not
 // synchronised — doing so would mean re-fetching on every keystroke in the
 // note field for a case that in practice means re-opening the invoice.
+//
+// That caveat used to live only in this comment, where nobody pressing Send
+// could read it: the panel presented the preview as the email. It is now said
+// in the UI as well (see the note under the body below), because a preview
+// that can quietly be wrong is only safe if the person trusting it knows it
+// can be.
 
 export default function SendInvoicePanel({
   invoiceId, data, to, status, publicUrlBase,
@@ -120,6 +126,16 @@ export default function SendInvoicePanel({
 
       <p className="text-xs text-muted mb-4">
         The PDF is attached, and the link goes to a read-only copy they can open in a browser.
+      </p>
+
+      {/* The preview is built from what this page loaded; the send re-reads
+          everything. Saying so is the whole fix — anyone who has just edited
+          Settings or a billing email in another tab now knows to reload before
+          trusting what is above. */}
+      <p className="text-xs text-muted mb-4">
+        This preview was built when the page loaded. Sending re-reads the invoice,
+        the client and your business details, so if you&rsquo;ve changed any of them
+        since, reload before you send.
       </p>
 
       {error && (

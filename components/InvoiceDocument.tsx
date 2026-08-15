@@ -216,7 +216,14 @@ export default function InvoiceDocument({ data }: { data: DocumentData }) {
         </div>
 
         {(s?.remit_to || data.notes) && (
-          <footer className="mt-10 pt-6 border-t border-paper-line grid gap-6 sm:grid-cols-2">
+          // grid-flow-col + auto-cols-fr, NOT grid-cols-2: the columns are as
+          // many as there are, each an equal share of the width. That is what
+          // invoicePdf.ts's footerCol does (flexGrow 1, flexBasis 0), and
+          // grid-cols-2 did not — an invoice with no notes kept the payment
+          // block in the left half on screen while the PDF ran it full width,
+          // so a long remit-to line wrapped in the preview and did not on the
+          // file the client receives. The preview has to be the file.
+          <footer className="mt-10 pt-6 border-t border-paper-line grid gap-6 sm:grid-flow-col sm:auto-cols-fr">
             {s?.remit_to && (
               <div>
                 <h2 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-500 mb-2">
