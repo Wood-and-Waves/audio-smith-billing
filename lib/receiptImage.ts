@@ -19,9 +19,10 @@ const TAIL_FRACTION = 0.02
 
 /**
  * Below this span, stretching amplifies sensor noise into banding rather than
- * revealing detail — and at the extreme (span 0 or 1) it degenerates into a
- * binary threshold, which destroys the receipt outright. Passing the image
- * through unchanged is the safer failure than either.
+ * revealing detail — and at the extreme (span 0, a flat image) it degenerates
+ * into a binary threshold, which destroys the receipt outright. The guard
+ * below (`hi - lo < MIN_SPAN`) covers every span from 0 up to 15. Passing the
+ * image through unchanged is the safer failure than either.
  */
 const MIN_SPAN = 16
 
