@@ -14,8 +14,9 @@ export type RateCard = {
   id: string
   name: string | null
   day_rate_cents: number
+  travel_rate_cents: number
+  pm_rate_cents: number
   ot_after_hours: number
-  travel_full_day: boolean
 }
 
 export type Client = { id: string; name: string; cards: RateCard[] }
@@ -26,14 +27,15 @@ function cardLabel(card: RateCard): string {
   return card.name ? `${card.name} — ${rate}` : `Default — ${rate}`
 }
 
-/** The travel/PM rates this card's own rules imply, formatted for the boxes. */
+/** The card's own stored rates, formatted for the boxes — a straight copy,
+ *  not a derivation, matching what createShow itself freezes onto the show
+ *  when nothing here is overridden. */
 function ratesFor(card: RateCard) {
   const hours = Number(card.ot_after_hours) || 10
-  const derived = deriveFromDayRate(card.day_rate_cents, hours, card.travel_full_day)
   return {
     day: formatAmount(card.day_rate_cents),
-    travel: formatAmount(derived.travel_rate_cents),
-    pm: formatAmount(derived.pm_rate_cents),
+    travel: formatAmount(card.travel_rate_cents),
+    pm: formatAmount(card.pm_rate_cents),
     ot: String(hours),
   }
 }
@@ -147,7 +149,7 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
     // until a real, positive day rate is typed again.
     if (!isDerivableDayRate(parsed)) return
     const hours = Number(otAfterHours) || Number(selectedCard.ot_after_hours) || 10
-    const derived = deriveFromDayRate(parsed, hours, selectedCard.travel_full_day)
+    const derived = deriveFromDayRate(parsed, hours)
     if (!travelDirty) setTravelRate(formatAmount(derived.travel_rate_cents))
     if (!pmDirty) setPmRate(formatAmount(derived.pm_rate_cents))
   }
@@ -163,7 +165,7 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
     const parsed = parseUSD(dayRate)
     if (!isDerivableDayRate(parsed)) return null
     const hours = Number(otValue) || Number(selectedCard.ot_after_hours) || 10
-    return deriveFromDayRate(parsed, hours, selectedCard.travel_full_day)
+    return deriveFromDayRate(parsed, hours)
   }
 
   function onTravelRateChange(value: string) {

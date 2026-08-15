@@ -19,7 +19,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
         `id, name, billing_email, contact_name, phone, address_line1, address_line2,
          city, state, postal_code,
          terms_days, notes, archived, show_hours_on_invoice,
-         client_rate_cards(id, name, day_rate_cents, ot_after_hours, travel_full_day)`,
+         client_rate_cards(id, name, day_rate_cents, ot_after_hours, travel_rate_cents, pm_rate_cents)`,
       )
       .eq('id', id)
       // Otherwise this client's card editor lists its cards in whatever

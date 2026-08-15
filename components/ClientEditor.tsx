@@ -2,7 +2,8 @@
 
 import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { formatAmount, formatUSD, parseUSD, travelRateFrom, overtimeRateFrom } from '@/lib/money'
+import { formatAmount, formatUSD, parseUSD, overtimeRateFrom } from '@/lib/money'
+import { deriveFromDayRate, isDerivableDayRate } from '@/lib/rateCards'
 import { saveClient, type CardInput } from '@/app/clients/actions'
 import { FIELD_FULL } from '@/components/ui/field'
 
@@ -13,7 +14,8 @@ export type RateCard = {
   name: string | null
   day_rate_cents: number
   ot_after_hours: number
-  travel_full_day: boolean
+  travel_rate_cents: number
+  pm_rate_cents: number
 }
 
 export type EditorClient = {
@@ -44,7 +46,12 @@ type CardRow = {
   name: string
   dayRate: string
   otAfterHours: string
-  travelFullDay: boolean
+  // Raw overrides, blank meaning "use half the day rate" / "use day rate ÷
+  // OT hours" — same convention as createShow's own rate boxes. A card that
+  // bills travel flat, or at the full day rate, is typed in directly rather
+  // than picked from a switch (see lib/rateCards.ts).
+  travelRate: string
+  pmRate: string
 }
 
 let tempKeySeq = 0
@@ -60,12 +67,13 @@ function toCardRow(card: RateCard): CardRow {
     name: card.name ?? '',
     dayRate: formatAmount(card.day_rate_cents),
     otAfterHours: String(card.ot_after_hours),
-    travelFullDay: card.travel_full_day,
+    travelRate: formatAmount(card.travel_rate_cents),
+    pmRate: formatAmount(card.pm_rate_cents),
   }
 }
 
 function blankDefaultRow(): CardRow {
-  return { key: 'default', dayRate: '', otAfterHours: '10', travelFullDay: false, name: '' }
+  return { key: 'default', dayRate: '', otAfterHours: '10', travelRate: '', pmRate: '', name: '' }
 }
 
 export default function ClientEditor({ initial }: { initial?: EditorClient }) {
@@ -103,7 +111,7 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
   function addNamedCard() {
     setNamedCards((cards) => [
       ...cards,
-      { key: tempKey(), name: '', dayRate: '', otAfterHours: '10', travelFullDay: false },
+      { key: tempKey(), name: '', dayRate: '', otAfterHours: '10', travelRate: '', pmRate: '' },
     ])
   }
   function removeNamedCard(key: string) {
@@ -114,13 +122,18 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
 
   // Preview only, same disclaimer as the day-rate preview this replaces:
   // parseUSD returns null on junk, which just hides the preview rather than
-  // blocking typing. Real validation happens in saveClient.
+  // blocking typing. Real validation (including the same "blank means use
+  // the default, not $0.00" rule) happens in saveClient.
   function preview(card: CardRow) {
     const cents = parseUSD(card.dayRate)
     if (cents === null || cents <= 0) return null
     const hours = Number(card.otAfterHours) || 0
-    const travel = card.travelFullDay ? cents : travelRateFrom(cents)
-    return { travel, ot: overtimeRateFrom(cents, hours), hours }
+    const derived = deriveFromDayRate(cents, hours)
+    const travelTyped = isDerivableDayRate(parseUSD(card.travelRate))
+    const pmTyped = isDerivableDayRate(parseUSD(card.pmRate))
+    const travel = travelTyped ? parseUSD(card.travelRate)! : derived.travel_rate_cents
+    const pm = pmTyped ? parseUSD(card.pmRate)! : derived.pm_rate_cents
+    return { travel, pm, ot: overtimeRateFrom(cents, hours), hours }
   }
 
   function submit() {
@@ -132,14 +145,16 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
           name: null,
           day_rate: defaultCard.dayRate,
           ot_after_hours: Number(defaultCard.otAfterHours) || 0,
-          travel_full_day: defaultCard.travelFullDay,
+          travel_rate: defaultCard.travelRate,
+          pm_rate: defaultCard.pmRate,
         },
         ...namedCards.map((c) => ({
           id: c.id,
           name: c.name,
           day_rate: c.dayRate,
           ot_after_hours: Number(c.otAfterHours) || 0,
-          travel_full_day: c.travelFullDay,
+          travel_rate: c.travelRate,
+          pm_rate: c.pmRate,
         })),
       ]
 
@@ -266,21 +281,28 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
                      value={defaultCard.otAfterHours}
                      onChange={(e) => updateDefault({ otAfterHours: e.target.value })} />
             </div>
+            <div>
+              <label className="eyebrow block mb-2" htmlFor="default-travel-rate">Travel rate</label>
+              <input id="default-travel-rate" inputMode="decimal" placeholder="Half the day rate"
+                     className={FIELD_FULL} value={defaultCard.travelRate}
+                     onChange={(e) => updateDefault({ travelRate: e.target.value })} />
+            </div>
+            <div>
+              <label className="eyebrow block mb-2" htmlFor="default-pm-rate">PM rate (per hour)</label>
+              <input id="default-pm-rate" inputMode="decimal" placeholder="Day rate ÷ OT hours"
+                     className={FIELD_FULL} value={defaultCard.pmRate}
+                     onChange={(e) => updateDefault({ pmRate: e.target.value })} />
+            </div>
           </div>
-          <label className="flex items-center gap-2 text-sm text-muted mt-4">
-            <input type="checkbox" className="h-4 w-4 accent-accent" checked={defaultCard.travelFullDay}
-                   onChange={(e) => updateDefault({ travelFullDay: e.target.checked })} />
-            Travel bills a full day rate
-          </label>
           <p className="text-xs text-muted mt-1.5">
-            Travel bills per leg, so this doubles a fly-in/fly-out trip from one day rate to two —
-            unchecked, that trip bills a half rate each way instead.
+            Travel bills per leg, so a flat rate here doubles a fly-in/fly-out trip from one
+            charge to two. Leave travel or PM blank to use the default shown below.
           </p>
           {(() => {
             const p = preview(defaultCard)
             return p && (
               <p className="text-xs text-muted mt-1.5 tabular">
-                Travel {formatUSD(p.travel)} · OT {formatUSD(p.ot)} after {p.hours}h
+                Travel {formatUSD(p.travel)} · PM {formatUSD(p.pm)}/hr · OT {formatUSD(p.ot)} after {p.hours}h
               </p>
             )
           })()}
@@ -312,22 +334,29 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
                        value={card.otAfterHours}
                        onChange={(e) => updateNamed(card.key, { otAfterHours: e.target.value })} />
               </div>
+              <div>
+                <label className="eyebrow block mb-2" htmlFor={`card-travel-${card.key}`}>Travel rate</label>
+                <input id={`card-travel-${card.key}`} inputMode="decimal" placeholder="Half the day rate"
+                       className={FIELD_FULL} value={card.travelRate}
+                       onChange={(e) => updateNamed(card.key, { travelRate: e.target.value })} />
+              </div>
+              <div>
+                <label className="eyebrow block mb-2" htmlFor={`card-pm-${card.key}`}>PM rate (per hour)</label>
+                <input id={`card-pm-${card.key}`} inputMode="decimal" placeholder="Day rate ÷ OT hours"
+                       className={FIELD_FULL} value={card.pmRate}
+                       onChange={(e) => updateNamed(card.key, { pmRate: e.target.value })} />
+              </div>
             </div>
 
-            <label className="flex items-center gap-2 text-sm text-muted mt-4">
-              <input type="checkbox" className="h-4 w-4 accent-accent" checked={card.travelFullDay}
-                     onChange={(e) => updateNamed(card.key, { travelFullDay: e.target.checked })} />
-              Travel bills a full day rate
-            </label>
             <p className="text-xs text-muted mt-1.5">
-              Travel bills per leg, so this doubles a fly-in/fly-out trip from one day rate to two —
-              unchecked, that trip bills a half rate each way instead.
+              Travel bills per leg, so a flat rate here doubles a fly-in/fly-out trip from one
+              charge to two. Leave travel or PM blank to use the default shown below.
             </p>
             {(() => {
               const p = preview(card)
               return p && (
                 <p className="text-xs text-muted mt-1.5 tabular">
-                  Travel {formatUSD(p.travel)} · OT {formatUSD(p.ot)} after {p.hours}h
+                  Travel {formatUSD(p.travel)} · PM {formatUSD(p.pm)}/hr · OT {formatUSD(p.ot)} after {p.hours}h
                 </p>
               )
             })()}

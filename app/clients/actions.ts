@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { parseUSD } from '@/lib/money'
+import { deriveFromDayRate } from '@/lib/rateCards'
 
 export type CardInput = {
   id?: string
@@ -11,7 +12,15 @@ export type CardInput = {
   name: string | null
   day_rate: string        // raw user input, e.g. "780" or "$780.00"
   ot_after_hours: number
-  travel_full_day: boolean
+  // Raw user input, same override convention as createShow's day/travel/pm
+  // boxes: undefined or blank means "use the default the day rate and OT
+  // threshold imply" (see deriveFromDayRate), not zero — a blank box must
+  // never freeze a $0.00 rate onto the card. Explicit, because migration
+  // 0015 gave the card its own travel_rate_cents/pm_rate_cents precisely so
+  // an arrangement that isn't half-day-travel-or-full (a flat $200/leg, say)
+  // can be typed in directly instead of picked from a switch.
+  travel_rate?: string
+  pm_rate?: string
 }
 
 export type ClientInput = {
@@ -41,7 +50,16 @@ type CardRow = {
   name: string | null
   day_rate_cents: number
   ot_after_hours: number
-  travel_full_day: boolean
+  travel_rate_cents: number
+  pm_rate_cents: number
+}
+
+// Same override convention as createShow's overrideCents: undefined or blank
+// means "use the default", not zero — parseUSD('') is 0, and a cleared box
+// must not silently freeze a $0.00 rate onto the card.
+function overrideCents(raw: string | undefined): number | null | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined
+  return parseUSD(raw)
 }
 
 /**
@@ -84,12 +102,31 @@ function parseCards(cards: CardInput[]): CardRow[] | Fail {
       seenNames.add(key)
     }
 
+    const derived = deriveFromDayRate(cents, card.ot_after_hours)
+
+    const travelOverride = overrideCents(card.travel_rate)
+    if (travelOverride === null) {
+      return { error: `Couldn't read "${card.travel_rate}" as a travel rate for ${label}.` }
+    }
+    if (travelOverride !== undefined && travelOverride <= 0) {
+      return { error: `The travel rate for ${label} must be more than $0.00 — leave it blank to use half the day rate.` }
+    }
+
+    const pmOverride = overrideCents(card.pm_rate)
+    if (pmOverride === null) {
+      return { error: `Couldn't read "${card.pm_rate}" as a PM rate for ${label}.` }
+    }
+    if (pmOverride !== undefined && pmOverride <= 0) {
+      return { error: `The PM rate for ${label} must be more than $0.00 — leave it blank to use the day rate ÷ OT hours.` }
+    }
+
     rows.push({
       id: card.id,
       name: isDefault ? null : trimmedName,
       day_rate_cents: cents,
       ot_after_hours: card.ot_after_hours,
-      travel_full_day: card.travel_full_day,
+      travel_rate_cents: travelOverride ?? derived.travel_rate_cents,
+      pm_rate_cents: pmOverride ?? derived.pm_rate_cents,
     })
   }
 
@@ -174,7 +211,8 @@ export async function saveClient(input: ClientInput): Promise<Fail | { ok: true;
       name: card.name,
       day_rate_cents: card.day_rate_cents,
       ot_after_hours: card.ot_after_hours,
-      travel_full_day: card.travel_full_day,
+      travel_rate_cents: card.travel_rate_cents,
+      pm_rate_cents: card.pm_rate_cents,
     }
     if (card.id) {
       // Scoped to THIS client's id too, not a bare lookup by card id — a

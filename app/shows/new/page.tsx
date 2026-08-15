@@ -8,7 +8,9 @@ export default async function NewShowPage() {
   const supabase = await createClient()
   const { data } = await supabase
     .from('clients')
-    .select('id, name, client_rate_cards(id, name, day_rate_cents, ot_after_hours, travel_full_day)')
+    .select(
+      'id, name, client_rate_cards(id, name, day_rate_cents, travel_rate_cents, pm_rate_cents, ot_after_hours)',
+    )
     .eq('archived', false)
     .order('name')
     // Otherwise the rate-card picker lists a client's cards in whatever

@@ -16,25 +16,23 @@ export function defaultCardOf<T extends RateCardLike>(cards: T[]): T | null {
 }
 
 /**
- * The travel and PM rates a card's own rules imply for a given day rate.
- *
- * This is the ONE place that math happens, used both when `createShow`
- * freezes a card onto a new show and when `NewShowForm` re-derives travel/PM
- * as the day rate is typed — so the two can never drift into disagreement.
- * It exists because `updateShow` deliberately does NOT do this (day, travel
- * and PM are independent columns once a show exists — see its comment in
- * app/shows/actions.ts): a show edited from $780 to $900 kept a $390 travel
- * rate and a $78 PM rate, silently, which is the whole reason rate cards and
- * this function exist.
- *
- * Travel bills per LEG (migration 0013): a full-day-travel card bills one
- * whole day rate per leg, everything else bills travelRateFrom (half).
+ * The travel and PM rates a plain day rate/OT pair would imply — a PRE-FILL,
+ * not show-creation logic. `client_rate_cards` now holds its own explicit
+ * `travel_rate_cents`/`pm_rate_cents` (migration 0015), and `createShow`
+ * copies those straight off the chosen card rather than deriving anything
+ * (see app/shows/actions.ts). What's left for this function: when Dan types
+ * a NEW day rate into a form — editing a card, or overriding the day rate on
+ * New Show — travel and PM should follow along unless he's typed into those
+ * boxes himself. Travel always pre-fills at half the day rate; a flat or
+ * full-day arrangement is something he then types over by hand, the same as
+ * any other override (the boolean full/half-day switch this replaced could
+ * not express a flat $200/leg arrangement — see migration 0015).
  */
 export function deriveFromDayRate(
-  dayRateCents: number, otAfterHours: number, travelFullDay: boolean,
+  dayRateCents: number, otAfterHours: number,
 ): { travel_rate_cents: number; pm_rate_cents: number } {
   return {
-    travel_rate_cents: travelFullDay ? dayRateCents : travelRateFrom(dayRateCents),
+    travel_rate_cents: travelRateFrom(dayRateCents),
     pm_rate_cents: otAfterHours > 0 ? Math.round(dayRateCents / otAfterHours) : 0,
   }
 }

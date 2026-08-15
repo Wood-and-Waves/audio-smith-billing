@@ -4,7 +4,6 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { chronologyError, isIncompleteDay } from '@/lib/chronology'
 import { parseUSD } from '@/lib/money'
-import { deriveFromDayRate } from '@/lib/rateCards'
 import { todayInChicago, addDays, isPlainDate } from '@/lib/dates'
 import {
   computeShowLines, mergeLines, rulesetAndRatesFor, type BucketLine, type PmEntryLike,
@@ -18,16 +17,26 @@ import { buildBackupSnapshot, type SnapshotInput } from '@/lib/backupSnapshot'
 type Fail = { error: string }
 
 /**
- * Copies one of the client's rate cards onto the show. See migration 0013.
+ * Copies one of the client's rate cards onto the show — the whole rate
+ * agreement, straight across, with no math at creation time. See migrations
+ * 0013 and 0015.
  *
  * A card, not `clients.day_rate_cents` (superseded — nothing reads it any
  * more): Streamline Pictures pays $900 for PwC PM work and $780 for
- * everything else, and the day rate, travel rate and PM rate must all come
- * from the SAME card. Dan could already make a $900 show by editing the day
- * rate afterwards, but `updateShow` takes travel/PM as independent raw
- * inputs and re-derives nothing from the day rate — so that show silently
- * kept a $780-derived travel rate and PM rate under a $900 day rate.
- * Choosing the right card here is what fixes that.
+ * everything else, and every rate and rule the card carries — day, travel
+ * and PM rates, the OT/DT thresholds, meal-break and meal-penalty rules,
+ * short-turn rest, continuous time — must all come from the SAME card. Dan
+ * could already make a $900 show by editing the day rate afterwards, but
+ * `updateShow` takes every one of these as an independent raw input and
+ * re-derives nothing — so that show silently kept a $780-derived travel rate
+ * and PM rate under a $900 day rate. Choosing the right card here, and
+ * copying it wholesale, is what fixes that.
+ *
+ * The rules themselves (OT/DT thresholds, meal rules, short-turn rest,
+ * continuous time) are NOT overridable at creation — only day/travel/PM rate
+ * and the OT threshold have boxes on New Show, applied on top of the copied
+ * values below. Everything else is edited afterwards in "Rates and rules"
+ * (updateShow), which is unchanged.
  *
  * Several real clients (Journey Church, Harvest Bible Chapel, Crescent Event
  * Productions, The Orchard Church) are billed ad hoc and have no card at
@@ -90,7 +99,10 @@ export async function createShow(input: {
   // a record's own foreign keys rather than trusting a caller-supplied pair.
   const { data: cards } = await supabase
     .from('client_rate_cards')
-    .select('id, name, day_rate_cents, ot_after_hours, travel_full_day')
+    .select(`id, name, day_rate_cents, travel_rate_cents, pm_rate_cents, ot_after_hours,
+             dt_after_hours, minimum_meal_break_minutes, meal_break_deduction_cap,
+             meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours,
+             continuous_time_enabled`)
     .eq('client_id', input.client_id)
 
   if (!cards || cards.length === 0) {
@@ -142,13 +154,13 @@ export async function createShow(input: {
     hours = Number(card.ot_after_hours ?? 10)
   }
 
-  // Travel bills per LEG. A full-day card therefore makes a fly-in/fly-out
-  // trip bill two day rates where a half-day card bills one. Derived from
-  // the FINAL day rate (post-override), never the card's own — that is what
-  // makes a $780 -> $900 day-rate override carry travel/PM along with it
-  // instead of leaving them at what $780 would have implied.
-  const derived = deriveFromDayRate(day, hours, card.travel_full_day)
-
+  // Straight copies of the card's OWN stored rates — no re-derivation from
+  // the (possibly overridden) day rate above. Task 1 gave the card its own
+  // explicit travel_rate_cents/pm_rate_cents (migration 0015), precisely so
+  // this no longer has to guess; a card billing a flat $200/leg, or a full
+  // day rate for travel, is expressed directly on the card now, not through
+  // a switch this function would have to reinterpret.
+  //
   // Reject a zero override the same way a zero day rate already is, not
   // just a negative one: overrideCents only returns 0 here if the box
   // genuinely contains "0" (a blank box is `undefined`, filtered out above)
@@ -162,14 +174,14 @@ export async function createShow(input: {
   if (travelOverride !== undefined && travelOverride <= 0) {
     return { error: 'Travel rate must be more than $0.00 — leave it blank to use the rate card.' }
   }
-  const travel = travelOverride ?? derived.travel_rate_cents
+  const travel = travelOverride ?? card.travel_rate_cents
 
   const pmOverride = overrideCents(input.pm_rate)
   if (pmOverride === null) return { error: `Couldn't read "${input.pm_rate}" as a PM rate.` }
   if (pmOverride !== undefined && pmOverride <= 0) {
     return { error: 'PM rate must be more than $0.00 — leave it blank to use the rate card.' }
   }
-  const pm = pmOverride ?? derived.pm_rate_cents
+  const pm = pmOverride ?? card.pm_rate_cents
 
   // Validated BEFORE the insert below, even though addShowDays repeats the
   // same checks: its three checks (isPlainDate, ordering, MAX_RANGE_DAYS)
@@ -195,6 +207,16 @@ export async function createShow(input: {
     travel_rate_cents: travel,
     pm_rate_cents: pm,
     ot_after_hours: hours,
+    // The rules below are copied straight off the card, with no override box
+    // on New Show for any of them — they're edited afterwards in "Rates and
+    // rules" (updateShow), same as before this change.
+    dt_after_hours: card.dt_after_hours,
+    minimum_meal_break_minutes: card.minimum_meal_break_minutes,
+    meal_break_deduction_cap: card.meal_break_deduction_cap,
+    meal_penalty_grace_hours: card.meal_penalty_grace_hours,
+    meal_penalty_cents: card.meal_penalty_cents,
+    short_turn_rest_hours: card.short_turn_rest_hours,
+    continuous_time_enabled: card.continuous_time_enabled,
     // Frozen to the CARD's name regardless of any override above — the card
     // names the arrangement, not the number (see ShowSettings, which prints
     // it as "Frozen from the ... rate card" even once the rates beneath it

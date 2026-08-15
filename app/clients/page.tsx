@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { formatUSD, travelRateFrom, overtimeRateFrom } from '@/lib/money'
+import { formatUSD, overtimeRateFrom } from '@/lib/money'
 import AppShell from '@/components/AppShell'
 
 export const dynamic = 'force-dynamic'
@@ -15,7 +15,7 @@ type ClientRow = {
     name: string | null
     day_rate_cents: number
     ot_after_hours: number
-    travel_full_day: boolean
+    travel_rate_cents: number
   }[]
 }
 
@@ -26,7 +26,7 @@ export default async function ClientsPage() {
     .from('clients')
     .select(
       `id, name, billing_email, legacy_names, invoices(total_cents, status),
-       client_rate_cards(name, day_rate_cents, ot_after_hours, travel_full_day)`,
+       client_rate_cards(name, day_rate_cents, ot_after_hours, travel_rate_cents)`,
     )
     .eq('archived', false)
     .order('name')
@@ -111,7 +111,7 @@ export default async function ClientsPage() {
                   {day ? (
                     <span className="tabular">
                       Day {formatUSD(day)} · Travel{' '}
-                      {formatUSD(c.defaultCard!.travel_full_day ? day : travelRateFrom(day))} · OT{' '}
+                      {formatUSD(c.defaultCard!.travel_rate_cents)} · OT{' '}
                       {formatUSD(overtimeRateFrom(day, otAfterHours))} after {otAfterHours}h
                     </span>
                   ) : (
