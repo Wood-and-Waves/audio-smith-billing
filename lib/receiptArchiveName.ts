@@ -17,11 +17,31 @@ export type ArchiveEntry = {
   originalPath: string
 }
 
-/** Windows and macOS both refuse these, and a slash would escape the folder. */
-const ILLEGAL = /[<>:"/\\|?*\x00-\x1f]/g
+/**
+ * Windows and macOS both refuse the ASCII set, and a slash would escape the
+ * folder. The Unicode ranges are format/bidi characters, not visible glyphs:
+ * U+200B-U+200F (zero-width space and friends) render nothing, and
+ * U+202A-U+202E / U+2066-U+2069 (bidi overrides/isolates) can flip how the
+ * rest of the name displays — U+202E is the classic "malware.exe" ->
+ * "malwarexe.e" filename-spoofing trick. U+FEFF is a byte-order mark that
+ * behaves the same as a zero-width space outside position zero.
+ */
+const ILLEGAL = /[<>:"/\\|?*\x00-\x1f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g
 
 /** Long enough to stay readable, short enough that no filesystem objects. */
 const MAX_SEGMENT = 80
+
+/**
+ * `.slice(0, MAX_SEGMENT)` cuts by UTF-16 code unit, which can land exactly
+ * between a surrogate pair (e.g. 79 ASCII characters followed by an emoji).
+ * A lone high surrogate left at the end isn't a real character — encoders
+ * disagree about what to do with it, and `Buffer.from(str, 'utf8')` silently
+ * rewrites it to U+FFFD, corrupting the name instead of erroring.
+ */
+function dropTrailingUnpairedSurrogate(s: string): string {
+  const last = s.charCodeAt(s.length - 1)
+  return last >= 0xd800 && last <= 0xdbff ? s.slice(0, -1) : s
+}
 
 /**
  * A single path segment, safe to use as a file or folder name.
@@ -31,13 +51,14 @@ const MAX_SEGMENT = 80
  * empty segment, which reads as the parent directory.
  */
 export function sanitizeSegment(raw: string, fallback: string): string {
-  const cleaned = raw
-    .replace(ILLEGAL, ' ')
-    .replace(/\.+/g, ' ')       // '..' is the traversal case, and a trailing dot is illegal on Windows
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, MAX_SEGMENT)
-    .trim()
+  const cleaned = dropTrailingUnpairedSurrogate(
+    raw
+      .replace(ILLEGAL, ' ')
+      .replace(/\.+/g, ' ')       // '..' is the traversal case, and a trailing dot is illegal on Windows
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, MAX_SEGMENT),
+  ).trim()
   return cleaned === '' ? fallback : cleaned
 }
 
@@ -68,9 +89,14 @@ export function archiveNames(entries: ArchiveEntry[]): string[] {
   const used = new Map<string, number>()
 
   return entries.map((entry) => {
+    // spentOn is typed as a bare string, not a branded "already clean" date.
+    // Today it always arrives as a Postgres `date` (YYYY-MM-DD), but nothing
+    // stops a future caller passing a raw OCR guess, and this is the same
+    // interpolation-into-a-path-segment the vendor field needed protecting from.
+    const spentOn = sanitizeSegment(entry.spentOn, 'unknown-date')
     const vendor = sanitizeSegment(entry.vendor ?? '', 'Receipt')
     const ext = extensionOf(entry.originalPath)
-    const stem = `${entry.spentOn} ${vendor} ${amountOf(entry.amountCents)}`
+    const stem = `${spentOn} ${vendor} ${amountOf(entry.amountCents)}`
 
     const seen = used.get(stem) ?? 0
     used.set(stem, seen + 1)

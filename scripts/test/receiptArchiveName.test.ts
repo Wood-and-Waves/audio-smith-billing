@@ -68,3 +68,37 @@ test('a very long vendor is trimmed rather than making an unopenable path', () =
   assert.ok(name.startsWith('2026-08-22 AAA'))
   assert.ok(name.endsWith(' 19.98.jpg'))
 })
+
+test('spentOn is sanitized the same as vendor', () => {
+  // spentOn was interpolated into the stem raw while vendor went through
+  // sanitizeSegment -- not reachable today because expenses.spent_on is a
+  // Postgres `date not null` and the driver only ever returns YYYY-MM-DD, but
+  // the parameter type is a bare string with no static guarantee of that.
+  assert.deepEqual(
+    archiveNames([e('2026/08/22', 'Vendor', 100)]),
+    ['2026 08 22 Vendor 1.00.jpg'],
+  )
+  assert.deepEqual(
+    archiveNames([e('../../etc', 'Vendor', 100)]),
+    ['etc Vendor 1.00.jpg'],
+  )
+})
+
+test('bidi override and zero-width characters do not survive sanitizeSegment', () => {
+  // U+202E (right-to-left override) is a known filename-spoofing trick; U+200B
+  // (zero-width space) is invisible and would silently pass through unnoticed.
+  assert.equal(sanitizeSegment(`Right\u202EOverride`, 'Show'), 'Right Override')
+  assert.equal(sanitizeSegment(`Zero\u200BWidth`, 'Show'), 'Zero Width')
+})
+
+test('truncation drops a trailing unpaired surrogate instead of corrupting it', () => {
+  // 79 ASCII characters followed by one emoji (a surrogate pair) sliced at
+  // MAX_SEGMENT=80 lands exactly between the pair. A lone high surrogate isn't
+  // a real character -- Buffer.from(str, 'utf8') silently rewrites it to
+  // U+FFFD, which would corrupt the name instead of raising anything visible.
+  const raw = 'A'.repeat(79) + `\u{1F600}`
+  const cleaned = sanitizeSegment(raw, 'fallback')
+  assert.equal(cleaned, 'A'.repeat(79))
+  const lastCode = cleaned.charCodeAt(cleaned.length - 1)
+  assert.ok(lastCode < 0xd800 || lastCode > 0xdfff, `got surrogate ${lastCode.toString(16)}`)
+})
