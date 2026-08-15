@@ -35,7 +35,13 @@ type Row = {
 type BatchRow = {
   id: string
   file: File
-  status: 'queued' | 'reading' | 'read' | 'error'
+  /**
+   * 'error' means the receipt uploaded but could not be READ — the photo is
+   * attached and the fields need typing. 'upload-failed' means the receipt
+   * itself never made it up, so the row will save without one. Two different
+   * things to do about it, so two statuses.
+   */
+  status: 'queued' | 'reading' | 'read' | 'error' | 'upload-failed'
   category: ExpenseCategory
   whereSpent: string
   amount: string
@@ -352,6 +358,17 @@ export default function ExpenseLog({
   const [batchSkipped, setBatchSkipped] = useState(0)
   // Set once by Add all, then shown until the next batch pick clears it.
   const [batchSummary, setBatchSummary] = useState<{ added: number; total: number; failed: string[] } | null>(null)
+  // Minted fresh for each batch pick and bumped by cancelBatch — the same
+  // mechanism tokenRef gives the single-receipt flow above, for the same kind
+  // of race. The worker pool closes over a local `rows` array and used to
+  // consult nothing else, so Cancel stopped nothing: with nine of twelve still
+  // queued, all nine went on enhancing, uploading and paying for a vision call
+  // apiece. Their results then landed in `setBatchRows(prev => prev && …)`
+  // updaters that no-op against null, so those pairs were recorded on no row
+  // and deleted by nobody — two permanently orphaned objects each. The
+  // design's "a failed delete is ignored" covers deletes that were ATTEMPTED;
+  // these were never attempted at all.
+  const batchTokenRef = useRef(0)
 
   /**
    * Reads a just-picked file: enhance, upload both copies, then OCR.
@@ -527,8 +544,16 @@ export default function ExpenseLog({
    * their own upload+OCR happen to land in, not the order they were picked,
    * and a stale closure would silently discard whatever the user had already
    * typed into a field the OCR result was racing against.
+   *
+   * `token` is checked after every await. A stale one means Cancel ran while
+   * this row was in flight, and this row stops where it stands.
    */
-  async function runBatchRow(supabase: ReturnType<typeof createClient>, id: string, file: File) {
+  async function runBatchRow(
+    supabase: ReturnType<typeof createClient>, id: string, file: File, token: number,
+  ) {
+    const live = () => token === batchTokenRef.current
+    if (!live()) return
+
     setBatchRows((prev) => prev && prev.map((r) => (r.id === id ? { ...r, status: 'reading' } : r)))
 
     let uploaded: { error: string } | { enhancedPath: string; originalPath: string }
@@ -538,8 +563,27 @@ export default function ExpenseLog({
       uploaded = { error: e instanceof Error ? e.message : 'Could not process that file.' }
     }
 
+    if (!live()) {
+      // Cancel landed while this pair was uploading. cancelBatch can only
+      // delete pairs already recorded on a row, and this one never got that
+      // far — this worker is the only thing that knows it exists.
+      if (!('error' in uploaded)) removeSuperseded([uploaded.enhancedPath, uploaded.originalPath])
+      return
+    }
+
     if ('error' in uploaded) {
-      setBatchRows((prev) => prev && prev.map((r) => (r.id === id ? { ...r, status: 'error' } : r)))
+      // Not the same failure as an unreadable photo, and it must not read as
+      // one. "Couldn't read — type it in" says the receipt is attached and
+      // only the reading failed, so Dan types the vendor and amount and Add
+      // all saves an expense with NO receipt — and the show cannot be billed
+      // until the "needs a receipt" counter is noticed days later. The
+      // single-receipt flow routes this to the role="alert" paragraph rather
+      // than the muted note for exactly this reason; the row carries its own
+      // status as well, because one alert paragraph cannot name twelve rows.
+      setBatchRows((prev) => prev && prev.map((r) => (
+        r.id === id ? { ...r, status: 'upload-failed' } : r
+      )))
+      setError(`${file.name}: ${uploaded.error}`)
       return
     }
     const { enhancedPath, originalPath } = uploaded
@@ -557,6 +601,17 @@ export default function ExpenseLog({
       }
     } catch {
       // fields stays null — falls through to the "couldn't read" branch below.
+    }
+
+    if (!live()) {
+      // Cancel landed during the read. The pair above was recorded on the row
+      // a moment ago, so cancelBatch has probably already removed it — but
+      // "probably" is a render commit landing before the click, and an
+      // orphaned pair is the thing being fixed here. Removing a path twice
+      // costs nothing; each row's stamp is its own, so this can never touch
+      // another row's pair.
+      removeSuperseded([enhancedPath, originalPath])
+      return
     }
 
     if (!fields || unreadable) {
@@ -645,18 +700,31 @@ export default function ExpenseLog({
   }
 
   /** A worker pool of BATCH_CONCURRENCY, so twelve photos never decode at once. */
-  function runBatch(rows: BatchRow[]) {
+  function runBatch(rows: BatchRow[], token: number) {
     const supabase = createClient()
     let cursor = 0
     const worker = async () => {
-      while (cursor < rows.length) {
+      // The token, not just the cursor: `rows` is a local array that Cancel
+      // cannot shorten, so this is what stops the queue.
+      while (cursor < rows.length && token === batchTokenRef.current) {
         const row = rows[cursor]
         cursor += 1
-        await runBatchRow(supabase, row.id, row.file)
+        await runBatchRow(supabase, row.id, row.file, token)
       }
     }
     const workerCount = Math.min(BATCH_CONCURRENCY, rows.length)
-    void Promise.all(Array.from({ length: workerCount }, worker)).then(settleDuplicates)
+    void Promise.all(Array.from({ length: workerCount }, worker))
+      .catch(() => {
+        // Nothing in runBatchRow throws today — it catches its own upload and
+        // read failures. If that ever changes, a rejected worker leaves its
+        // rows on 'queued', and Add all is disabled until every row is done:
+        // the batch would be stranded with no way out but Cancel, throwing
+        // away every upload and every paid read in it.
+        setBatchRows((prev) => prev && prev.map((r) => (
+          r.status === 'queued' || r.status === 'reading' ? { ...r, status: 'error' } : r
+        )))
+      })
+      .then(() => { if (token === batchTokenRef.current) settleDuplicates() })
   }
 
   /**
@@ -693,8 +761,10 @@ export default function ExpenseLog({
       originalPath: null,
       touched: new Set(),
     }))
+    // A fresh token per batch, exactly as onPickFile mints one per pick.
+    batchTokenRef.current += 1
     setBatchRows(rows)
-    runBatch(rows)
+    runBatch(rows, batchTokenRef.current)
   }
 
   /**
@@ -766,6 +836,11 @@ export default function ExpenseLog({
   /** Abandons the batch without saving anything, cleaning up whatever had already uploaded. */
   function cancelBatch() {
     if (!batchRows) return
+    // Bumped FIRST, so it is already stale for every worker still in flight:
+    // the queue stops advancing, and any pair that finishes uploading after
+    // this line gets deleted by the worker that made it, since it is not on a
+    // row yet and the sweep below cannot see it.
+    batchTokenRef.current += 1
     const paths = batchRows.flatMap((r) => [r.enhancedPath, r.originalPath]).filter((p): p is string => p !== null)
     if (paths.length) removeSuperseded(paths)
     setBatchRows(null)
@@ -963,6 +1038,14 @@ export default function ExpenseLog({
                   {row.status === 'reading' && 'Reading…'}
                   {row.status === 'read' && 'Read'}
                   {row.status === 'error' && "Couldn't read — type it in"}
+                  {/* Says the receipt is NOT attached, in the danger colour.
+                      "Couldn't read" here would invite typing the amount and
+                      adding a receiptless expense without knowing it. */}
+                  {row.status === 'upload-failed' && (
+                    <span className="text-danger">
+                      Receipt didn&rsquo;t upload — this will save without one
+                    </span>
+                  )}
                 </p>
                 {row.duplicateReason && (
                   <p className="ml-6 mt-1 text-xs text-danger">
@@ -977,7 +1060,8 @@ export default function ExpenseLog({
             <button
               type="button"
               onClick={addAllBatch}
-              disabled={locked || pending || !batchRows.every((r) => r.status === 'read' || r.status === 'error')}
+              disabled={locked || pending
+                        || !batchRows.every((r) => r.status !== 'queued' && r.status !== 'reading')}
               className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
                          border border-line text-muted hover:text-ink disabled:opacity-40"
             >
