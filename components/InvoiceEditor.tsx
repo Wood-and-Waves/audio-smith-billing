@@ -16,8 +16,12 @@ export type EditorClient = {
   id: string
   name: string
   terms_days: number
-  day_rate_cents: number | null
-  ot_after_hours: number
+  // The client's default (unnamed) rate card — clients.day_rate_cents /
+  // ot_after_hours are superseded by migration 0013 and no longer written by
+  // saveClient, so they must never be read here again. Null for a client
+  // with no default card (either no cards at all, or every card it has is
+  // named), which is honest: there is nothing to suggest a price from.
+  default_card: { day_rate_cents: number; ot_after_hours: number } | null
 }
 
 export type EditorItem = {
@@ -85,8 +89,8 @@ export default function InvoiceEditor({
    * would quietly rewrite invoices he has already sent.
    */
   function priceFor(item: EditorItem): number {
-    const day = client?.day_rate_cents ?? 0
-    const hours = client?.ot_after_hours ?? 10
+    const day = client?.default_card?.day_rate_cents ?? 0
+    const hours = client?.default_card?.ot_after_hours ?? 10
     if (item.kind === 'derived' && day) {
       if (item.derive_rule === 'travel_half') return travelRateFrom(day)
       if (item.derive_rule === 'overtime_1_5x') return overtimeRateFrom(day, hours)
@@ -182,12 +186,14 @@ export default function InvoiceEditor({
               ...clients.map((c) => ({ value: c.id, label: c.name })),
             ]}
           />
-          {client?.day_rate_cents ? (
+          {client?.default_card ? (
             <p className="text-xs text-muted mt-1.5 tabular">
-              Day {formatUSD(client.day_rate_cents)} · Travel{' '}
-              {formatUSD(travelRateFrom(client.day_rate_cents))} · OT{' '}
-              {formatUSD(overtimeRateFrom(client.day_rate_cents, client.ot_after_hours))} after{' '}
-              {client.ot_after_hours}h
+              Day {formatUSD(client.default_card.day_rate_cents)} · Travel{' '}
+              {formatUSD(travelRateFrom(client.default_card.day_rate_cents))} · OT{' '}
+              {formatUSD(overtimeRateFrom(
+                client.default_card.day_rate_cents, client.default_card.ot_after_hours,
+              ))} after{' '}
+              {client.default_card.ot_after_hours}h
             </p>
           ) : client ? (
             <p className="text-xs text-accent mt-1.5">
