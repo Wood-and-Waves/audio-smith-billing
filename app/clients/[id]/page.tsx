@@ -30,7 +30,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
       .maybeSingle(),
     supabase
       .from('invoices')
-      .select('id, number, issue_date, due_date, status, total_cents, clients(name)')
+      .select('id, number, issue_date, due_date, status, total_cents, work_for, clients(name)')
       .eq('client_id', id)
       .order('number', { ascending: false }),
   ])

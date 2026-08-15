@@ -68,6 +68,14 @@ export default function InvoiceEditor({
     initial?.deposit_cents ? formatAmount(initial.deposit_cents) : '',
   )
   const [notes, setNotes] = useState(initial?.notes ?? '')
+  // Pre-filled with whatever saveInvoice already has stored — including for
+  // a show-billed invoice, which billShows (app/shows/actions.ts) freezes
+  // this to at creation. Blank for an older, hand-entered or imported
+  // invoice with nothing on file. Always sent back on save (see submit()
+  // below), even blank, so saveInvoice's `'work_for' in input` check treats
+  // every save from this screen as a deliberate value — this is the only
+  // place work_for is ever cleared on purpose, by saving it blank.
+  const [workFor, setWorkFor] = useState(initial?.work_for ?? '')
   const [lines, setLines] = useState<Line[]>(
     initial?.lines?.length
       ? initial.lines.map((l) =>
@@ -148,6 +156,7 @@ export default function InvoiceEditor({
         terms_days: Number(termsDays) || 30,
         deposit_cents: parseUSD(deposit) ?? 0,
         notes,
+        work_for: workFor,
         lines: parsed,
       })
       if ('error' in result) { setError(result.error); return }
@@ -213,6 +222,17 @@ export default function InvoiceEditor({
           <input id="terms" type="number" min={0} className={FIELD_FULL} value={termsDays}
                  onChange={(e) => setTermsDays(e.target.value)} />
           <p className="text-xs text-muted mt-1.5">Due {dueDate}</p>
+        </div>
+
+        <div className="sm:col-span-2">
+          <label className="eyebrow block mb-2" htmlFor="work-for">For</label>
+          <input id="work-for" className={FIELD_FULL} value={workFor} placeholder="GLS 2026"
+                 onChange={(e) => setWorkFor(e.target.value)} />
+          <p className="text-xs text-muted mt-1.5">
+            What this invoice was for — printed on the document, and how two invoices to the
+            same client tell apart in the list. A show-billed invoice fills this in on its own;
+            edit it here to label an older one.
+          </p>
         </div>
       </div>
 

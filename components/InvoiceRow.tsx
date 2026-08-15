@@ -14,6 +14,10 @@ export type InvoiceRowData = InvoiceLike & {
   id: string
   number: number
   issue_date: string
+  // Null on most invoices imported before this existed, and on any hand-
+  // written one nobody has labelled yet — see app/invoices/actions.ts on how
+  // it's set and edited. Absence here is normal, not an error state.
+  work_for: string | null
   clients: { name: string } | null
 }
 
@@ -54,8 +58,14 @@ export default function InvoiceRow({
             {invoice.number}
           </span>
 
+          {/* work_for inline, not a second line: the row is already two lines
+              tall on a phone (client name, then status/date below), and this
+              keeps that. It truncates together with the name inside the same
+              min-w-0/truncate span — the two invoices this exists to tell
+              apart (#385 "PwC Tax Start", #388 "GLS 2026") are both short
+              enough that truncation here is the exception, not the norm. */}
           <span className={`min-w-0 truncate sm:flex-1 ${emphasis ? 'font-semibold' : ''}`}>
-            {name}
+            {name}{invoice.work_for ? <span className="text-muted font-normal"> · {invoice.work_for}</span> : null}
           </span>
 
           <span className="tabular font-semibold row-span-2 self-center text-right

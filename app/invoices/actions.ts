@@ -34,9 +34,17 @@ export type InvoiceInput = {
   // renders no backup pages, which is what every invoice billed before
   // migration 0012 already does.
   backupSnapshot?: BackupSnapshot | null
-  // Same story as backupSnapshot: only billShows passes this, only at
-  // creation. InvoiceEditor's textarea owns `notes`, not `work_for` — see the
-  // insert branch below for why it must never join the shared `row` patch.
+  // Set by billShows at creation (frozen, from the shows just billed), and
+  // now ALSO settable by InvoiceEditor's own "For" field, on both creation
+  // and edit — see its labelled input. Optional, not just possibly-null: the
+  // key being absent ("not sent") and the key being present-but-empty
+  // ("clear it") are different things on the UPDATE path below, so this must
+  // never be defaulted or normalised before it reaches saveInvoice. It never
+  // joins the shared `row` patch — see the insert branch's comment for why,
+  // and the update branch's `'work_for' in input` check for how an update
+  // that omits it (there are none today, but the contract must hold for
+  // whatever calls this next) leaves a stored value alone rather than
+  // nulling it — the exact bug already found in review for backup_snapshot.
   work_for?: string | null
 }
 
@@ -136,11 +144,31 @@ export async function saveInvoice(input: InvoiceInput): Promise<SaveResult> {
       const otMatches = Math.abs(qtyFor('Overtime') - snapshot.total_ot) < TOLERANCE_HOURS
       const dtMatches = Math.abs(qtyFor('Double Time') - snapshot.total_dt) < TOLERANCE_HOURS
       if (!otMatches || !dtMatches) {
-        updatePatch = { ...row, backup_snapshot: { ...snapshot, show_hours: false } }
+        updatePatch = { ...updatePatch, backup_snapshot: { ...snapshot, show_hours: false } }
         hoursWarning =
           'The hours breakdown was switched off because the edited hours no longer match it. ' +
           'Switch it back on from the invoice page if that was intended.'
       }
+    }
+
+    // work_for is editable now (InvoiceEditor's "For" field), but the same
+    // rule that protects backup_snapshot above still has to hold: an update
+    // must only touch a column its caller actually sent a value for. `row`
+    // (shared with the insert branch) deliberately excludes work_for, so an
+    // update that merely spread `row` in would never touch it at all — safe,
+    // but useless for the new field. Instead: only when the caller's input
+    // literally HAS the key (`'work_for' in input`, not `input.work_for !==
+    // undefined` — the two read the same today, but this is the version that
+    // can't be fooled by a future `work_for: undefined` sent on purpose) do
+    // we fold it into the patch. InvoiceEditor always sends its current box
+    // value, blank or not, so a real edit always updates it; any OTHER
+    // caller that stays silent on work_for — there is none today, but the
+    // guarantee has to survive whoever calls this next — leaves the stored
+    // value exactly as it was. Never `??`, `||`, or any other default here:
+    // that would collapse "omitted" and "sent blank" into the same branch
+    // and reintroduce the bug this comment exists to prevent.
+    if ('work_for' in input) {
+      updatePatch = { ...updatePatch, work_for: input.work_for?.trim() || null }
     }
 
     const { error } = await supabase.from('invoices').update(updatePatch).eq('id', invoiceId)
@@ -170,17 +198,26 @@ export async function saveInvoice(input: InvoiceInput): Promise<SaveResult> {
 
     const { data: created, error } = await supabase
       .from('invoices')
-      // backup_snapshot and work_for are set only here, at creation, and left
-      // out of `row` (shared with the update branch above) on purpose: an
-      // edit made through InvoiceEditor never passes either, and if they were
-      // in `row` that edit would silently null out a backup — or a FOR:
-      // heading — a show already froze in.
+      // backup_snapshot and work_for are set here, at creation, and left out
+      // of `row` (shared with the update branch above) on purpose.
+      // backup_snapshot is still creation-only — InvoiceEditor never sends
+      // it, and if it were in `row` an edit would silently null out a backup
+      // a show already froze in. work_for is no longer write-once (see the
+      // update branch's `'work_for' in input` handling above), but it stays
+      // out of `row` too: `row` is unconditional, and work_for's whole point
+      // now is that an update only touches it when the caller actually sent
+      // it.
       .insert({
         ...row,
         number,
         status: 'draft',
         backup_snapshot: input.backupSnapshot ?? null,
-        work_for: input.work_for ?? null,
+        // .trim() || null, not just ?? null: InvoiceEditor's "For" field now
+        // sends '' (not undefined) for a blank box on a brand-new invoice,
+        // and an empty string is not the same as "nothing to store" for a
+        // text column — every other free-text field on this row (notes
+        // above, venue/location on shows) normalises the same way.
+        work_for: input.work_for?.trim() || null,
       })
       .select('id')
       .single()

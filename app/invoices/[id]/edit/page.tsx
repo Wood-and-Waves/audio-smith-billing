@@ -12,7 +12,7 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
 
   const [{ data: invoice }, { data: clients }, { data: items }] = await Promise.all([
     supabase.from('invoices')
-      .select(`id, number, client_id, issue_date, terms_days, deposit_cents, notes,
+      .select(`id, number, client_id, issue_date, terms_days, deposit_cents, notes, work_for,
                invoice_lines(position, description, qty_hundredths, unit_price_cents)`)
       .eq('id', id).maybeSingle(),
     supabase.from('clients')
@@ -27,7 +27,7 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
 
   const inv = invoice as unknown as {
     id: string; number: number; client_id: string; issue_date: string
-    terms_days: number; deposit_cents: number; notes: string | null
+    terms_days: number; deposit_cents: number; notes: string | null; work_for: string | null
     invoice_lines: { position: number; description: string; qty_hundredths: number; unit_price_cents: number }[]
   }
 
@@ -62,6 +62,7 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
           terms_days: inv.terms_days,
           deposit_cents: inv.deposit_cents,
           notes: inv.notes ?? '',
+          work_for: inv.work_for ?? '',
           lines: [...inv.invoice_lines].sort((a, b) => a.position - b.position),
         }}
       />

@@ -681,8 +681,11 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
   const { saveInvoice } = await import('@/app/invoices/actions')
   const issue = todayInChicago()
   // The same string that fills `notes` today, but ALSO frozen onto its own
-  // column — work_for — so a hand-edit through InvoiceEditor (which owns
-  // `notes`) can never erase which shows this invoice was for.
+  // column — work_for — so it survives independently of `notes`. Dan can
+  // relabel it afterwards through InvoiceEditor's "For" field (saveInvoice
+  // only updates work_for when that field actually sends a value), but this
+  // is still the accurate answer for a show-derived invoice on day one,
+  // set the moment it's created rather than left for him to fill in by hand.
   const workFor = shows.map((s) => s.name).join(', ')
   const result = await saveInvoice({
     client_id: clientId,
