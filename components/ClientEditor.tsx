@@ -16,6 +16,14 @@ export type RateCard = {
   ot_after_hours: number
   travel_rate_cents: number
   pm_rate_cents: number
+  // null = no double time, matching shows.dt_after_hours and ShowSettings.
+  dt_after_hours: number | null
+  minimum_meal_break_minutes: number
+  meal_break_deduction_cap: number
+  meal_penalty_grace_hours: number
+  meal_penalty_cents: number
+  short_turn_rest_hours: number
+  continuous_time_enabled: boolean
 }
 
 export type EditorClient = {
@@ -52,6 +60,17 @@ type CardRow = {
   // than picked from a switch (see lib/rateCards.ts).
   travelRate: string
   pmRate: string
+  // Empty box, not "0" — see app/clients/actions.ts on why null and zero
+  // must never be conflated here (same rule as ShowSettings).
+  dtAfterHours: string
+  minMealBreak: string
+  mealBreakCap: string
+  mealPenaltyGrace: string
+  // Raw USD input; "0.00" (the DB default) is a real, legitimate zero here,
+  // unlike travelRate/pmRate above — see the Meal penalty field's helper text.
+  mealPenalty: string
+  shortTurnRest: string
+  continuousTime: boolean
 }
 
 let tempKeySeq = 0
@@ -69,11 +88,176 @@ function toCardRow(card: RateCard): CardRow {
     otAfterHours: String(card.ot_after_hours),
     travelRate: formatAmount(card.travel_rate_cents),
     pmRate: formatAmount(card.pm_rate_cents),
+    dtAfterHours: card.dt_after_hours != null ? String(card.dt_after_hours) : '',
+    minMealBreak: String(card.minimum_meal_break_minutes),
+    mealBreakCap: String(card.meal_break_deduction_cap),
+    mealPenaltyGrace: String(card.meal_penalty_grace_hours),
+    mealPenalty: formatAmount(card.meal_penalty_cents),
+    shortTurnRest: String(card.short_turn_rest_hours),
+    continuousTime: card.continuous_time_enabled,
+  }
+}
+
+// Matches migration 0015's own column defaults, so a brand-new card comes
+// out identical to a show created with none of these ever touched.
+function blankRules() {
+  return {
+    dtAfterHours: '',
+    minMealBreak: '60',
+    mealBreakCap: '60',
+    mealPenaltyGrace: '6',
+    mealPenalty: '0.00',
+    shortTurnRest: '10',
+    continuousTime: false,
   }
 }
 
 function blankDefaultRow(): CardRow {
-  return { key: 'default', dayRate: '', otAfterHours: '10', travelRate: '', pmRate: '', name: '' }
+  return {
+    key: 'default', dayRate: '', otAfterHours: '10', travelRate: '', pmRate: '', name: '',
+    ...blankRules(),
+  }
+}
+
+// Preview only, same disclaimer as before: parseUSD returns null on junk,
+// which just hides the preview rather than blocking typing. Real validation
+// (including the same "blank means use the default, not $0.00" rule)
+// happens in saveClient. Pure — no component state — so both the default and
+// named card blocks can share it via CardFields below.
+function preview(card: CardRow) {
+  const cents = parseUSD(card.dayRate)
+  if (cents === null || cents <= 0) return null
+  const hours = Number(card.otAfterHours) || 0
+  const derived = deriveFromDayRate(cents, hours)
+  const travelTyped = isDerivableDayRate(parseUSD(card.travelRate))
+  const pmTyped = isDerivableDayRate(parseUSD(card.pmRate))
+  const travel = travelTyped ? parseUSD(card.travelRate)! : derived.travel_rate_cents
+  const pm = pmTyped ? parseUSD(card.pmRate)! : derived.pm_rate_cents
+  return { travel, pm, ot: overtimeRateFrom(cents, hours), hours }
+}
+
+/**
+ * One card's editable fields — Rates (always visible) then Rules (behind a
+ * disclosure, same reasoning ShowSettings uses for its whole "Rates and
+ * rules" section: a client can hold several cards on one screen, and the
+ * common case is just checking or nudging a rate, not the rules underneath).
+ * Shared between the default and named-card blocks so the six rule fields
+ * exist in exactly one place in this file.
+ */
+function CardFields({
+  card, idPrefix, onChange,
+}: {
+  card: CardRow
+  idPrefix: string
+  onChange: (patch: Partial<CardRow>) => void
+}) {
+  const p = preview(card)
+  const dayRateCents = parseUSD(card.dayRate)
+
+  return (
+    <>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label className="eyebrow block mb-2" htmlFor={`${idPrefix}-day-rate`}>Day rate</label>
+          <input id={`${idPrefix}-day-rate`} inputMode="decimal" placeholder="e.g. 780"
+                 className={FIELD_FULL} value={card.dayRate}
+                 onChange={(e) => onChange({ dayRate: e.target.value })} />
+        </div>
+        <div>
+          <label className="eyebrow block mb-2" htmlFor={`${idPrefix}-travel-rate`}>Travel rate</label>
+          <input id={`${idPrefix}-travel-rate`} inputMode="decimal" placeholder="Half the day rate"
+                 className={FIELD_FULL} value={card.travelRate}
+                 onChange={(e) => onChange({ travelRate: e.target.value })} />
+        </div>
+        <div>
+          <label className="eyebrow block mb-2" htmlFor={`${idPrefix}-pm-rate`}>PM rate (per hour)</label>
+          <input id={`${idPrefix}-pm-rate`} inputMode="decimal" placeholder="Day rate ÷ OT hours"
+                 className={FIELD_FULL} value={card.pmRate}
+                 onChange={(e) => onChange({ pmRate: e.target.value })} />
+        </div>
+        <div>
+          <label className="eyebrow block mb-2" htmlFor={`${idPrefix}-ot-after`}>OT after (hours)</label>
+          <input id={`${idPrefix}-ot-after`} type="number" min={0} step="0.1" className={FIELD_FULL}
+                 value={card.otAfterHours}
+                 onChange={(e) => onChange({ otAfterHours: e.target.value })} />
+        </div>
+        <div>
+          <label className="eyebrow block mb-2" htmlFor={`${idPrefix}-dt-after`}>DT after (hours)</label>
+          <input id={`${idPrefix}-dt-after`} type="number" min={0} step="0.1" placeholder="No double time"
+                 className={FIELD_FULL} value={card.dtAfterHours}
+                 onChange={(e) => onChange({ dtAfterHours: e.target.value })} />
+          <p className="text-xs text-muted mt-1.5">
+            Leave blank for no double time. {dayRateCents !== null && dayRateCents > 0 && card.dtAfterHours.trim() !== ''
+              ? 'Hours past this threshold bill at double the day rate.' : ''}
+          </p>
+        </div>
+      </div>
+      <p className="text-xs text-muted mt-1.5">
+        Travel bills per leg, so a flat rate here doubles a fly-in/fly-out trip from one
+        charge to two. Leave travel or PM blank to use the default shown below.
+      </p>
+      {p && (
+        <p className="text-xs text-muted mt-1.5 tabular">
+          Travel {formatUSD(p.travel)} · PM {formatUSD(p.pm)}/hr · OT {formatUSD(p.ot)} after {p.hours}h
+        </p>
+      )}
+
+      <details className="mt-4 group">
+        <summary className="eyebrow cursor-pointer select-none list-none flex items-center gap-2">
+          <span className="transition-transform group-open:rotate-90">›</span>
+          Rules
+        </summary>
+        <div className="grid gap-4 sm:grid-cols-2 mt-4">
+          <div>
+            <label className="eyebrow block mb-2" htmlFor={`${idPrefix}-min-meal-break`}>
+              Minimum meal break (minutes)
+            </label>
+            <input id={`${idPrefix}-min-meal-break`} type="number" min={0} step="1" className={FIELD_FULL}
+                   value={card.minMealBreak}
+                   onChange={(e) => onChange({ minMealBreak: e.target.value })} />
+          </div>
+          <div>
+            <label className="eyebrow block mb-2" htmlFor={`${idPrefix}-meal-break-cap`}>
+              Meal break deduction cap (minutes)
+            </label>
+            <input id={`${idPrefix}-meal-break-cap`} type="number" min={0} step="1" className={FIELD_FULL}
+                   value={card.mealBreakCap}
+                   onChange={(e) => onChange({ mealBreakCap: e.target.value })} />
+          </div>
+          <div>
+            <label className="eyebrow block mb-2" htmlFor={`${idPrefix}-meal-penalty-grace`}>
+              Meal penalty grace (hours)
+            </label>
+            <input id={`${idPrefix}-meal-penalty-grace`} type="number" min={0} step="0.1" className={FIELD_FULL}
+                   value={card.mealPenaltyGrace}
+                   onChange={(e) => onChange({ mealPenaltyGrace: e.target.value })} />
+          </div>
+          <div>
+            <label className="eyebrow block mb-2" htmlFor={`${idPrefix}-meal-penalty`}>Meal penalty</label>
+            <input id={`${idPrefix}-meal-penalty`} inputMode="decimal" placeholder="0.00" className={FIELD_FULL}
+                   value={card.mealPenalty}
+                   onChange={(e) => onChange({ mealPenalty: e.target.value })} />
+            <p className="text-xs text-muted mt-1.5">Zero disables meal penalties on this card.</p>
+          </div>
+          <div>
+            <label className="eyebrow block mb-2" htmlFor={`${idPrefix}-short-turn-rest`}>
+              Short-turn rest (hours)
+            </label>
+            <input id={`${idPrefix}-short-turn-rest`} type="number" min={0} step="0.1" className={FIELD_FULL}
+                   value={card.shortTurnRest}
+                   onChange={(e) => onChange({ shortTurnRest: e.target.value })} />
+          </div>
+          <div className="flex items-end pb-2.5">
+            <label className="flex items-center gap-2 text-sm text-muted">
+              <input type="checkbox" className="h-4 w-4 accent-accent" checked={card.continuousTime}
+                     onChange={(e) => onChange({ continuousTime: e.target.checked })} />
+              Continuous time (no meal deduction)
+            </label>
+          </div>
+        </div>
+      </details>
+    </>
+  )
 }
 
 export default function ClientEditor({ initial }: { initial?: EditorClient }) {
@@ -111,7 +295,7 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
   function addNamedCard() {
     setNamedCards((cards) => [
       ...cards,
-      { key: tempKey(), name: '', dayRate: '', otAfterHours: '10', travelRate: '', pmRate: '' },
+      { key: tempKey(), name: '', dayRate: '', otAfterHours: '10', travelRate: '', pmRate: '', ...blankRules() },
     ])
   }
   function removeNamedCard(key: string) {
@@ -120,42 +304,35 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
 
   const hasAnyCard = defaultCard.dayRate.trim() !== '' || namedCards.length > 0
 
-  // Preview only, same disclaimer as the day-rate preview this replaces:
-  // parseUSD returns null on junk, which just hides the preview rather than
-  // blocking typing. Real validation (including the same "blank means use
-  // the default, not $0.00" rule) happens in saveClient.
-  function preview(card: CardRow) {
-    const cents = parseUSD(card.dayRate)
-    if (cents === null || cents <= 0) return null
-    const hours = Number(card.otAfterHours) || 0
-    const derived = deriveFromDayRate(cents, hours)
-    const travelTyped = isDerivableDayRate(parseUSD(card.travelRate))
-    const pmTyped = isDerivableDayRate(parseUSD(card.pmRate))
-    const travel = travelTyped ? parseUSD(card.travelRate)! : derived.travel_rate_cents
-    const pm = pmTyped ? parseUSD(card.pmRate)! : derived.pm_rate_cents
-    return { travel, pm, ot: overtimeRateFrom(cents, hours), hours }
-  }
-
   function submit() {
     setError(null)
     start(async () => {
-      const cards: CardInput[] = [
-        {
-          id: defaultCard.id,
-          name: null,
-          day_rate: defaultCard.dayRate,
-          ot_after_hours: Number(defaultCard.otAfterHours) || 0,
-          travel_rate: defaultCard.travelRate,
-          pm_rate: defaultCard.pmRate,
-        },
-        ...namedCards.map((c) => ({
+      // Money fields (dayRate, travelRate, pmRate, mealPenalty) travel to
+      // saveClient as the raw strings the user typed — parseCards is where
+      // parseUSD actually runs, so blank vs. zero is decided in exactly one
+      // place. Everything else here is a plain number, same convention
+      // ShowSettings already uses for its own submit.
+      function toCardInput(c: CardRow, name: string | null): CardInput {
+        return {
           id: c.id,
-          name: c.name,
+          name,
           day_rate: c.dayRate,
           ot_after_hours: Number(c.otAfterHours) || 0,
           travel_rate: c.travelRate,
           pm_rate: c.pmRate,
-        })),
+          dt_after_hours: c.dtAfterHours,
+          minimum_meal_break_minutes: Number(c.minMealBreak) || 0,
+          meal_break_deduction_cap: Number(c.mealBreakCap) || 0,
+          meal_penalty_grace_hours: Number(c.mealPenaltyGrace) || 0,
+          meal_penalty: c.mealPenalty,
+          short_turn_rest_hours: Number(c.shortTurnRest) || 0,
+          continuous_time_enabled: c.continuousTime,
+        }
+      }
+
+      const cards: CardInput[] = [
+        toCardInput(defaultCard, null),
+        ...namedCards.map((c) => toCardInput(c, c.name)),
       ]
 
       const result = await saveClient({
@@ -268,44 +445,7 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
       <div className="mb-8 space-y-5">
         <div className="border border-line rounded-field p-4">
           <p className="eyebrow mb-3">Default rate</p>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label className="eyebrow block mb-2" htmlFor="default-day-rate">Day rate</label>
-              <input id="default-day-rate" inputMode="decimal" placeholder="e.g. 780"
-                     className={FIELD_FULL} value={defaultCard.dayRate}
-                     onChange={(e) => updateDefault({ dayRate: e.target.value })} />
-            </div>
-            <div>
-              <label className="eyebrow block mb-2" htmlFor="default-ot-hours">OT after (hours)</label>
-              <input id="default-ot-hours" type="number" min={0} step="0.1" className={FIELD_FULL}
-                     value={defaultCard.otAfterHours}
-                     onChange={(e) => updateDefault({ otAfterHours: e.target.value })} />
-            </div>
-            <div>
-              <label className="eyebrow block mb-2" htmlFor="default-travel-rate">Travel rate</label>
-              <input id="default-travel-rate" inputMode="decimal" placeholder="Half the day rate"
-                     className={FIELD_FULL} value={defaultCard.travelRate}
-                     onChange={(e) => updateDefault({ travelRate: e.target.value })} />
-            </div>
-            <div>
-              <label className="eyebrow block mb-2" htmlFor="default-pm-rate">PM rate (per hour)</label>
-              <input id="default-pm-rate" inputMode="decimal" placeholder="Day rate ÷ OT hours"
-                     className={FIELD_FULL} value={defaultCard.pmRate}
-                     onChange={(e) => updateDefault({ pmRate: e.target.value })} />
-            </div>
-          </div>
-          <p className="text-xs text-muted mt-1.5">
-            Travel bills per leg, so a flat rate here doubles a fly-in/fly-out trip from one
-            charge to two. Leave travel or PM blank to use the default shown below.
-          </p>
-          {(() => {
-            const p = preview(defaultCard)
-            return p && (
-              <p className="text-xs text-muted mt-1.5 tabular">
-                Travel {formatUSD(p.travel)} · PM {formatUSD(p.pm)}/hr · OT {formatUSD(p.ot)} after {p.hours}h
-              </p>
-            )
-          })()}
+          <CardFields card={defaultCard} idPrefix="default" onChange={updateDefault} />
         </div>
 
         {namedCards.map((card) => (
@@ -321,45 +461,10 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
                    placeholder="e.g. PM"
                    onChange={(e) => updateNamed(card.key, { name: e.target.value })} />
 
-            <div className="grid gap-4 sm:grid-cols-2 mt-4">
-              <div>
-                <label className="eyebrow block mb-2" htmlFor={`card-rate-${card.key}`}>Day rate</label>
-                <input id={`card-rate-${card.key}`} inputMode="decimal" placeholder="e.g. 900"
-                       className={FIELD_FULL} value={card.dayRate}
-                       onChange={(e) => updateNamed(card.key, { dayRate: e.target.value })} />
-              </div>
-              <div>
-                <label className="eyebrow block mb-2" htmlFor={`card-ot-${card.key}`}>OT after (hours)</label>
-                <input id={`card-ot-${card.key}`} type="number" min={0} step="0.1" className={FIELD_FULL}
-                       value={card.otAfterHours}
-                       onChange={(e) => updateNamed(card.key, { otAfterHours: e.target.value })} />
-              </div>
-              <div>
-                <label className="eyebrow block mb-2" htmlFor={`card-travel-${card.key}`}>Travel rate</label>
-                <input id={`card-travel-${card.key}`} inputMode="decimal" placeholder="Half the day rate"
-                       className={FIELD_FULL} value={card.travelRate}
-                       onChange={(e) => updateNamed(card.key, { travelRate: e.target.value })} />
-              </div>
-              <div>
-                <label className="eyebrow block mb-2" htmlFor={`card-pm-${card.key}`}>PM rate (per hour)</label>
-                <input id={`card-pm-${card.key}`} inputMode="decimal" placeholder="Day rate ÷ OT hours"
-                       className={FIELD_FULL} value={card.pmRate}
-                       onChange={(e) => updateNamed(card.key, { pmRate: e.target.value })} />
-              </div>
+            <div className="mt-4">
+              <CardFields card={card} idPrefix={`card-${card.key}`}
+                          onChange={(patch) => updateNamed(card.key, patch)} />
             </div>
-
-            <p className="text-xs text-muted mt-1.5">
-              Travel bills per leg, so a flat rate here doubles a fly-in/fly-out trip from one
-              charge to two. Leave travel or PM blank to use the default shown below.
-            </p>
-            {(() => {
-              const p = preview(card)
-              return p && (
-                <p className="text-xs text-muted mt-1.5 tabular">
-                  Travel {formatUSD(p.travel)} · PM {formatUSD(p.pm)}/hr · OT {formatUSD(p.ot)} after {p.hours}h
-                </p>
-              )
-            })()}
           </div>
         ))}
 

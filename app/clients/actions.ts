@@ -21,6 +21,19 @@ export type CardInput = {
   // can be typed in directly instead of picked from a switch.
   travel_rate?: string
   pm_rate?: string
+  // Raw string, not a number: an empty box must become NULL ("no double
+  // time"), and Number('') is 0 — which would mean "every hour is double
+  // time" instead. Same convention as ShowSettings/updateShow.
+  dt_after_hours: string
+  minimum_meal_break_minutes: number
+  meal_break_deduction_cap: number
+  meal_penalty_grace_hours: number
+  // Raw USD input; 0/"" -> meal penalties disabled for shows created from
+  // this card (see billShows and ShowSettings — unlike travel/PM above,
+  // blank here is a real, legitimate zero, not "use a default").
+  meal_penalty: string
+  short_turn_rest_hours: number
+  continuous_time_enabled: boolean
 }
 
 export type ClientInput = {
@@ -52,6 +65,13 @@ type CardRow = {
   ot_after_hours: number
   travel_rate_cents: number
   pm_rate_cents: number
+  dt_after_hours: number | null
+  minimum_meal_break_minutes: number
+  meal_break_deduction_cap: number
+  meal_penalty_grace_hours: number
+  meal_penalty_cents: number
+  short_turn_rest_hours: number
+  continuous_time_enabled: boolean
 }
 
 // Same override convention as createShow's overrideCents: undefined or blank
@@ -120,6 +140,46 @@ function parseCards(cards: CardInput[]): CardRow[] | Fail {
       return { error: `The PM rate for ${label} must be more than $0.00 — leave it blank to use the day rate ÷ OT hours.` }
     }
 
+    // dt_after_hours: empty means "no double time" and must store NULL,
+    // never 0 — 0 would mean every hour past clock-in is double time. Same
+    // rule as updateShow (app/shows/actions.ts), which this card feeds.
+    const dtRaw = card.dt_after_hours.trim()
+    let dtAfterHours: number | null = null
+    if (dtRaw !== '') {
+      const parsed = Number(dtRaw)
+      if (!Number.isFinite(parsed)) {
+        return { error: `Couldn't read "${card.dt_after_hours}" as a double-time threshold for ${label}.` }
+      }
+      dtAfterHours = parsed
+    }
+    if (dtAfterHours !== null && dtAfterHours <= card.ot_after_hours) {
+      return { error: `Double time for ${label} must start after the overtime threshold.` }
+    }
+
+    if (!Number.isInteger(card.minimum_meal_break_minutes) || card.minimum_meal_break_minutes < 0) {
+      return { error: `Minimum meal break for ${label} must be zero minutes or more.` }
+    }
+    if (!Number.isInteger(card.meal_break_deduction_cap) || card.meal_break_deduction_cap < 0) {
+      return { error: `Meal break deduction cap for ${label} must be zero minutes or more.` }
+    }
+    if (!Number.isFinite(card.meal_penalty_grace_hours) || card.meal_penalty_grace_hours < 0) {
+      return { error: `Meal penalty grace for ${label} must be zero hours or more.` }
+    }
+    if (!Number.isFinite(card.short_turn_rest_hours) || card.short_turn_rest_hours < 0) {
+      return { error: `Short-turn rest for ${label} must be zero hours or more.` }
+    }
+
+    // meal_penalty_cents at 0 is how billShows derives meal_penalty_enabled:
+    // false for a show frozen off this card — that's intended and correct, 0
+    // disables the rule rather than meaning "unset". A blank box parses to 0
+    // (parseUSD(''): see lib/money.ts), which is exactly that legitimate
+    // zero, not the "cleared box" case travel/PM guard against above.
+    const mealPenaltyCents = parseUSD(card.meal_penalty)
+    if (mealPenaltyCents === null) {
+      return { error: `Couldn't read "${card.meal_penalty}" as a meal penalty for ${label}.` }
+    }
+    if (mealPenaltyCents < 0) return { error: `The meal penalty for ${label} cannot be negative.` }
+
     rows.push({
       id: card.id,
       name: isDefault ? null : trimmedName,
@@ -127,6 +187,13 @@ function parseCards(cards: CardInput[]): CardRow[] | Fail {
       ot_after_hours: card.ot_after_hours,
       travel_rate_cents: travelOverride ?? derived.travel_rate_cents,
       pm_rate_cents: pmOverride ?? derived.pm_rate_cents,
+      dt_after_hours: dtAfterHours,
+      minimum_meal_break_minutes: card.minimum_meal_break_minutes,
+      meal_break_deduction_cap: card.meal_break_deduction_cap,
+      meal_penalty_grace_hours: card.meal_penalty_grace_hours,
+      meal_penalty_cents: mealPenaltyCents,
+      short_turn_rest_hours: card.short_turn_rest_hours,
+      continuous_time_enabled: card.continuous_time_enabled,
     })
   }
 
@@ -213,6 +280,13 @@ export async function saveClient(input: ClientInput): Promise<Fail | { ok: true;
       ot_after_hours: card.ot_after_hours,
       travel_rate_cents: card.travel_rate_cents,
       pm_rate_cents: card.pm_rate_cents,
+      dt_after_hours: card.dt_after_hours,
+      minimum_meal_break_minutes: card.minimum_meal_break_minutes,
+      meal_break_deduction_cap: card.meal_break_deduction_cap,
+      meal_penalty_grace_hours: card.meal_penalty_grace_hours,
+      meal_penalty_cents: card.meal_penalty_cents,
+      short_turn_rest_hours: card.short_turn_rest_hours,
+      continuous_time_enabled: card.continuous_time_enabled,
     }
     if (card.id) {
       // Scoped to THIS client's id too, not a bare lookup by card id — a
