@@ -3,7 +3,8 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { chronologyError, isIncompleteDay } from '@/lib/chronology'
-import { travelRateFrom, parseUSD } from '@/lib/money'
+import { parseUSD } from '@/lib/money'
+import { deriveFromDayRate } from '@/lib/rateCards'
 import { todayInChicago, addDays, isPlainDate } from '@/lib/dates'
 import {
   computeShowLines, mergeLines, rulesetAndRatesFor, type BucketLine, type PmEntryLike,
@@ -35,13 +36,49 @@ type Fail = { error: string }
  * instead of silently substituting a default.
  */
 export async function createShow(input: {
-  client_id: string; name: string; venue?: string; rate_card_id?: string
-}): Promise<Fail | { ok: true; id: string }> {
+  client_id: string
+  name: string
+  venue?: string
+  rate_card_id?: string
+  /** IANA zone the show is worked in, e.g. "America/Los_Angeles". Required —
+   *  see lib/timezones.ts. A San Diego show silently left on the
+   *  DEFAULT_TIMEZONE fallback (America/Chicago) is what this field exists
+   *  to stop: the hours would still be right, but every punch read back two
+   *  hours off. */
+  timezone: string
+  /** Optional trip dates. Both or neither — creates the days via
+   *  addShowDays below, never a second insert path. */
+  start_date?: string
+  end_date?: string
+  /** Marks the first/last created day as a travel leg (setTravelLeg). Off
+   *  unless ticked — travel is a deliberate choice, never automatic, and
+   *  either flag is a no-op with no dates to apply it to. */
+  travel_in?: boolean
+  travel_out?: boolean
+  // Raw USD/number input, same shape as UpdateShowInput below. Each is an
+  // OVERRIDE of the chosen rate card's own number: undefined or blank means
+  // "use the card", not zero — parseUSD("") is 0, and treating a blank box
+  // as a deliberate $0 would rebuild the exact bug rate cards exist to
+  // prevent (see deriveFromDayRate in lib/rateCards.ts).
+  day_rate?: string
+  travel_rate?: string
+  pm_rate?: string
+  ot_after_hours?: string
+}): Promise<Fail | { ok: true; id: string; warning?: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not signed in.' }
   if (!input.client_id) return { error: 'Choose a client.' }
   if (!input.name.trim()) return { error: 'Give the show a name.' }
+
+  // No default here (contrast updateShow, which trusts an already-validated
+  // value on an existing show): a bad or missing zone does not throw, it
+  // silently renders every punch in the wrong hour, and that is only
+  // noticed later, on an invoice.
+  if (!input.timezone) return { error: 'Choose a timezone.' }
+  if (!isKnownTimezone(input.timezone)) {
+    return { error: `"${input.timezone}" is not a timezone this app offers.` }
+  }
 
   const { data: client } = await supabase
     .from('clients').select('name')
@@ -77,26 +114,109 @@ export async function createShow(input: {
     if (!card) return { error: 'Choose a rate card for this client.' }
   }
 
-  const day = card.day_rate_cents
-  const hours = Number(card.ot_after_hours ?? 10)
+  // An override box that is undefined or blank means "use the card", not
+  // zero — parseUSD("") is 0, and a cleared box must not silently freeze a
+  // $0.00 rate. Only a box that actually has text in it gets parsed, and
+  // only parseUSD's real null (junk, not blank) is refused.
+  function overrideCents(raw: string | undefined): number | null | undefined {
+    if (raw === undefined || raw.trim() === '') return undefined
+    return parseUSD(raw)
+  }
+
+  const dayOverride = overrideCents(input.day_rate)
+  if (dayOverride === null) return { error: `Couldn't read "${input.day_rate}" as a day rate.` }
+  if (dayOverride !== undefined && dayOverride <= 0) {
+    return { error: 'Day rate must be more than $0.00 — a show needs a usable rate card.' }
+  }
+  const day = dayOverride ?? card.day_rate_cents
+
+  const hoursRaw = input.ot_after_hours?.trim()
+  let hours: number
+  if (hoursRaw) {
+    const parsed = Number(hoursRaw)
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return { error: 'Overtime threshold must be more than zero hours.' }
+    }
+    hours = parsed
+  } else {
+    hours = Number(card.ot_after_hours ?? 10)
+  }
+
+  // Travel bills per LEG. A full-day card therefore makes a fly-in/fly-out
+  // trip bill two day rates where a half-day card bills one. Derived from
+  // the FINAL day rate (post-override), never the card's own — that is what
+  // makes a $780 -> $900 day-rate override carry travel/PM along with it
+  // instead of leaving them at what $780 would have implied.
+  const derived = deriveFromDayRate(day, hours, card.travel_full_day)
+
+  const travelOverride = overrideCents(input.travel_rate)
+  if (travelOverride === null) return { error: `Couldn't read "${input.travel_rate}" as a travel rate.` }
+  if (travelOverride !== undefined && travelOverride < 0) return { error: 'Travel rate cannot be negative.' }
+  const travel = travelOverride ?? derived.travel_rate_cents
+
+  const pmOverride = overrideCents(input.pm_rate)
+  if (pmOverride === null) return { error: `Couldn't read "${input.pm_rate}" as a PM rate.` }
+  if (pmOverride !== undefined && pmOverride < 0) return { error: 'PM rate cannot be negative.' }
+  const pm = pmOverride ?? derived.pm_rate_cents
 
   const { data, error } = await supabase.from('shows').insert({
     owner_id: user.id,
     client_id: input.client_id,
     name: input.name.trim(),
     venue: input.venue?.trim() || null,
+    timezone: input.timezone,
     day_rate_cents: day,
-    // Travel bills per LEG. A full-day card therefore makes a fly-in/fly-out
-    // trip bill two day rates where a half-day card bills one.
-    travel_rate_cents: card.travel_full_day ? day : travelRateFrom(day),
-    pm_rate_cents: hours > 0 ? Math.round(day / hours) : 0,
+    travel_rate_cents: travel,
+    pm_rate_cents: pm,
     ot_after_hours: hours,
+    // Frozen to the CARD's name regardless of any override above — the card
+    // names the arrangement, not the number (see ShowSettings, which prints
+    // it as "Frozen from the ... rate card" even once the rates beneath it
+    // have been hand-edited).
     rate_card_name: card.name,
   }).select('id').single()
 
   if (error) return { error: error.message }
   revalidatePath('/shows')
-  return { ok: true, id: data.id }
+
+  // Everything below is best-effort on a show that already exists: a
+  // failure here is reported as a warning, never as though createShow
+  // itself failed — the row is committed and Dan would otherwise be told
+  // "it didn't work" about a show he can already see in the list.
+  const warnings: string[] = []
+  let daysCreated = false
+
+  const startDate = input.start_date?.trim()
+  const endDate = input.end_date?.trim()
+  if (startDate && endDate) {
+    const daysResult = await addShowDays(data.id, startDate, endDate)
+    if ('error' in daysResult) {
+      warnings.push(`The show was created, but the days could not be added: ${daysResult.error}`)
+    } else {
+      daysCreated = true
+    }
+  }
+
+  if (input.travel_in || input.travel_out) {
+    if (!daysCreated) {
+      warnings.push('Travel legs were not set — no days were added to apply them to.')
+    } else {
+      const { data: days } = await supabase
+        .from('show_days').select('id, date').eq('show_id', data.id).order('date')
+      const first = days?.[0]
+      const last = days?.[days.length - 1]
+      if (input.travel_in && first) {
+        const legResult = await setTravelLeg(first.id, 'in', true)
+        if ('error' in legResult) warnings.push(`Travel-in was not set: ${legResult.error}`)
+      }
+      if (input.travel_out && last) {
+        const legResult = await setTravelLeg(last.id, 'out', true)
+        if ('error' in legResult) warnings.push(`Travel-out was not set: ${legResult.error}`)
+      }
+    }
+  }
+
+  return { ok: true, id: data.id, ...(warnings.length ? { warning: warnings.join(' ') } : {}) }
 }
 
 const MAX_RANGE_DAYS = 60
