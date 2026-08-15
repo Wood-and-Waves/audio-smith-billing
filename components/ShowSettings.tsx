@@ -13,6 +13,10 @@ export type EditorShow = {
   id: string
   name: string
   venue: string | null
+  /** Free text, "San Diego, CA" — where the show is, for scanning a list.
+   *  Separate from venue (the building). Nothing computes on it; see
+   *  migration 0017. */
+  location: string | null
   notes: string | null
   timezone: string
   // The rate card this show was created from (migration 0013), frozen at
@@ -42,6 +46,7 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
 
   const [name, setName] = useState(initial.name)
   const [venue, setVenue] = useState(initial.venue ?? '')
+  const [location, setLocation] = useState(initial.location ?? '')
   const [notes, setNotes] = useState(initial.notes ?? '')
   // Punch times are stored as instants and displayed in this zone. Getting it
   // wrong does not change the hours billed — a duration is a duration — but
@@ -78,6 +83,7 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
         id: initial.id,
         name,
         venue,
+        location,
         notes,
         day_rate: dayRate,
         travel_rate: travelRate,
@@ -118,10 +124,18 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
             <input id="show-name" className={FIELD_FULL} value={name} disabled={locked || pending}
                    onChange={(e) => setName(e.target.value)} />
           </div>
-          <div className="sm:col-span-2">
+          <div>
             <label className="eyebrow block mb-2" htmlFor="show-venue">Venue</label>
             <input id="show-venue" className={FIELD_FULL} value={venue} disabled={locked || pending}
                    onChange={(e) => setVenue(e.target.value)} />
+          </div>
+          <div>
+            <label className="eyebrow block mb-2" htmlFor="show-location">Location</label>
+            <input id="show-location" className={FIELD_FULL} value={location} disabled={locked || pending}
+                   placeholder="San Diego, CA" onChange={(e) => setLocation(e.target.value)} />
+            <p className="text-xs text-muted mt-1.5">
+              The city, for scanning the shows list — venue is the building.
+            </p>
           </div>
           <div className="sm:col-span-2">
             <label className="eyebrow block mb-2">Timezone</label>

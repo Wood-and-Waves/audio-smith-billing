@@ -31,7 +31,8 @@ type Expense = {
   amount_cents: number; spent_on: string; receipt_path: string | null
 }
 type ShowRow = {
-  id: string; name: string; venue: string | null; notes: string | null; timezone: string
+  id: string; name: string; venue: string | null; location: string | null
+  notes: string | null; timezone: string
   status: string; invoice_id: string | null
   day_rate_cents: number; travel_rate_cents: number; pm_rate_cents: number
   ot_after_hours: number; dt_after_hours: number | null
@@ -51,7 +52,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
 
   const { data, error } = await supabase
     .from('shows')
-    .select(`id, name, venue, notes, timezone, status, invoice_id,
+    .select(`id, name, venue, location, notes, timezone, status, invoice_id,
              day_rate_cents, travel_rate_cents, pm_rate_cents, ot_after_hours,
              dt_after_hours, minimum_meal_break_minutes, meal_break_deduction_cap,
              meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours,
@@ -130,7 +131,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
       <div className="mb-8">
         <h1 className="display text-3xl font-bold">{s.name}</h1>
         <p className="text-sm text-muted mt-1">
-          {s.clients?.name}{s.venue ? ` · ${s.venue}` : ''}
+          {s.clients?.name}{s.location ? ` · ${s.location}` : ''}{s.venue ? ` · ${s.venue}` : ''}
         </p>
       </div>
 
@@ -139,6 +140,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
           id: s.id,
           name: s.name,
           venue: s.venue,
+          location: s.location,
           notes: s.notes,
           timezone: s.timezone,
           rate_card_name: s.rate_card_name,

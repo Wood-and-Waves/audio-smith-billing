@@ -30,6 +30,7 @@ export type UnbilledShow = {
   id: string
   name: string
   venue: string | null
+  location: string | null
   clientId: string
   clientName: string
   dates: string[]
@@ -121,8 +122,14 @@ export default function UnbilledShows({ shows }: { shows: UnbilledShow[] }) {
                     </Link>
                     <span className="tabular text-sm font-semibold">{formatUSD(s.totalCents)}</span>
                   </div>
+                  {/* Location, not venue — the same swap as the billed list on
+                      this page. Venue is the long building name and already
+                      shown on the show page; location (the city) is what Dan
+                      scans for here, and this line also carries a day count
+                      and date, so keeping it short matters more here than
+                      there at 375px. */}
                   <label htmlFor={inputId} className={`block text-xs text-muted mt-1 ${disabled ? '' : 'cursor-pointer'}`}>
-                    {s.clientName}{s.venue ? ` · ${s.venue}` : ''}
+                    {s.clientName}{s.location ? ` · ${s.location}` : ''}
                     {s.dates.length > 0 &&
                       ` · ${s.dates.length} ${s.dates.length === 1 ? 'day' : 'days'} · ${formatDateShort(s.dates[0])}`}
                   </label>

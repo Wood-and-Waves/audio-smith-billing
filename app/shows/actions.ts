@@ -48,6 +48,10 @@ export async function createShow(input: {
   client_id: string
   name: string
   venue?: string
+  /** Free text, "San Diego, CA" — where the show is, for scanning a list.
+   *  Separate from venue (the building). Nothing computes on it; see
+   *  migration 0017. */
+  location?: string
   rate_card_id?: string
   /** IANA zone the show is worked in, e.g. "America/Los_Angeles". Required —
    *  see lib/timezones.ts. A San Diego show silently left on the
@@ -202,6 +206,7 @@ export async function createShow(input: {
     client_id: input.client_id,
     name: input.name.trim(),
     venue: input.venue?.trim() || null,
+    location: input.location?.trim() || null,
     timezone: input.timezone,
     day_rate_cents: day,
     travel_rate_cents: travel,
@@ -789,6 +794,10 @@ export type UpdateShowInput = {
   id: string
   name: string
   venue: string
+  /** Free text, "San Diego, CA" — where the show is, for scanning a list.
+   *  Separate from venue (the building). Nothing computes on it; see
+   *  migration 0017. */
+  location: string
   notes: string
   day_rate: string             // raw USD input, e.g. "780" or "$780.00"
   travel_rate: string          // raw USD input
@@ -898,6 +907,7 @@ export async function updateShow(input: UpdateShowInput): Promise<Fail | { ok: t
   const { error } = await supabase.from('shows').update({
     name: input.name.trim(),
     venue: input.venue.trim() || null,
+    location: input.location.trim() || null,
     notes: input.notes.trim() || null,
     day_rate_cents: dayRate,
     travel_rate_cents: travelRate,

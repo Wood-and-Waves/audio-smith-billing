@@ -48,6 +48,7 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
   const [rateCardId, setRateCardId] = useState('')
   const [name, setName] = useState('')
   const [venue, setVenue] = useState('')
+  const [location, setLocation] = useState('')
   // No default — see lib/timezones.ts. A silent America/Chicago default is
   // the bug this screen exists to close; the field starts empty and the
   // button stays disabled until Dan actually picks one.
@@ -213,6 +214,7 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
         client_id: clientId,
         name,
         venue,
+        location,
         timezone,
         // A client with one card sends no rate_card_id, exactly as before
         // cards existed — createShow falls back to that one card on its own.
@@ -311,10 +313,17 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
                onChange={(e) => setName(e.target.value)} />
       </div>
 
-      <div className="mb-4">
-        <label className="eyebrow block mb-2" htmlFor="venue">Venue (optional)</label>
-        <input id="venue" className={FIELD_FULL} value={venue}
-               onChange={(e) => setVenue(e.target.value)} />
+      <div className="grid gap-4 sm:grid-cols-2 mb-4">
+        <div>
+          <label className="eyebrow block mb-2" htmlFor="venue">Venue (optional)</label>
+          <input id="venue" className={FIELD_FULL} value={venue}
+                 onChange={(e) => setVenue(e.target.value)} />
+        </div>
+        <div>
+          <label className="eyebrow block mb-2" htmlFor="location">Location (optional)</label>
+          <input id="location" className={FIELD_FULL} value={location} placeholder="San Diego, CA"
+                 onChange={(e) => setLocation(e.target.value)} />
+        </div>
       </div>
 
       <div className="mb-8">

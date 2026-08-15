@@ -19,7 +19,8 @@ type Expense = {
   amount_cents: number; spent_on: string; receipt_path: string | null
 }
 type Row = {
-  id: string; name: string; venue: string | null; status: string; client_id: string
+  id: string; name: string; venue: string | null; location: string | null
+  status: string; client_id: string
   day_rate_cents: number; travel_rate_cents: number; pm_rate_cents: number
   ot_after_hours: number; dt_after_hours: number | null
   minimum_meal_break_minutes: number; meal_break_deduction_cap: number
@@ -34,7 +35,7 @@ export default async function ShowsPage() {
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('shows')
-    .select(`id, name, venue, status, created_at, client_id,
+    .select(`id, name, venue, location, status, created_at, client_id,
              day_rate_cents, travel_rate_cents, pm_rate_cents, ot_after_hours,
              dt_after_hours, minimum_meal_break_minutes, meal_break_deduction_cap,
              meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours,
@@ -102,6 +103,7 @@ export default async function ShowsPage() {
       id: s.id,
       name: s.name,
       venue: s.venue,
+      location: s.location,
       clientId: s.client_id,
       clientName: s.clients?.name ?? 'Unknown client',
       dates: days.map((d) => d.date),
@@ -125,8 +127,13 @@ export default async function ShowsPage() {
               {dates.length > 0 && ` · ${formatDateShort(dates[0])}`}
             </span>
           </div>
+          {/* Location, not venue: the city is what Dan scans for here (he used
+              to type it into the show name to find it), and venue is the long
+              building name that already runs on for a full line on its own —
+              see the show page. Dropping venue from this line, rather than
+              appending a third segment, is what keeps it readable at 375px. */}
           <p className="text-xs text-muted mt-1">
-            {r.clients?.name}{r.venue ? ` · ${r.venue}` : ''}
+            {r.clients?.name}{r.location ? ` · ${r.location}` : ''}
           </p>
         </Link>
       </li>
