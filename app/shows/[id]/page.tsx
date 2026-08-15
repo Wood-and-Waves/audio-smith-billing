@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { isIncompleteDay } from '@/lib/chronology'
 import { formatDateLong, formatDateShort } from '@/lib/dates'
+import { instantToWall } from '@/lib/zonedTime'
 import { formatUSD, formatQty, lineTotal } from '@/lib/money'
 import { computeShowLines, rulesetAndRatesFor, type PmEntryLike } from '@/lib/showBuckets'
 import { calculateNetHours, type ShowDayLike } from '@/lib/payroll'
@@ -76,6 +77,12 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
   const s = data as unknown as ShowRow
   const days = [...s.show_days].sort((a, b) => a.date.localeCompare(b.date))
   const locked = s.status === 'billed'
+
+  // Today in the SHOW's zone, not Chicago. todayInChicago() would be a
+  // simpler string compare, but every show carries its own timezone and for
+  // one hour a day the two disagree — on an Orlando show that means the wrong
+  // row is highlighted exactly when Dan is on site late.
+  const todayHere = instantToWall(new Date().toISOString(), s.timezone).date
 
   const { rules, rates } = rulesetAndRatesFor(s)
   // Pure functions — safe to call straight from a server component to render
@@ -157,9 +164,25 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
         ) : (
           <ul className="border-t border-line">
             {days.map((d) => (
-              <li key={d.id} className="border-b border-line py-4">
+              // Today gets an amber edge and a chip. Before this the only thing
+              // separating one day from the next was a hairline in #2a3441 on a
+              // #121212 background, and each row is tall enough that one or two
+              // fill a phone screen — so on site, mid-show, the days ran
+              // together and it was easy to punch the wrong one.
+              <li key={d.id}
+                  className={d.date === todayHere
+                    ? 'border-b border-line py-4 pl-3 -ml-3 border-l-2 border-l-accent bg-accent-wash'
+                    : 'border-b border-line py-4'}>
                 <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-2">
-                  <span className="font-semibold">{formatDateLong(d.date)}</span>
+                  <span className="font-semibold">
+                    {formatDateLong(d.date)}
+                    {d.date === todayHere && (
+                      <span className="ml-2 align-middle text-[11px] font-bold uppercase tracking-wider
+                                       text-accent-ink bg-accent-surface rounded-field px-1.5 py-0.5">
+                        Today
+                      </span>
+                    )}
+                  </span>
                   <span className="flex items-baseline gap-3">
                     <span className="eyebrow">
                       {[

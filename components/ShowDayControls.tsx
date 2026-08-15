@@ -100,22 +100,34 @@ export default function ShowDayControls({
   return (
     <div>
       <div className="mb-6">
-        <div className="flex flex-wrap items-end gap-3">
-          <div>
+        {/* A grid, not flex-wrap. The two date fields and the button used to
+            sit in one wrapping flex row, and an iOS date control will not
+            shrink below its intrinsic width (~130-160px) — so on a 375px
+            phone, with 335px of usable width, it was the BUTTON that got
+            squeezed rather than the row wrapping. Two columns for the dates,
+            the button on its own full-width row beneath, and min-w-0 so the
+            fields can actually give ground. */}
+        <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-end">
+          <div className="min-w-0">
             <label className="eyebrow block mb-1.5" htmlFor="showDayStart">From</label>
             <input id="showDayStart" type="date" className={FIELD_FULL} value={startDate}
                    onChange={(e) => setStartDate(e.target.value)} />
           </div>
-          <div>
+          <div className="min-w-0">
             <label className="eyebrow block mb-1.5" htmlFor="showDayEnd">To</label>
             <input id="showDayEnd" type="date" className={FIELD_FULL} value={endDate}
                    onChange={(e) => setEndDate(e.target.value)} />
           </div>
           {/* A date input can be cleared, which submits "". The action refuses
-              that too — this just stops the pointless round trip. */}
+              that too — this just stops the pointless round trip.
+              Styled as a real action, not the ghost treatment it had: muted
+              grey on a border barely above the surface, and a size SMALLER
+              than "Bill this show" below it, so the less obvious control was
+              also the quieter one. */}
           <button type="button" onClick={addDayRange} disabled={pending || !startDate || !endDate}
-                  className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
-                             border border-line text-muted hover:text-ink disabled:opacity-50">
+                  className="col-span-2 w-full sm:w-auto px-5 py-2.5 bg-accent-surface text-accent-ink
+                             font-bold uppercase tracking-wider text-sm rounded-field
+                             hover:opacity-90 disabled:opacity-50">
             {pending ? 'Adding…' : '+ Add days'}
           </button>
         </div>
