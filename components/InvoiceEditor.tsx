@@ -10,6 +10,7 @@ import {
 import { todayInChicago, addDays } from '@/lib/dates'
 import { saveInvoice, type InvoiceInput } from '@/app/invoices/actions'
 import { FIELD_FULL } from '@/components/ui/field'
+import Select from '@/components/ui/Select'
 
 export type EditorClient = {
   id: string
@@ -167,18 +168,20 @@ export default function InvoiceEditor({
 
       <div className="grid gap-4 sm:grid-cols-2 mb-8">
         <div className="sm:col-span-2">
-          <label className="eyebrow block mb-2" htmlFor="client">Client</label>
-          <select id="client" className={FIELD_FULL} value={clientId}
-                  onChange={(e) => {
-                    setClientId(e.target.value)
-                    const c = clients.find((x) => x.id === e.target.value)
-                    if (c) setTermsDays(String(c.terms_days))
-                  }}>
-            <option value="">Choose a client…</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
+          <label className="eyebrow block mb-2">Client</label>
+          <Select
+            ariaLabel="Client"
+            value={clientId}
+            onChange={(v) => {
+              setClientId(v)
+              const c = clients.find((x) => x.id === v)
+              if (c) setTermsDays(String(c.terms_days))
+            }}
+            options={[
+              { value: '', label: 'Choose a client…' },
+              ...clients.map((c) => ({ value: c.id, label: c.name })),
+            ]}
+          />
           {client?.day_rate_cents ? (
             <p className="text-xs text-muted mt-1.5 tabular">
               Day {formatUSD(client.day_rate_cents)} · Travel{' '}

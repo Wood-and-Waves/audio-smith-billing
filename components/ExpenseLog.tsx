@@ -9,6 +9,7 @@ import { CATEGORY_LABEL, CATEGORY_ORDER, expensesMissingReceipts, type ExpenseCa
 import { scaleToFit, contrastBounds, buildLut, JPEG_QUALITY } from '@/lib/receiptImage'
 import { addExpense, deleteExpense, extractReceipt } from '@/app/expenses/actions'
 import { FIELD_FULL } from '@/components/ui/field'
+import Select from '@/components/ui/Select'
 
 type Row = {
   id: string
@@ -541,15 +542,16 @@ export default function ExpenseLog({
       )}
 
       <div className="grid gap-2 sm:grid-cols-[8rem_1fr_7rem_9rem_auto] items-center mb-3">
-        <select aria-label="Category" className={FIELD_FULL} value={category} disabled={locked || pending}
-                onChange={(e) => {
-                  touchedRef.current.add('category')
-                  setCategory(e.target.value as ExpenseCategory)
-                }}>
-          {CATEGORY_ORDER.map((c) => (
-            <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
-          ))}
-        </select>
+        <Select
+          ariaLabel="Category"
+          value={category}
+          disabled={locked || pending}
+          onChange={(v) => {
+            touchedRef.current.add('category')
+            setCategory(v as ExpenseCategory)
+          }}
+          options={CATEGORY_ORDER.map((c) => ({ value: c, label: CATEGORY_LABEL[c] }))}
+        />
         <input aria-label="Where" className={FIELD_FULL} placeholder="Where" value={whereSpent}
                disabled={locked || pending} onChange={(e) => {
                  touchedRef.current.add('vendor')

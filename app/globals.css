@@ -36,6 +36,11 @@
   --danger: #ef4444;      /* clipping — overdue */
   --good: #10b981;        /* paid */
 
+  /* The hard offset shadow an open overlay wears — carried over with
+     components/ui/Select.tsx so a lifted menu reads as a slip of paper above
+     the page rather than a browser-drawn capsule. */
+  --edge-shadow: rgba(0, 0, 0, 0.55);
+
   /* An invoice is a printed document. Inside this dark app, the invoice
      editor and preview sit on white, because that is what they become. */
   --paper: #ffffff;
@@ -84,6 +89,7 @@
 
     --danger: #dc2626;      /* 4.9:1 — #ef4444 measures 3.76 */
     --good: #047857;        /* 5.5:1 — #10b981 measures 2.56 */
+    --edge-shadow: rgba(34, 30, 22, 0.18);
   }
 }
 
@@ -98,6 +104,9 @@
   --color-accent-surface: var(--accent-surface);
   --color-accent-ink: var(--accent-ink);
   --color-accent-wash: var(--accent-wash);
+
+  /* shadow-edge: the hard offset shadow overlays wear. */
+  --shadow-edge: 3px 3px 0 0 var(--edge-shadow);
   --color-danger: var(--danger);
   --color-good: var(--good);
   --color-paper: var(--paper);

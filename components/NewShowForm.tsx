@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createShow } from '@/app/shows/actions'
 import { FIELD_FULL } from '@/components/ui/field'
+import Select from '@/components/ui/Select'
 
 
 type Client = { id: string; name: string; day_rate_cents: number | null }
@@ -37,12 +38,16 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
       <h1 className="display text-3xl font-bold mb-8">New show</h1>
 
       <div className="mb-4">
-        <label className="eyebrow block mb-2" htmlFor="client">Client</label>
-        <select id="client" className={FIELD_FULL} value={clientId}
-                onChange={(e) => setClientId(e.target.value)}>
-          <option value="">Choose a client…</option>
-          {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        <label className="eyebrow block mb-2">Client</label>
+        <Select
+          ariaLabel="Client"
+          value={clientId}
+          onChange={setClientId}
+          options={[
+            { value: '', label: 'Choose a client…' },
+            ...clients.map((c) => ({ value: c.id, label: c.name })),
+          ]}
+        />
         <p className="text-xs text-muted mt-1.5">
           Their rate card is copied onto this show, so a later rate change
           won&rsquo;t alter what you bill here.

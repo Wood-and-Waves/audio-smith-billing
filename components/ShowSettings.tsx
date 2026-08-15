@@ -6,6 +6,7 @@ import { formatAmount, parseUSD } from '@/lib/money'
 import { updateShow } from '@/app/shows/actions'
 import { TIMEZONES, DEFAULT_TIMEZONE } from '@/lib/timezones'
 import { FIELD_FULL } from '@/components/ui/field'
+import Select from '@/components/ui/Select'
 
 
 export type EditorShow = {
@@ -117,13 +118,14 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
                    onChange={(e) => setVenue(e.target.value)} />
           </div>
           <div className="sm:col-span-2">
-            <label className="eyebrow block mb-2" htmlFor="show-tz">Timezone</label>
-            <select id="show-tz" className={FIELD_FULL} value={timezone} disabled={locked || pending}
-                    onChange={(e) => setTimezone(e.target.value)}>
-              {TIMEZONES.map((tz) => (
-                <option key={tz.value} value={tz.value}>{tz.label}</option>
-              ))}
-            </select>
+            <label className="eyebrow block mb-2">Timezone</label>
+            <Select
+              ariaLabel="Timezone"
+              value={timezone}
+              disabled={locked || pending}
+              onChange={setTimezone}
+              options={TIMEZONES.map((tz) => ({ value: tz.value, label: tz.label }))}
+            />
             <p className="text-xs text-muted mt-1.5">
               Where the work happens, not where you bill from. Punch times display in this
               zone; hours billed are unaffected either way.
