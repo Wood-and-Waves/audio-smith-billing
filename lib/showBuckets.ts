@@ -20,6 +20,12 @@ export type ShowRates = {
   ot_rate_cents: number
   dt_rate_cents: number
   meal_penalty_cents: number
+  /**
+   * The rate card this show was created from, frozen. NULL is the default card
+   * and decorates nothing — naming the default would put "Day Rate — Standard"
+   * on every invoice for every client, including the many with one rate.
+   */
+  rate_card_name: string | null
 }
 
 export type BucketLine = {
@@ -80,12 +86,19 @@ export function computeShowLines(
     }
   }
 
-  push('Day Rate', dayRateDays, rates.day_rate_cents)
-  push('Day Rate (half)', halfDays, Math.round(rates.day_rate_cents / 2))
-  push('Travel Rate', travelLegs, rates.travel_rate_cents)
-  push('Overtime', otHours, rates.ot_rate_cents)
-  push('Double Time', dtHours, rates.dt_rate_cents)
-  push('PM Hours', pmHours, rates.pm_rate_cents)
+  // Every line whose price comes from the card carries the card's name. Not
+  // just the day rate: a PM card at $900 also has a $135 overtime rate against
+  // the standard $117, so a mixed invoice would otherwise show two "Overtime"
+  // lines at different prices with nothing to distinguish them.
+  const label = (base: string) =>
+    rates.rate_card_name ? `${base} — ${rates.rate_card_name}` : base
+
+  push(label('Day Rate'), dayRateDays, rates.day_rate_cents)
+  push(label('Day Rate (half)'), halfDays, Math.round(rates.day_rate_cents / 2))
+  push(label('Travel Rate'), travelLegs, rates.travel_rate_cents)
+  push(label('Overtime'), otHours, rates.ot_rate_cents)
+  push(label('Double Time'), dtHours, rates.dt_rate_cents)
+  push(label('PM Hours'), pmHours, rates.pm_rate_cents)
   if (rates.meal_penalty_cents > 0) push('Meal Penalty', penalties, rates.meal_penalty_cents)
 
   return lines
@@ -111,6 +124,7 @@ export type FrozenShowColumns = {
   meal_penalty_cents: number
   short_turn_rest_hours: number
   continuous_time_enabled: boolean
+  rate_card_name: string | null
 }
 
 /**
@@ -144,6 +158,7 @@ export function rulesetAndRatesFor(show: FrozenShowColumns): { rules: ShowRulese
     ot_rate_cents: overtimeRateFrom(show.day_rate_cents, hours),
     dt_rate_cents: doubleTimeRateFrom(show.day_rate_cents, hours),
     meal_penalty_cents: show.meal_penalty_cents,
+    rate_card_name: show.rate_card_name,
   }
   return { rules, rates }
 }

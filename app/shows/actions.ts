@@ -355,7 +355,7 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
              day_rate_cents, travel_rate_cents, pm_rate_cents, ot_after_hours,
              dt_after_hours, minimum_meal_break_minutes, meal_break_deduction_cap,
              meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours,
-             continuous_time_enabled,
+             continuous_time_enabled, rate_card_name,
              show_days(id, date, travel_in, travel_out, pay_as_half_day,
                        punches(punch_type, punched_at)),
              pm_entries(minutes),

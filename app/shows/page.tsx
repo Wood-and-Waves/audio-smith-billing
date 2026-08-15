@@ -25,6 +25,7 @@ type Row = {
   minimum_meal_break_minutes: number; meal_break_deduction_cap: number
   meal_penalty_grace_hours: number; meal_penalty_cents: number
   short_turn_rest_hours: number; continuous_time_enabled: boolean
+  rate_card_name: string | null
   clients: { name: string } | null; show_days: Day[]; pm_entries: PmEntry[]
   expenses: Expense[]
 }
@@ -37,7 +38,7 @@ export default async function ShowsPage() {
              day_rate_cents, travel_rate_cents, pm_rate_cents, ot_after_hours,
              dt_after_hours, minimum_meal_break_minutes, meal_break_deduction_cap,
              meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours,
-             continuous_time_enabled,
+             continuous_time_enabled, rate_card_name,
              clients(name),
              show_days(id, date, travel_in, travel_out, pay_as_half_day, punches(punch_type, punched_at)),
              pm_entries(minutes),

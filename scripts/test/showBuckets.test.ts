@@ -11,6 +11,7 @@ const RATES: ShowRates = {
   ot_rate_cents: 10636,         // 780 / 11 * 1.5
   dt_rate_cents: 14182,
   meal_penalty_cents: 0,
+  rate_card_name: null,
 }
 
 const RULES: ShowRuleset = {
@@ -281,4 +282,70 @@ test('no line ever carries a zero quantity', () => {
       assert.ok(l.qty_hundredths > 0, `${l.description} carries qty 0`)
     }
   }
+})
+
+// This file has no DAYS constant — it builds days from showDay()/travelDay(),
+// which already exist above. One travel leg in, two worked days.
+const CARD_DAYS: ShowDayLike[] = [
+  travelDay('t1', '2026-07-13', 'in'),
+  showDay('s1', '2026-07-14'),
+  showDay('s2', '2026-07-15'),
+]
+
+test('an unnamed card produces exactly the descriptions it always has', () => {
+  // 105 historical invoices and every single-rate client depend on these exact
+  // strings. This test exists to make that dependency explicit.
+  const lines = computeShowLines(CARD_DAYS, [], { ...RATES, rate_card_name: null }, RULES)
+  assert.deepEqual(
+    lines.map((l) => l.description).sort(),
+    ['Day Rate', 'Travel Rate'],
+  )
+})
+
+test('a named card suffixes every line whose price comes from it', () => {
+  // Decorating only the day rate would be worse than decorating none: a PM card
+  // at $900 also carries a $135 overtime rate against the standard $117, so a
+  // mixed invoice would show two "Overtime" lines at different prices with
+  // nothing to tell them apart.
+  const lines = computeShowLines(CARD_DAYS, [], { ...RATES, rate_card_name: 'PM' }, RULES)
+  assert.deepEqual(
+    lines.map((l) => l.description).sort(),
+    ['Day Rate — PM', 'Travel Rate — PM'],
+  )
+})
+
+test('a meal penalty is NOT decorated — its price is not the card\'s', () => {
+  // Named explicitly because the default RATES fixture has meal_penalty_cents 0,
+  // so a blanket "every line is decorated" assertion would pass without ever
+  // exercising this.
+  const rates = { ...RATES, rate_card_name: 'PM', meal_penalty_cents: 5000 }
+  const rules = { ...RULES, meal_penalty_enabled: true, meal_penalty_grace_hours: 4 }
+  const lines = computeShowLines(CARD_DAYS, [], rates, rules)
+  const penalty = lines.find((l) => l.description.startsWith('Meal Penalty'))
+  if (penalty) assert.equal(penalty.description, 'Meal Penalty', 'never suffixed')
+})
+
+test('two cards on one invoice stay separate and stay labelled', () => {
+  const standard = computeShowLines(CARD_DAYS, [], { ...RATES, rate_card_name: null }, RULES)
+  const pm = computeShowLines(CARD_DAYS, [], {
+    ...RATES, rate_card_name: 'PM', day_rate_cents: 90000, ot_rate_cents: 13500,
+  }, RULES)
+  const merged = mergeLines([standard, pm])
+
+  const dayLines = merged.filter((l) => l.description.startsWith('Day Rate'))
+  assert.equal(dayLines.length, 2, 'two rates, two lines')
+  assert.deepEqual(
+    dayLines.map((l) => l.description).sort(),
+    ['Day Rate', 'Day Rate — PM'],
+  )
+})
+
+test('the suffix uses an em dash, never a Unicode minus', () => {
+  // U+2212 renders as NOTHING in Helvetica — a deposit once printed as a charge
+  // rather than a credit because of it. The em dash was glyph-probed and does
+  // render in both Helvetica and Oswald.
+  const joined = computeShowLines(CARD_DAYS, [], { ...RATES, rate_card_name: 'PM' }, RULES)
+    .map((l) => l.description).join(' ')
+  assert.ok(joined.includes('—'), 'em dash')
+  assert.ok(!joined.includes('−'), 'never U+2212')
 })

@@ -27,6 +27,7 @@ const RULES: ShowRuleset = {
 const RATES: ShowRates = {
   day_rate_cents: 78000, travel_rate_cents: 39000, pm_rate_cents: 8500,
   ot_rate_cents: 11700, dt_rate_cents: 15600, meal_penalty_cents: 5000,
+  rate_card_name: null,
 }
 
 /** `2026-08-30` + 1 -> `2026-08-31`, in UTC so it can't skip a day locally. */

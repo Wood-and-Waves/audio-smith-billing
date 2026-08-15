@@ -123,7 +123,7 @@ test('an empty string is not a receipt', () => {
 test("the preview's flat sequence and billShows' grouped sequence agree", () => {
   const rates: ShowRates = {
     day_rate_cents: 70000, travel_rate_cents: 35000, pm_rate_cents: 7000,
-    ot_rate_cents: 0, dt_rate_cents: 0, meal_penalty_cents: 0,
+    ot_rate_cents: 0, dt_rate_cents: 0, meal_penalty_cents: 0, rate_card_name: null,
   }
   const rules: ShowRuleset = {
     overtime_after_hours: 11, double_time_enabled: false, double_time_after_hours: 14,
