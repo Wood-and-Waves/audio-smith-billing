@@ -152,15 +152,17 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
     if (!pmDirty) setPmRate(formatAmount(derived.pm_rate_cents))
   }
 
-  // The travel/PM preview for the day rate and OT boxes as they currently
-  // stand, or null if the day rate isn't usable — same guard onDayRateChange
-  // uses, so a cleared travel/PM box below re-derives under the identical
-  // rule a day-rate edit would.
-  function derivedFromCurrentDayRate() {
+  // The travel/PM preview for the day rate and OT boxes, or null if the day
+  // rate isn't usable — same guard onDayRateChange uses. Takes the OT value
+  // explicitly (defaulting to the current box) rather than always reading
+  // `otAfterHours` state, because onOtAfterHoursChange calls this from
+  // inside the change handler itself, before the state update from
+  // setOtAfterHours has landed.
+  function derivedFromCurrentDayRate(otValue: string = otAfterHours) {
     if (!selectedCard) return null
     const parsed = parseUSD(dayRate)
     if (!isDerivableDayRate(parsed)) return null
-    const hours = Number(otAfterHours) || Number(selectedCard.ot_after_hours) || 10
+    const hours = Number(otValue) || Number(selectedCard.ot_after_hours) || 10
     return deriveFromDayRate(parsed, hours, selectedCard.travel_full_day)
   }
 
@@ -189,6 +191,17 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
       const derived = derivedFromCurrentDayRate()
       if (derived) setPmRate(formatAmount(derived.pm_rate_cents))
     }
+  }
+
+  // PM is day rate ÷ OT-after-hours, so an OT edit changes what PM should
+  // be even though PM's own box was never touched. Treated like a day-rate
+  // edit: re-derive PM when it isn't dirty, leave it alone when it is.
+  // Travel isn't a function of OT, so it never needs this.
+  function onOtAfterHoursChange(value: string) {
+    setOtAfterHours(value)
+    if (pmDirty) return
+    const derived = derivedFromCurrentDayRate(value)
+    if (derived) setPmRate(formatAmount(derived.pm_rate_cents))
   }
 
   function submit() {
@@ -393,7 +406,7 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
             <div>
               <label className="eyebrow block mb-2" htmlFor="ot-after">OT after (hours)</label>
               <input id="ot-after" type="number" min={0.1} step="0.1" className={FIELD_FULL}
-                     value={otAfterHours} onChange={(e) => setOtAfterHours(e.target.value)} />
+                     value={otAfterHours} onChange={(e) => onOtAfterHoursChange(e.target.value)} />
             </div>
           </div>
         </>
