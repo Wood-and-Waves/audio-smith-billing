@@ -264,6 +264,7 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
   const router = useRouter()
   const [pending, start] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
 
   const [name, setName] = useState(initial?.name ?? '')
   const [contactName, setContactName] = useState(initial?.contact_name ?? '')
@@ -306,6 +307,7 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
 
   function submit() {
     setError(null)
+    setSaved(false)
     start(async () => {
       // Money fields (dayRate, travelRate, pmRate, mealPenalty) travel to
       // saveClient as the raw strings the user typed — parseCards is where
@@ -356,6 +358,7 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
         cards,
       })
       if ('error' in result) { setError(result.error); return }
+      setSaved(true)
       router.push(`/clients/${result.id}`)
       router.refresh()
     })
@@ -509,6 +512,9 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
         <p role="alert" className="mb-5 text-sm text-danger border-l-2 border-danger pl-3 py-1">
           {error}
         </p>
+      )}
+      {saved && !error && (
+        <p className="mb-5 text-sm text-good">Saved.</p>
       )}
 
       <div className="flex items-center gap-3">
