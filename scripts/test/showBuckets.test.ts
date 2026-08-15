@@ -350,6 +350,99 @@ test('the suffix uses an em dash, never a Unicode minus', () => {
   assert.ok(!joined.includes('−'), 'never U+2212')
 })
 
+// --- The "Day Rate (half)" branch --------------------------------------------
+
+test('a half day bills half the day rate, on its own line from full days', () => {
+  const half: ShowDayLike = {
+    id: 'h1', date: '2026-07-14', pay_as_half_day: true, travel_in: false, travel_out: false,
+    punches: [
+      { punch_type: 'start', punched_at: '2026-07-14T13:00:00Z' },
+      { punch_type: 'end', punched_at: '2026-07-14T18:00:00Z' },   // 5h — half day, still worked
+    ],
+  }
+  const full = showDay('f1', '2026-07-15')
+  const lines = computeShowLines([half, full], [], RATES, RULES)
+  assert.deepEqual(lines, [
+    { description: 'Day Rate', qty_hundredths: 100, unit_price_cents: 78000 },
+    { description: 'Day Rate (half)', qty_hundredths: 100, unit_price_cents: 39000 },  // 78000 / 2
+  ])
+})
+
+test('a half day with no punches bills nothing, even though the flag is set', () => {
+  // pay_as_half_day only matters once st > 0 — the half-day rate is earned by
+  // working, same as the full rate.
+  const d: ShowDayLike = {
+    id: 'x', date: '2026-07-14', pay_as_half_day: true, travel_in: false, travel_out: false, punches: [],
+  }
+  assert.deepEqual(computeShowLines([d], [], RATES, RULES), [])
+})
+
+// --- The "Double Time" branch (the ordinary path, not the short-turnaround one) ---
+
+test('a very long day bills overtime up to the DT threshold, then double time past it', () => {
+  const DT_RULES: ShowRuleset = { ...RULES, double_time_enabled: true, double_time_after_hours: 14 }
+  const long: ShowDayLike = {
+    id: 'l1', date: '2026-07-14', pay_as_half_day: false, travel_in: false, travel_out: false,
+    punches: [
+      { punch_type: 'start', punched_at: '2026-07-14T13:00:00Z' },
+      { punch_type: 'end', punched_at: '2026-07-15T05:00:00Z' },   // 16 hours
+    ],
+  }
+  const lines = computeShowLines([long], [], RATES, DT_RULES)
+  assert.deepEqual(lines, [
+    { description: 'Day Rate', qty_hundredths: 100, unit_price_cents: 78000 },
+    { description: 'Overtime', qty_hundredths: 300, unit_price_cents: 10636 },     // capped at 14 - 11
+    { description: 'Double Time', qty_hundredths: 200, unit_price_cents: 14182 },  // 16 - 14
+  ])
+})
+
+// --- The "Meal Penalty" branch -----------------------------------------------
+
+test('a meal penalty becomes its own invoice line, priced flat per penalty', () => {
+  const rates: ShowRates = { ...RATES, meal_penalty_cents: 5000 }
+  const rules: ShowRuleset = { ...RULES, meal_penalty_enabled: true, meal_penalty_grace_hours: 5 }
+  const longNoBreak: ShowDayLike = {
+    id: 'p1', date: '2026-07-14', pay_as_half_day: false, travel_in: false, travel_out: false,
+    punches: [
+      { punch_type: 'start', punched_at: '2026-07-14T13:00:00Z' },
+      { punch_type: 'end', punched_at: '2026-07-14T19:30:00Z' },   // 6.5h, no meal taken — past 5h grace
+    ],
+  }
+  const lines = computeShowLines([longNoBreak], [], rates, rules)
+  assert.deepEqual(lines, [
+    { description: 'Day Rate', qty_hundredths: 100, unit_price_cents: 78000 },
+    { description: 'Meal Penalty', qty_hundredths: 100, unit_price_cents: 5000 },
+  ])
+})
+
+test('meal penalties from several days sum into one invoice line', () => {
+  const rates: ShowRates = { ...RATES, meal_penalty_cents: 5000 }
+  const rules: ShowRuleset = { ...RULES, meal_penalty_enabled: true, meal_penalty_grace_hours: 5 }
+  const mk = (id: string, date: string): ShowDayLike => ({
+    id, date, pay_as_half_day: false, travel_in: false, travel_out: false,
+    punches: [
+      { punch_type: 'start', punched_at: `${date}T13:00:00Z` },
+      { punch_type: 'end', punched_at: `${date}T19:30:00Z` },   // 6.5h, no break, on each of two days
+    ],
+  })
+  const lines = computeShowLines([mk('a', '2026-07-14'), mk('b', '2026-07-15')], [], rates, rules)
+  const penalty = lines.find((l) => l.description === 'Meal Penalty')
+  assert.deepEqual(penalty, { description: 'Meal Penalty', qty_hundredths: 200, unit_price_cents: 5000 })
+})
+
+// --- A show day with a start punch and no end punch --------------------------
+
+test('a day with a start punch and no end punch bills nothing on the invoice', () => {
+  // The tech forgot to punch out. hasBothEnds gates every hours function this
+  // relies on, so an unfinished day contributes no line at all — not a
+  // partial guess at what the day would have billed.
+  const unfinished: ShowDayLike = {
+    id: 'u1', date: '2026-07-14', pay_as_half_day: false, travel_in: false, travel_out: false,
+    punches: [{ punch_type: 'start', punched_at: '2026-07-14T13:00:00Z' }],
+  }
+  assert.deepEqual(computeShowLines([unfinished], [], RATES, RULES), [])
+})
+
 test('a card name with stray whitespace does not reach the invoice', () => {
   // The DB constraint validates length(btrim(name)) > 0 but stores the value
   // verbatim, and shows.rate_card_name carries no constraint at all — so " PM"
