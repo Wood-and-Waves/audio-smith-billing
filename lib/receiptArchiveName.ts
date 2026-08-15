@@ -25,8 +25,14 @@ export type ArchiveEntry = {
  * rest of the name displays — U+202E is the classic "malware.exe" ->
  * "malwarexe.e" filename-spoofing trick. U+FEFF is a byte-order mark that
  * behaves the same as a zero-width space outside position zero.
+ *
+ * \x7f is DEL, and it belongs with the C0 range immediately before it even
+ * though it sits just after printable ASCII rather than just before it. It was
+ * missing, and it is not merely stripped by something downstream: uploadArg
+ * escapes it to a six-character backslash-u sequence, which is what would
+ * then appear in a Dropbox path.
  */
-const ILLEGAL = /[<>:"/\\|?*\x00-\x1f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g
+const ILLEGAL = /[<>:"/\\|?*\x00-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g
 
 /** Long enough to stay readable, short enough that no filesystem objects. */
 const MAX_SEGMENT = 80

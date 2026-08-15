@@ -45,7 +45,11 @@ function dosDate(date: string): number {
 const DOS_TIME = (12 << 11) | (0 << 5) | 0
 
 class Writer {
-  private parts: Uint8Array[] = []
+  /**
+   * Readable, because the whole archive is now handed out as its pieces.
+   * See buildZipParts.
+   */
+  readonly parts: Uint8Array[] = []
   length = 0
 
   bytes(b: Uint8Array) {
@@ -61,18 +65,23 @@ class Writer {
     this.bytes(new Uint8Array([v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff]))
   }
 
-  finish(): Uint8Array {
-    const out = new Uint8Array(this.length)
-    let at = 0
-    for (const part of this.parts) {
-      out.set(part, at)
-      at += part.length
-    }
-    return out
-  }
 }
 
-export function buildZip(entries: ZipEntry[]): Uint8Array {
+/**
+ * The archive as its pieces, in order, unconcatenated.
+ *
+ * This exists because concatenating is what the export could not afford. The
+ * entry bytes are already in memory — 320MB for the 80 x 4MB show this spec
+ * contemplates — and buildZip copied all of them into one buffer (1280MB peak),
+ * after which the call site copied that buffer again with .slice() to satisfy a
+ * TypeScript BodyInit constraint (1600MB), before Blob took its own copy. Three
+ * full copies where none is needed: Blob accepts the parts directly and
+ * concatenates internally, so the export hands it this array and keeps only the
+ * bytes it already had.
+ *
+ * A twelve-receipt show survives either way. A tour does not.
+ */
+export function buildZipParts(entries: ZipEntry[]): Uint8Array[] {
   const encoder = new TextEncoder()
   const body = new Writer()
   const central = new Writer()
@@ -130,20 +139,36 @@ export function buildZip(entries: ZipEntry[]): Uint8Array {
     central.bytes(name)
   }
 
-  const out = new Writer()
-  out.bytes(body.finish())
-  const centralBytes = central.finish()
-  out.bytes(centralBytes)
+  // End of central directory. Written on its own so the two writers above are
+  // never materialised — their .length is all this record needs from them.
+  const end = new Writer()
+  end.u32(0x06054b50)
+  end.u16(0)                      // this disk
+  end.u16(0)                      // disk holding the central directory
+  end.u16(entries.length)         // entries on this disk
+  end.u16(entries.length)         // entries total
+  end.u32(central.length)
+  end.u32(body.length)            // where the central directory starts
+  end.u16(0)                      // no comment
 
-  // End of central directory.
-  out.u32(0x06054b50)
-  out.u16(0)                      // this disk
-  out.u16(0)                      // disk holding the central directory
-  out.u16(entries.length)         // entries on this disk
-  out.u16(entries.length)         // entries total
-  out.u32(centralBytes.length)
-  out.u32(body.length)            // where the central directory starts
-  out.u16(0)                      // no comment
+  return [...body.parts, ...central.parts, ...end.parts]
+}
 
-  return out.finish()
+/**
+ * The whole archive as one buffer.
+ *
+ * Kept, and unchanged in behaviour: the round-trip test through the system
+ * `unzip` runs against this, and a caller that genuinely wants one buffer
+ * should not have to assemble it. Anything holding a show's worth of photos
+ * should be reaching for buildZipParts instead.
+ */
+export function buildZip(entries: ZipEntry[]): Uint8Array {
+  const parts = buildZipParts(entries)
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
+  let at = 0
+  for (const part of parts) {
+    out.set(part, at)
+    at += part.length
+  }
+  return out
 }

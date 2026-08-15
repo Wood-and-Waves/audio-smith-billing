@@ -33,6 +33,21 @@ test('characters that are illegal in a filename are removed', () => {
   )
 })
 
+test('every non-printing ASCII character is removed, DEL included', () => {
+  // DEL sits just AFTER printable ASCII rather than with the C0 controls just
+  // before it, which is how it came to be left out of the set. It is not caught
+  // downstream either: uploadArg escapes it rather than dropping it, so it would
+  // have reached Dropbox as a visible six-character backslash-u sequence in the
+  // middle of a filename.
+  //
+  // Written as escapes, never as literal characters — a literal control
+  // character in a source file is invisible to every reviewer who reads it.
+  assert.deepEqual(
+    archiveNames([e('2026-08-22', 'Hert\x7fz\x00 Re\x1fntal', 12345)]),
+    ['2026-08-22 Hert z Re ntal 123.45.jpg'],
+  )
+})
+
 test('a vendor OCR never read still produces a usable name', () => {
   assert.deepEqual(archiveNames([e('2026-08-22', null, 1998)]), ['2026-08-22 Receipt 19.98.jpg'])
   assert.deepEqual(archiveNames([e('2026-08-22', '   ', 1998)]), ['2026-08-22 Receipt 19.98.jpg'])

@@ -12,7 +12,7 @@ import {
   dropExactRepeats, duplicateOf, markDuplicates, type NamedCandidate,
 } from '@/lib/receiptDuplicates'
 import { archiveNames, sanitizeSegment } from '@/lib/receiptArchiveName'
-import { buildZip, type ZipEntry } from '@/lib/zipStore'
+import { buildZipParts, type ZipEntry } from '@/lib/zipStore'
 import type { ReceiptFields } from '@/lib/receiptExtraction'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select from '@/components/ui/Select'
@@ -1072,26 +1072,58 @@ export default function ExpenseLog({
     try {
       const result = await listShowOriginals(showId)
       if ('error' in result) { setError(result.error); return }
-      if (result.originals.length === 0) { setError('No originals are held for this show.'); return }
+      if (result.originals.length === 0) {
+        // This button only renders when originalsHeld > 0, so an empty list here
+        // does NOT mean the show has no originals. It means listShowOriginals
+        // could not sign a URL for a single one of them — it skips rows whose
+        // object has gone from Storage — which is the one case actually worth
+        // telling him about, and the old wording described the opposite.
+        setError('This show’s originals are recorded, but none of their files could be fetched from storage.')
+        return
+      }
 
       const names = archiveNames(result.originals)
       const entries: ZipEntry[] = []
+      const missed: string[] = []
       for (let i = 0; i < result.originals.length; i++) {
         const ref = result.originals[i]
-        const response = await fetch(ref.signedUrl)
-        if (!response.ok) throw new Error(`Could not download ${names[i]}.`)
-        entries.push({
-          name: names[i],
-          bytes: new Uint8Array(await response.arrayBuffer()),
-          date: ref.spentOn,
-        })
+        // A dead signed URL skips this receipt and keeps the rest — the same
+        // policy listShowOriginals already applies on the server, where a row
+        // with no object is dropped because "the rest of the show is still worth
+        // saving". Throwing here contradicted that and discarded every byte
+        // already downloaded, which for a tour is a long download to lose. It
+        // also becomes likelier once the deletion stage exists and an original
+        // can disappear under a page that is already open.
+        let bytes: Uint8Array
+        try {
+          const response = await fetch(ref.signedUrl)
+          if (!response.ok) { missed.push(names[i]); continue }
+          bytes = new Uint8Array(await response.arrayBuffer())
+        } catch {
+          missed.push(names[i])
+          continue
+        }
+        entries.push({ name: names[i], bytes, date: ref.spentOn })
       }
 
-      // .slice() rather than the raw Uint8Array: TS types buildZip's return as
-      // Uint8Array<ArrayBufferLike>, which admits a SharedArrayBuffer backing
-      // store and so is not assignable to BlobPart. slice() always allocates a
-      // fresh, non-shared buffer, which satisfies it.
-      const blob = new Blob([buildZip(entries).slice()], { type: 'application/zip' })
+      if (entries.length === 0) {
+        setError('None of this show’s originals could be downloaded. Nothing was saved.')
+        return
+      }
+
+      // The parts, unconcatenated, straight into Blob. Measured for the 80 x 4MB
+      // show the spec contemplates: the entry bytes are 320MB, buildZip copied
+      // them into one buffer for 1280MB, and .slice() copied that again for
+      // 1600MB — a copy that existed only to satisfy BlobPart, which rejects
+      // Uint8Array<ArrayBufferLike> because that admits a SharedArrayBuffer
+      // backing store. Blob takes the array of parts directly and does the
+      // joining itself, so all three copies go. A twelve-receipt show was always
+      // fine; a tour was going to OOM the tab.
+      // The cast, and only a cast: BlobPart rejects Uint8Array<ArrayBufferLike>
+      // because that admits a SharedArrayBuffer backing store. Nothing here is
+      // shared — every part comes from a fresh Uint8Array — and unlike the
+      // .slice() this replaces, a cast allocates nothing.
+      const blob = new Blob(buildZipParts(entries) as BlobPart[], { type: 'application/zip' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -1100,6 +1132,13 @@ export default function ExpenseLog({
       // Revoked on the next tick: revoking synchronously races the download in
       // Safari and produces an empty file.
       setTimeout(() => URL.revokeObjectURL(url), 0)
+
+      // After the download starts, not instead of it. The zip is real and worth
+      // keeping; this says which receipts are not in it, by the same name they
+      // would have had inside it.
+      if (missed.length > 0) {
+        setError(`Saved ${entries.length} of ${result.originals.length}. Could not download: ${missed.join(', ')}.`)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not build the archive.')
     } finally {
