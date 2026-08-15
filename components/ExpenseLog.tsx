@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, useTransition } from 'react'
+import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { formatAmount, formatUSD, parseUSD } from '@/lib/money'
@@ -47,8 +47,14 @@ type BatchRow = {
   /** This row's OWN uploaded pair. Never shared with another row — see the trap in the design doc. */
   enhancedPath: string | null
   originalPath: string | null
-  /** Fields the user has personally edited, so a slow OCR read can't clobber a hand correction. */
-  touched: Set<'category' | 'vendor' | 'amount' | 'date'>
+  /**
+   * Fields the user has personally edited, so a slow OCR read can't clobber a
+   * hand correction. 'included' is in here for the same reason the four text
+   * fields are: a row unticked while it was still queued would otherwise be
+   * re-ticked by its own OCR landing a moment later, and re-ticked rows get
+   * inserted.
+   */
+  touched: Set<'category' | 'vendor' | 'amount' | 'date' | 'included'>
 }
 
 /** A small number in flight, not twelve — twelve createImageBitmap calls on 5MB photos exhausts a phone. */
@@ -477,15 +483,23 @@ export default function ExpenseLog({
     }
   }
 
-  // What a batch row can be a repeat OF, from the show's side — computed once
-  // per render (expenses doesn't change mid-batch; nothing here refreshes
-  // until Add all calls router.refresh, which unmounts the batch anyway).
-  const existingCandidates: NamedCandidate[] = expenses.map((e) => ({
-    vendor: e.where_spent,
-    amountCents: e.amount_cents,
-    spentOn: e.spent_on,
-    label: `${e.where_spent} on ${formatDateShort(e.spent_on)}, already on this show`,
-  }))
+  // The show's own expenses as of RIGHT NOW, read through a ref rather than
+  // captured from the render the pick happened in. The list above keeps its ×
+  // buttons live while a batch runs, so deleting an expense mid-batch used to
+  // leave rows flagged as repeats of something that no longer exists — the
+  // duplicate check has to see the same list Dan is looking at.
+  const expensesRef = useRef(expenses)
+  useEffect(() => { expensesRef.current = expenses }, [expenses])
+
+  /** What a batch row can be a repeat OF, from the show's side. */
+  function existingCandidates(): NamedCandidate[] {
+    return expensesRef.current.map((e) => ({
+      vendor: e.where_spent,
+      amountCents: e.amount_cents,
+      spentOn: e.spent_on,
+      label: `${e.where_spent} on ${formatDateShort(e.spent_on)}, already on this show`,
+    }))
+  }
 
   function updateBatchRow(
     id: string,
@@ -499,7 +513,7 @@ export default function ExpenseLog({
 
   function toggleBatchRow(id: string) {
     setBatchRows((prev) => prev && prev.map((r) => (
-      r.id === id ? { ...r, included: !r.included } : r
+      r.id === id ? { ...r, included: !r.included, touched: new Set(r.touched).add('included') } : r
     )))
   }
 
@@ -565,7 +579,7 @@ export default function ExpenseLog({
       }))
       const match = duplicateOf(
         { vendor: read.vendor, amountCents: read.amountCents, spentOn: read.spentOn },
-        [...earlierInBatch, ...existingCandidates],
+        [...earlierInBatch, ...existingCandidates()],
       )
 
       return prev.map((r) => {
@@ -578,7 +592,12 @@ export default function ExpenseLog({
           amount: read.amountCents !== null && !r.touched.has('amount')
             ? formatAmount(read.amountCents) : r.amount,
           spentOn: read.spentOn !== null && !r.touched.has('date') ? read.spentOn : r.spentOn,
-          included: match === null,
+          // The tick gets the same protection as the four fields above. A row
+          // unticked while it was still queued — one Dan recognises as already
+          // logged, a blurry retake, a personal expense photographed by
+          // mistake — had its own OCR landing seconds later put the tick back,
+          // and Add all then inserted it. Silent, in a list of twelve.
+          included: r.touched.has('included') ? r.included : match === null,
           duplicateReason: match,
         }
       })
@@ -608,12 +627,19 @@ export default function ExpenseLog({
         spentOn: r.spentOn || null,
         label: candidateLabel(r.whereSpent || null, r.spentOn || null),
       }))
-      const matches = markDuplicates(asCandidates, existingCandidates)
+      const matches = markDuplicates(asCandidates, existingCandidates())
 
       return prev.map((r, i) => {
         const match = matches[i]
         if (match === null || r.duplicateReason !== null) return r
-        return { ...r, included: false, duplicateReason: match }
+        // Label it either way — but the tick is Dan's, not this pass's. If he
+        // has already made his own decision about this row, a late settle
+        // must not quietly reverse it.
+        return {
+          ...r,
+          included: r.touched.has('included') ? r.included : false,
+          duplicateReason: match,
+        }
       })
     })
   }
