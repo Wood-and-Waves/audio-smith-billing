@@ -31,7 +31,10 @@ const INVOICE: DocumentData = {
   deposit_cents: 0,
   total_cents: 50000,
   notes: null,
-  client: { name: 'Journey Church', address_line1: null, address_line2: null },
+  client: {
+    name: 'Journey Church', address_line1: null, address_line2: null,
+    city: null, state: null, postal_code: null,
+  },
   lines: [{
     id: 'l1',
     description: 'Audio Training/Maintenance',

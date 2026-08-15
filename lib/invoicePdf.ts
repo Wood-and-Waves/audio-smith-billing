@@ -22,6 +22,7 @@ import { createElement as h } from 'react'
 import { formatUSD, formatQty } from './money.ts'
 import { formatDateLong } from './dates.ts'
 import { CATEGORY_LABEL, CATEGORY_ORDER } from './expenses.ts'
+import { billToText } from './clientAddress.ts'
 import type { DocumentData } from '../components/InvoiceDocument.tsx'
 
 export type PdfParts = {
@@ -173,11 +174,7 @@ export function buildInvoicePdf(parts: PdfParts, data: DocumentData, assets: Pdf
   const { Document, Page, Text, View, Image } = parts
   const set = data.settings
 
-  const billTo =
-    data.bill_to_snapshot ??
-    [data.client?.name, data.client?.address_line1, data.client?.address_line2]
-      .filter(Boolean)
-      .join('\n')
+  const billTo = data.bill_to_snapshot ?? (data.client ? billToText(data.client) : '')
 
   // Children are ALWAYS spread as variadic arguments, never passed as a single
   // array. React warns "Each child in a list should have a unique key" for an

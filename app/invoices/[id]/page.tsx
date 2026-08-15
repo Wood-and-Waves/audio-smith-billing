@@ -27,7 +27,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
         `id, number, issue_date, due_date, terms_days, status, bill_to_snapshot,
          subtotal_cents, tax_bp, tax_cents, deposit_cents, total_cents, notes, imported,
          work_for, backup_snapshot,
-         clients(name, address_line1, address_line2, billing_email),
+         clients(name, address_line1, address_line2, city, state, postal_code, billing_email),
          invoice_lines(id, position, description, qty_hundredths, unit_price_cents, line_total_cents),
          reminder_log(kind, sent_at)`,
       )
@@ -147,6 +147,9 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           name: inv.clients.name,
           address_line1: inv.clients.address_line1,
           address_line2: inv.clients.address_line2,
+          city: inv.clients.city,
+          state: inv.clients.state,
+          postal_code: inv.clients.postal_code,
         }
       : null,
     lines,

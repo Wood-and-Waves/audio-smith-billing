@@ -7,6 +7,7 @@ import { addDays, formatDateLong } from '@/lib/dates'
 import { buildInvoicePdf } from '@/lib/invoicePdf'
 import { sendInvoiceEmail } from '@/lib/invoiceEmail'
 import { sendReminderEmail } from '@/lib/reminderEmail'
+import { billToText } from '@/lib/clientAddress'
 import { signedReceiptUrls } from '@/app/expenses/actions'
 import type { DocumentData } from '@/components/InvoiceDocument'
 import type { ExpenseCategory } from '@/lib/expenses'
@@ -72,15 +73,13 @@ export async function saveInvoice(input: InvoiceInput): Promise<SaveResult> {
 
   const { data: client } = await supabase
     .from('clients')
-    .select('name, address_line1, address_line2')
+    .select('name, address_line1, address_line2, city, state, postal_code')
     .eq('id', input.client_id)
     .maybeSingle()
 
   // Frozen at save time, so editing a client later can't rewrite an invoice
   // that has already gone out.
-  const billTo = [client?.name, client?.address_line1, client?.address_line2]
-    .filter(Boolean)
-    .join('\n')
+  const billTo = billToText(client ?? {})
 
   const row = {
     owner_id: user.id,
@@ -257,7 +256,7 @@ export async function sendInvoice(
           `id, number, issue_date, due_date, terms_days, status, bill_to_snapshot,
          subtotal_cents, tax_bp, tax_cents, deposit_cents, total_cents, notes, imported,
          public_token, backup_snapshot, work_for,
-         clients(name, address_line1, address_line2, billing_email),
+         clients(name, address_line1, address_line2, city, state, postal_code, billing_email),
          invoice_lines(id, position, description, qty_hundredths, unit_price_cents, line_total_cents)`,
         )
         .eq('id', invoiceId)
@@ -302,7 +301,11 @@ export async function sendInvoice(
     public_token: string | null
     backup_snapshot: BackupSnapshot | null
     work_for: string | null
-    clients: { name: string; address_line1: string | null; address_line2: string | null; billing_email: string | null } | null
+    clients: {
+      name: string; address_line1: string | null; address_line2: string | null
+      city: string | null; state: string | null; postal_code: string | null
+      billing_email: string | null
+    } | null
     invoice_lines: { id: string; position: number; description: string; qty_hundredths: number; unit_price_cents: number; line_total_cents: number }[]
   }
 
@@ -404,6 +407,9 @@ export async function sendInvoice(
           name: inv.clients.name,
           address_line1: inv.clients.address_line1,
           address_line2: inv.clients.address_line2,
+          city: inv.clients.city,
+          state: inv.clients.state,
+          postal_code: inv.clients.postal_code,
         }
       : null,
     lines,

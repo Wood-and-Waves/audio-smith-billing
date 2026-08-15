@@ -1,6 +1,7 @@
 import Image from 'next/image'
 import { formatUSD, formatQty } from '@/lib/money'
 import { formatDateLong } from '@/lib/dates'
+import { billToText } from '@/lib/clientAddress'
 
 // The invoice itself, on paper.
 //
@@ -44,7 +45,14 @@ export type DocumentData = {
    * nothing here — unchanged.
    */
   work_for?: string | null
-  client: { name: string; address_line1: string | null; address_line2: string | null } | null
+  client: {
+    name: string
+    address_line1: string | null
+    address_line2: string | null
+    city: string | null
+    state: string | null
+    postal_code: string | null
+  } | null
   lines: {
     id: string
     description: string
@@ -98,11 +106,7 @@ function Meta({ label, value }: { label: string; value: string }) {
 // shadow alone defines the sheet; on a light ground it needs the hairline.
 export default function InvoiceDocument({ data }: { data: DocumentData }) {
   const s = data.settings
-  const billTo =
-    data.bill_to_snapshot ??
-    [data.client?.name, data.client?.address_line1, data.client?.address_line2]
-      .filter(Boolean)
-      .join('\n')
+  const billTo = data.bill_to_snapshot ?? (data.client ? billToText(data.client) : '')
 
   return (
     <article className="bg-paper text-paper-ink rounded-card overflow-hidden shadow-lg border border-paper-line">

@@ -37,7 +37,10 @@ const INVOICE: DocumentData = {
   deposit_cents: 0,
   total_cents: 50000,
   notes: null,
-  client: { name: 'Journey Church', address_line1: null, address_line2: null },
+  client: {
+    name: 'Journey Church', address_line1: null, address_line2: null,
+    city: null, state: null, postal_code: null,
+  },
   lines: [{
     id: 'l1',
     description: 'Audio Training/Maintenance',
@@ -454,6 +457,28 @@ test('the FOR heading prints only when the invoice names its work', () => {
 
   const off = textOf(buildInvoicePdf(PARTS, INVOICE, ASSETS)).join(' ')
   assert.ok(!/\bFOR\b/.test(off), 'a historical invoice gains nothing')
+})
+
+test('the live-client fallback prints city/state/ZIP as their own line', () => {
+  // bill_to_snapshot is null here on purpose — this exercises the fallback
+  // that reads straight off the client row, not the frozen snapshot every
+  // real invoice actually carries.
+  const noSnapshot: DocumentData = {
+    ...INVOICE,
+    bill_to_snapshot: null,
+    client: {
+      name: 'Streamline Pictures',
+      address_line1: '10700 75th St',
+      address_line2: null,
+      city: 'Elgin',
+      state: 'IL',
+      postal_code: '60123',
+    },
+  }
+  const all = textOf(buildInvoicePdf(PARTS, noSnapshot, ASSETS))
+  const i = all.indexOf('10700 75th St')
+  assert.notEqual(i, -1, 'the street line prints')
+  assert.equal(all[i + 1], 'Elgin, IL 60123', 'city/state/ZIP prints as the very next line')
 })
 
 test('no Unicode minus reaches the page', () => {
