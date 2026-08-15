@@ -83,6 +83,11 @@ Three values: `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN`.
   `/Apps/{app name}/` and it can see nothing else. Naming the app `billing-smith-audio`
   produces `/Apps/billing-smith-audio/receipts/…` while the code writes plain
   `receipts/…`.
+- **Scopes granted: `files.content.write` and `files.content.read`.** Only write
+  is used. Read was granted deliberately, so that a future restore feature is
+  code alone: scopes are baked into a refresh token when it is issued, and
+  adding one later would mean re-running the whole authorization for a new
+  token. Restore itself stays out of scope until something actually needs it.
 - Access tokens are short-lived; the refresh token is exchanged for one at the
   start of each run. A missing or rejected credential means the archive stage is
   skipped and **nothing is deleted** — never a hard failure of the whole cron,
