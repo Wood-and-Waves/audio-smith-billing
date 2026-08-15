@@ -15,6 +15,12 @@ export type EditorShow = {
   venue: string | null
   notes: string | null
   timezone: string
+  // The rate card this show was created from (migration 0013), frozen at
+  // creation and never rewritten by updateShow — it re-derives nothing from
+  // the rates below, so editing them can leave this label describing a card
+  // the show no longer resembles. Null for a show created from the client's
+  // unnamed default, which decorates no invoice line.
+  rate_card_name: string | null
   day_rate_cents: number
   travel_rate_cents: number
   pm_rate_cents: number
@@ -134,6 +140,21 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
         </div>
 
         <h2 className="eyebrow mb-3">Rates</h2>
+        <p className="text-xs text-muted mb-4 border-l-2 border-line pl-3 py-1">
+          {initial.rate_card_name ? (
+            <>
+              Frozen from the <strong className="text-ink">&ldquo;{initial.rate_card_name}&rdquo;</strong> rate
+              card — every line this show bills prints with that name attached
+              (&ldquo;Day Rate — {initial.rate_card_name}&rdquo;). Editing the rates below changes what is
+              billed, not this label.
+            </>
+          ) : (
+            <>
+              Frozen from the client&rsquo;s <strong className="text-ink">default</strong> rate card, which
+              decorates no invoice line. Editing the rates below changes what is billed, not that.
+            </>
+          )}
+        </p>
         <div className="grid gap-4 sm:grid-cols-2 mb-8">
           <div>
             <label className="eyebrow block mb-2" htmlFor="day-rate">Day rate</label>

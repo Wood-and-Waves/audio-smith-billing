@@ -141,6 +141,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
           venue: s.venue,
           notes: s.notes,
           timezone: s.timezone,
+          rate_card_name: s.rate_card_name,
           day_rate_cents: s.day_rate_cents,
           travel_rate_cents: s.travel_rate_cents,
           pm_rate_cents: s.pm_rate_cents,
