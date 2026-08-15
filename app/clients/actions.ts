@@ -93,8 +93,22 @@ function parseCards(cards: CardInput[]): CardRow[] | Fail {
     })
   }
 
-  if (rows.filter((r) => r.name === null).length > 1) {
+  const defaultCount = rows.filter((r) => r.name === null).length
+  if (defaultCount > 1) {
     return { error: 'A client can have only one default (unnamed) rate card.' }
+  }
+  // A named-only client is exactly the bug this invariant exists to kill:
+  // with no default, a single named card looks the same as no card at all to
+  // NewShowForm's "more than one card" check, so createShow silently takes
+  // that lone named card and its name decorates every line on every invoice
+  // — "Day Rate — PM" — even when there was never a choice to make. Refusing
+  // here, once, is cheaper than patching every screen that assumes a default
+  // exists whenever any card does.
+  if (defaultCount === 0 && rows.length > 0) {
+    return {
+      error: 'A client with any named rate cards also needs a default (unnamed) one — ' +
+        'otherwise every invoice line for them would carry a card name like "— PM".',
+    }
   }
   return rows
 }
