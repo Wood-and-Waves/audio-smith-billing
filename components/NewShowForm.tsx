@@ -93,6 +93,11 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
   // feedback.
   const dateOrderError = hasRange && toDate < fromDate
     ? 'End date must be on or after the start date.' : null
+  // Neither blocks submission nor is sent anywhere — createShow's own
+  // `hasRange` sends the pair or nothing, so a single date typed here is
+  // otherwise silently dropped with no feedback at all. The show is still
+  // valid without days, so this is informational, not an error.
+  const partialRange = (!!fromDate) !== (!!toDate)
 
   function clearRates() {
     setDayRate('')
@@ -308,6 +313,11 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
         {dateOrderError && (
           <p role="alert" className="text-xs text-danger mt-1.5 border-l-2 border-danger pl-3 py-1">
             {dateOrderError}
+          </p>
+        )}
+        {!dateOrderError && partialRange && (
+          <p className="text-xs text-muted mt-1.5 border-l-2 border-line pl-3 py-1">
+            Give both dates, or neither.
           </p>
         )}
       </div>
