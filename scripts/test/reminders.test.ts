@@ -96,6 +96,57 @@ test('each bucket is ordered soonest first', () => {
   assert.deepEqual(s.overdue.map((i) => i.id), ['later', 'late'], 'oldest overdue leads')
 })
 
+test('dueSoon, newlyOverdue and later are each sorted, not just overdue', () => {
+  // The comparator is shared, so one bucket passing used to be taken as proof
+  // for all four — and a bucket that is never asserted with more than one item
+  // in it is a bucket whose sort could be dropped without a single test going
+  // red. Every one of these is what the digest prints, in the order it prints
+  // it; the thing needing attention has to lead.
+  //
+  // Fed in deliberately shuffled, and every due_date distinct, so an
+  // implementation that merely preserved input order cannot pass.
+  const s = sweep([
+    inv({ id: 'soon-mid', due_date: '2026-08-24' }),
+    inv({ id: 'od-newest', due_date: '2026-08-19' }),
+    inv({ id: 'later-far', due_date: '2026-12-01' }),
+    inv({ id: 'soon-last', due_date: '2026-08-26' }),
+    inv({ id: 'od-oldest', due_date: '2026-07-02' }),
+    inv({ id: 'later-near', due_date: '2026-09-19' }),
+    inv({ id: 'soon-first', due_date: '2026-08-21' }),
+    inv({ id: 'od-middle', due_date: '2026-08-10' }),
+  ], TODAY)
+
+  assert.deepEqual(
+    s.dueSoon.map((i) => i.id), ['soon-first', 'soon-mid', 'soon-last'],
+    'due soonest leads the due-soon list',
+  )
+  assert.deepEqual(
+    s.overdue.map((i) => i.id), ['od-oldest', 'od-middle', 'od-newest'],
+    'longest overdue leads',
+  )
+  assert.deepEqual(
+    s.newlyOverdue.map((i) => i.id), ['od-oldest', 'od-middle', 'od-newest'],
+    'and newlyOverdue, which is what the cron sends alerts from, is sorted too',
+  )
+  assert.deepEqual(
+    s.later.map((i) => i.id), ['later-near', 'later-far'],
+    'later is sorted as well',
+  )
+})
+
+test('newlyOverdue keeps its own order when only some are already alerted', () => {
+  // newlyOverdue is filtered out of overdue, so it can be sorted correctly by
+  // accident whenever it happens to be the whole bucket. Alerting on the
+  // middle one takes it out and leaves a case where the two orders differ.
+  const s = sweep([
+    inv({ id: 'b', due_date: '2026-08-10', alerted_overdue: true }),
+    inv({ id: 'c', due_date: '2026-08-19', alerted_overdue: false }),
+    inv({ id: 'a', due_date: '2026-07-02', alerted_overdue: false }),
+  ], TODAY)
+  assert.deepEqual(s.overdue.map((i) => i.id), ['a', 'b', 'c'])
+  assert.deepEqual(s.newlyOverdue.map((i) => i.id), ['a', 'c'], 'oldest unalerted leads')
+})
+
 test('isDigestDay is true only on Monday, in Chicago', () => {
   assert.equal(isDigestDay('2026-08-17'), true, 'Monday')
   assert.equal(isDigestDay('2026-08-24'), true, 'the next Monday')
