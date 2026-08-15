@@ -17,16 +17,25 @@ import { buildBackupSnapshot, type SnapshotInput } from '@/lib/backupSnapshot'
 type Fail = { error: string }
 
 /**
- * Copies the client's rate card onto the show. See migration 0003.
+ * Copies one of the client's rate cards onto the show. See migration 0013.
+ *
+ * A card, not `clients.day_rate_cents` (superseded — nothing reads it any
+ * more): Streamline Pictures pays $900 for PwC PM work and $780 for
+ * everything else, and the day rate, travel rate and PM rate must all come
+ * from the SAME card. Dan could already make a $900 show by editing the day
+ * rate afterwards, but `updateShow` takes travel/PM as independent raw
+ * inputs and re-derives nothing from the day rate — so that show silently
+ * kept a $780-derived travel rate and PM rate under a $900 day rate.
+ * Choosing the right card here is what fixes that.
  *
  * Several real clients (Journey Church, Harvest Bible Chapel, Crescent Event
- * Productions, The Orchard Church) are billed ad hoc and have no day rate on
- * file — `day_rate_cents` is NULL. Freezing 0 onto the show in that case
- * would let Task 5 generate an invoice line reading "Day Rate x1 @ $0.00",
- * so we refuse instead of silently substituting a default.
+ * Productions, The Orchard Church) are billed ad hoc and have no card at
+ * all. Freezing a $0 rate onto the show in that case would let Task 5
+ * generate an invoice line reading "Day Rate x1 @ $0.00", so we refuse
+ * instead of silently substituting a default.
  */
 export async function createShow(input: {
-  client_id: string; name: string; venue?: string
+  client_id: string; name: string; venue?: string; rate_card_id?: string
 }): Promise<Fail | { ok: true; id: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -35,18 +44,41 @@ export async function createShow(input: {
   if (!input.name.trim()) return { error: 'Give the show a name.' }
 
   const { data: client } = await supabase
-    .from('clients').select('name, day_rate_cents, ot_after_hours')
+    .from('clients').select('name')
     .eq('id', input.client_id).maybeSingle()
 
-  if (client?.day_rate_cents == null || client.day_rate_cents <= 0) {
+  // Scoped to this client_id, never a bare lookup by id — a caller-supplied
+  // rate_card_id is only trusted once it turns up in THIS client's own
+  // cards, the same way deleteExpense/deletePunch derive authorisation from
+  // a record's own foreign keys rather than trusting a caller-supplied pair.
+  const { data: cards } = await supabase
+    .from('client_rate_cards')
+    .select('id, name, day_rate_cents, ot_after_hours, travel_full_day')
+    .eq('client_id', input.client_id)
+
+  if (!cards || cards.length === 0) {
     return {
       error: `${client?.name ?? 'This client'} has no billable day rate on file, so there is no ` +
         'rate card to freeze onto this show.',
     }
   }
 
-  const day = client.day_rate_cents
-  const hours = Number(client.ot_after_hours ?? 10)
+  let card: (typeof cards)[number] | undefined
+  if (input.rate_card_id) {
+    card = cards.find((c) => c.id === input.rate_card_id)
+    if (!card) return { error: 'That rate card does not belong to this client.' }
+  } else if (cards.length === 1) {
+    card = cards[0]
+  } else {
+    // More than one card and none named: NewShowForm always sends
+    // rate_card_id once a client has more than one card, so this only
+    // fires if that contract is bypassed — refuse rather than guess.
+    card = cards.find((c) => c.name === null)
+    if (!card) return { error: 'Choose a rate card for this client.' }
+  }
+
+  const day = card.day_rate_cents
+  const hours = Number(card.ot_after_hours ?? 10)
 
   const { data, error } = await supabase.from('shows').insert({
     owner_id: user.id,
@@ -54,9 +86,12 @@ export async function createShow(input: {
     name: input.name.trim(),
     venue: input.venue?.trim() || null,
     day_rate_cents: day,
-    travel_rate_cents: travelRateFrom(day),
+    // Travel bills per LEG. A full-day card therefore makes a fly-in/fly-out
+    // trip bill two day rates where a half-day card bills one.
+    travel_rate_cents: card.travel_full_day ? day : travelRateFrom(day),
     pm_rate_cents: hours > 0 ? Math.round(day / hours) : 0,
     ot_after_hours: hours,
+    rate_card_name: card.name,
   }).select('id').single()
 
   if (error) return { error: error.message }
