@@ -6,7 +6,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  dropExactRepeats, receiptKey, duplicateOf, type NamedCandidate,
+  dropExactRepeats, receiptKey, duplicateOf, markDuplicates, type NamedCandidate,
 } from '../../lib/receiptDuplicates.ts'
 
 const at = (vendor: string | null, amountCents: number | null, spentOn: string | null) =>
@@ -116,4 +116,36 @@ test('a missing vendor still compares on amount and date', () => {
 
 test('nothing earlier means nothing to duplicate', () => {
   assert.equal(duplicateOf(at('HMS Host', 1998, '2026-08-22'), []), null)
+})
+
+test('the settle pass catches a duplicate the incremental check would miss', () => {
+  // Rows 1 and 3 are the same receipt. With three workers in flight, row 3 can
+  // finish before row 1 has an amount to compare against — so the incremental
+  // check clears it. Walking by position gives the same answer regardless of
+  // who finished first.
+  const rows: NamedCandidate[] = [
+    named('HMS Host', 'HMS Host', 1998, '2026-08-22'),
+    named('Uber', 'Uber', 4310, '2026-08-22'),
+    named('HMS Host (again)', 'HMS Host', 1998, '2026-08-22'),
+  ]
+  assert.deepEqual(markDuplicates(rows, []), [null, null, 'HMS Host'])
+})
+
+test('the settle pass flags only the later copy, never the first', () => {
+  const rows: NamedCandidate[] = [
+    named('first', 'United', 6000, '2026-08-22'),
+    named('second', 'United', 6000, '2026-08-22'),
+    named('third', 'United', 6000, '2026-08-22'),
+  ]
+  assert.deepEqual(markDuplicates(rows, []), [null, 'first', 'first'])
+})
+
+test('the settle pass also sees expenses already on the show', () => {
+  assert.deepEqual(
+    markDuplicates(
+      [named('new photo', 'United', 6000, '2026-08-22')],
+      [named('already on this show', 'United', 6000, '2026-08-22')],
+    ),
+    ['already on this show'],
+  )
 })

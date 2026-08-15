@@ -8,7 +8,9 @@ import { formatDateShort, todayInChicago } from '@/lib/dates'
 import { CATEGORY_LABEL, CATEGORY_ORDER, expensesMissingReceipts, type ExpenseCategory } from '@/lib/expenses'
 import { scaleToFit, contrastBounds, buildLut, JPEG_QUALITY } from '@/lib/receiptImage'
 import { addExpense, deleteExpense, extractReceipt } from '@/app/expenses/actions'
-import { dropExactRepeats, duplicateOf, type NamedCandidate } from '@/lib/receiptDuplicates'
+import {
+  dropExactRepeats, duplicateOf, markDuplicates, type NamedCandidate,
+} from '@/lib/receiptDuplicates'
 import type { ReceiptFields } from '@/lib/receiptExtraction'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select from '@/components/ui/Select'
@@ -583,6 +585,39 @@ export default function ExpenseLog({
     })
   }
 
+  /**
+   * The duplicate check, run once more after every row has been read.
+   *
+   * The check each row does as it finishes is what makes the warning appear
+   * promptly, but it can only compare against rows that have already been read.
+   * With three receipts in flight, a row that finishes early sees the rows above
+   * it still blank — so two photographs of one receipt at positions 1 and 3 slip
+   * through whenever 3 finishes first, which is exactly the case this feature
+   * exists to catch.
+   *
+   * This pass walks by POSITION rather than by completion order, so it gives the
+   * same answer every time. It only ever ADDS a flag: a row already flagged
+   * keeps its flag and whatever Dan has since done with its tick.
+   */
+  function settleDuplicates() {
+    setBatchRows((prev) => {
+      if (!prev) return prev
+      const asCandidates: NamedCandidate[] = prev.map((r) => ({
+        vendor: r.whereSpent || null,
+        amountCents: rowAmountCents(r.amount),
+        spentOn: r.spentOn || null,
+        label: candidateLabel(r.whereSpent || null, r.spentOn || null),
+      }))
+      const matches = markDuplicates(asCandidates, existingCandidates)
+
+      return prev.map((r, i) => {
+        const match = matches[i]
+        if (match === null || r.duplicateReason !== null) return r
+        return { ...r, included: false, duplicateReason: match }
+      })
+    })
+  }
+
   /** A worker pool of BATCH_CONCURRENCY, so twelve photos never decode at once. */
   function runBatch(rows: BatchRow[]) {
     const supabase = createClient()
@@ -595,7 +630,7 @@ export default function ExpenseLog({
       }
     }
     const workerCount = Math.min(BATCH_CONCURRENCY, rows.length)
-    void Promise.all(Array.from({ length: workerCount }, worker))
+    void Promise.all(Array.from({ length: workerCount }, worker)).then(settleDuplicates)
   }
 
   /**

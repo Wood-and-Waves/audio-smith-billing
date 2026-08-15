@@ -84,3 +84,23 @@ export function duplicateOf(
   }
   return null
 }
+
+/**
+ * Flags every row against everything before it, in one deterministic pass.
+ *
+ * The incremental check that runs as each receipt finishes reading gives
+ * immediate feedback, but it has a hole: with several receipts in flight, a row
+ * that finishes early compares itself against rows above it that have not been
+ * read yet and therefore have no amount to compare. Two photographs of one
+ * receipt at positions 1 and 3 would slip through whenever 3 finished first —
+ * precisely the case this feature exists to catch.
+ *
+ * Running this once the batch settles closes that, because it walks by POSITION
+ * rather than by completion order and so produces the same answer every time.
+ */
+export function markDuplicates(
+  rows: NamedCandidate[],
+  existing: NamedCandidate[],
+): (string | null)[] {
+  return rows.map((row, i) => duplicateOf(row, [...rows.slice(0, i), ...existing]))
+}
