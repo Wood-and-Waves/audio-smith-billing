@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { todayInChicago } from '@/lib/dates'
 import { sweep, isDigestDay, type ReminderInvoice } from '@/lib/reminders'
@@ -40,11 +41,54 @@ import {
 
 export const dynamic = 'force-dynamic'
 
+// 60 seconds, which is the ceiling on Vercel's Hobby plan — asking for more
+// makes the deployment fail, not the function run longer.
+//
+// Stated rather than left to the platform default, which is shorter than this
+// route's worst night. A run doing all of it — the sweep, an alert per newly
+// overdue invoice, then ARCHIVE_BATCH receipts each downloaded from Storage and
+// uploaded to Dropbox — has no headroom to spare, and a function killed at the
+// default reports nothing at all: no 500, no `failed` entry, just a run that
+// silently stopped partway with whatever it had not reached left for tomorrow.
+export const maxDuration = 60
+
+/**
+ * Constant-time check of the Authorization header against CRON_SECRET.
+ *
+ * `!==` on two strings stops comparing at the first byte that differs, so how
+ * long the refusal takes is a measurement of how much of the secret the caller
+ * guessed right — recoverable a byte at a time, and this route answers to the
+ * public internet.
+ *
+ * Both sides are hashed before the compare because timingSafeEqual THROWS on
+ * buffers of unequal length, and the obvious guard for that — returning early
+ * when the lengths differ — gives away the secret's length for free. A SHA-256
+ * digest is always 32 bytes, so every caller reaches the same compare and the
+ * length of what was offered changes nothing about what happens.
+ */
+function authorized(header: string | null, secret: string): boolean {
+  const offered = createHash('sha256').update(header ?? '').digest()
+  const expected = createHash('sha256').update(`Bearer ${secret}`).digest()
+  return timingSafeEqual(offered, expected)
+}
+
+/**
+ * How many overdue alerts are in flight at once.
+ *
+ * Sequential was honest at four invoices and is not at forty: forty round trips
+ * to Resend, each followed by an insert, inside a function that is killed at
+ * maxDuration above — and the invoices the run never reached are simply not
+ * alerted about, with nothing in the response to say so. Small on purpose. This
+ * shares its 60 seconds with the archive stage, and Resend rate-limits; the
+ * point is to bound the wall clock, not to send as fast as possible.
+ */
+const ALERT_CONCURRENCY = 4
+
 export async function GET(request: NextRequest) {
   // Bare 404, never 401: a prober learns nothing about whether this exists.
   const secret = process.env.CRON_SECRET
   if (!secret) return new NextResponse(null, { status: 404 })
-  if (request.headers.get('authorization') !== `Bearer ${secret}`) {
+  if (!authorized(request.headers.get('authorization'), secret)) {
     return new NextResponse(null, { status: 404 })
   }
 
@@ -82,8 +126,23 @@ export async function GET(request: NextRequest) {
   // across all invoices, and with a second auth user that would mail their
   // client names and amounts into Dan's digest — one owner today, but nothing
   // stops a second, so the filter has to be here regardless.
-  const { data: settings } = await db
+  const { data: settings, error: settingsError } = await db
     .from('settings').select('email, owner_id').eq('id', 1).maybeSingle()
+
+  // The error used to be discarded, so a Supabase outage — or a revoked service
+  // key, or a renamed column — came back as "No settings email to send to.",
+  // which sends you to the Settings screen to look at an email address that is
+  // sitting there perfectly filled in. A query that failed and a field that was
+  // never set are different emergencies and now read as different emergencies.
+  // The message is the driver's, not the value of anything: nothing in the
+  // settings row is echoed here.
+  if (settingsError) {
+    return NextResponse.json(
+      { error: `Could not read settings: ${settingsError.message}` },
+      { status: 500 },
+    )
+  }
+
   const to = settings?.email
   if (!to) return NextResponse.json({ error: 'No settings email to send to.' }, { status: 500 })
   if (!settings?.owner_id) {
@@ -178,22 +237,61 @@ export async function GET(request: NextRequest) {
     else sent.push('digest')
   }
 
-  for (const inv of s.newlyOverdue) {
-    const { subject, text, html } = buildOverdueAlertEmail(inv, appUrl)
-    const r = await sendReminderEmail({ to, subject, text, html })
-    if (r.error) { failed.push(`#${inv.number}: ${r.error}`); continue }
+  // A worker pool of ALERT_CONCURRENCY, the same shape as the batch upload in
+  // components/ExpenseLog.tsx: one shared cursor, N workers draining it. Not
+  // Promise.all over the whole bucket — that is unbounded, and the night an
+  // arrears run finds forty newly overdue invoices is exactly the night forty
+  // simultaneous sends would meet Resend's rate limit.
+  //
+  // Each result goes into its own slot rather than being pushed, so `sent` and
+  // `failed` keep the sweep's oldest-first order however the workers interleave.
+  // This response is read by a human comparing it against last night's; a list
+  // that reshuffles itself run to run cannot be compared against anything.
+  const alerts = s.newlyOverdue
+  const outcomes: ({ sent?: string; failed?: string } | undefined)[] = new Array(alerts.length)
 
-    // Only after the send succeeds. Recording first would silence a future
-    // alert for a message that never went — the same ordering rule the
-    // invoice send follows.
-    const { error: logErr } = await db.from('reminder_log').insert({
-      owner_id: ownerById.get(inv.id),
-      invoice_id: inv.id,
-      kind: 'overdue_alert',
-      sent_to: to,
-    })
-    if (logErr) failed.push(`#${inv.number} logged: ${logErr.message}`)
-    else sent.push(`overdue #${inv.number}`)
+  let nextAlert = 0
+  const alertWorker = async () => {
+    while (nextAlert < alerts.length) {
+      const i = nextAlert++
+      const inv = alerts[i]
+      try {
+        const { subject, text, html } = buildOverdueAlertEmail(inv, appUrl)
+        const r = await sendReminderEmail({ to, subject, text, html })
+        if (r.error) { outcomes[i] = { failed: `#${inv.number}: ${r.error}` }; continue }
+
+        // Only after the send succeeds. Recording first would silence a future
+        // alert for a message that never went — the same ordering rule the
+        // invoice send follows.
+        const { error: logErr } = await db.from('reminder_log').insert({
+          owner_id: ownerById.get(inv.id),
+          invoice_id: inv.id,
+          kind: 'overdue_alert',
+          sent_to: to,
+        })
+        outcomes[i] = logErr
+          ? { failed: `#${inv.number} logged: ${logErr.message}` }
+          : { sent: `overdue #${inv.number}` }
+      } catch (e) {
+        // One rejection must not take the pool down with it. sendReminderEmail
+        // returns its failures and the insert returns its own, but both await
+        // the network, which can reject on its own — and an escape here rejects
+        // the Promise.all below, 500ing the run before the archive and deletion
+        // stages ever start, for one bad send among forty.
+        outcomes[i] = {
+          failed: `#${inv.number}: ${e instanceof Error ? e.message : 'the alert failed'}`,
+        }
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(ALERT_CONCURRENCY, alerts.length) }, alertWorker),
+  )
+
+  for (const outcome of outcomes) {
+    if (outcome?.sent) sent.push(outcome.sent)
+    if (outcome?.failed) failed.push(outcome.failed)
   }
 
   // Last, and deliberately so: the reminders are the job people notice, and
