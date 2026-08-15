@@ -177,12 +177,19 @@ async function enhance(file: File): Promise<Blob> {
   const px = image.data
 
   // Rec. 601 luma, then a histogram of it.
+  //
+  // The histogram counts grey[g] AFTER the store, not a separately rounded copy
+  // of the same float. Uint8ClampedArray rounds half-to-even and Math.round
+  // rounds half-up, so counting Math.round(v) filed a pixel ending in .5 one
+  // bucket away from the value the LUT is later indexed by on line 191. The
+  // histogram is only read to find the contrast bounds, and MIN_SPAN absorbs a
+  // single bucket, so this never showed — but a histogram that does not describe
+  // the pixels it is derived from is a trap for whoever tunes this next.
   const histogram = new Array(256).fill(0)
   const grey = new Uint8ClampedArray(px.length / 4)
   for (let i = 0, g = 0; i < px.length; i += 4, g++) {
-    const v = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000
-    grey[g] = v
-    histogram[Math.round(v)]++
+    grey[g] = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000
+    histogram[grey[g]]++
   }
 
   const { lo, hi } = contrastBounds(histogram)
