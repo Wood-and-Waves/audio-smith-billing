@@ -152,14 +152,43 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
     if (!pmDirty) setPmRate(formatAmount(derived.pm_rate_cents))
   }
 
+  // The travel/PM preview for the day rate and OT boxes as they currently
+  // stand, or null if the day rate isn't usable — same guard onDayRateChange
+  // uses, so a cleared travel/PM box below re-derives under the identical
+  // rule a day-rate edit would.
+  function derivedFromCurrentDayRate() {
+    if (!selectedCard) return null
+    const parsed = parseUSD(dayRate)
+    if (!isDerivableDayRate(parsed)) return null
+    const hours = Number(otAfterHours) || Number(selectedCard.ot_after_hours) || 10
+    return deriveFromDayRate(parsed, hours, selectedCard.travel_full_day)
+  }
+
   function onTravelRateChange(value: string) {
     setTravelRate(value)
-    setTravelDirty(true)
+    const cleared = value.trim() === ''
+    // Dirty means "typed something the day rate must not overwrite" — a
+    // box emptied back to blank isn't that any more. Without this, a
+    // type-then-clear left the box blank and permanently opted out of
+    // re-derivation: the display showed an empty box while the server
+    // (which treats a blank override the same way) derived and stored a
+    // real number. Clearing resumes tracking immediately, so what's shown
+    // matches what will actually be stored rather than lying blank.
+    setTravelDirty(!cleared)
+    if (cleared) {
+      const derived = derivedFromCurrentDayRate()
+      if (derived) setTravelRate(formatAmount(derived.travel_rate_cents))
+    }
   }
 
   function onPmRateChange(value: string) {
     setPmRate(value)
-    setPmDirty(true)
+    const cleared = value.trim() === ''
+    setPmDirty(!cleared)
+    if (cleared) {
+      const derived = derivedFromCurrentDayRate()
+      if (derived) setPmRate(formatAmount(derived.pm_rate_cents))
+    }
   }
 
   function submit() {
