@@ -369,6 +369,10 @@ export default function ExpenseLog({
   // design's "a failed delete is ignored" covers deletes that were ATTEMPTED;
   // these were never attempted at all.
   const batchTokenRef = useRef(0)
+  // Add all is in flight. A ref and not `pending`, because `pending` is state:
+  // it is only true once React has re-rendered, and two taps can both land
+  // before that. See addAllBatch.
+  const savingRef = useRef(false)
 
   /**
    * Reads a just-picked file: enhance, upload both copies, then OCR.
@@ -672,31 +676,37 @@ export default function ExpenseLog({
    * This pass walks by POSITION rather than by completion order, so it gives the
    * same answer every time. It only ever ADDS a flag: a row already flagged
    * keeps its flag and whatever Dan has since done with its tick.
+   *
+   * Returns the settled rows rather than setting them, because Add all needs
+   * the ANSWER and not just the render — see addAllBatch, which re-runs this
+   * over the rows as hand-typed and would otherwise insert the snapshot it
+   * held before the check.
    */
-  function settleDuplicates() {
-    setBatchRows((prev) => {
-      if (!prev) return prev
-      const asCandidates: NamedCandidate[] = prev.map((r) => ({
-        vendor: r.whereSpent || null,
-        amountCents: rowAmountCents(r.amount),
-        spentOn: r.spentOn || null,
-        label: candidateLabel(r.whereSpent || null, r.spentOn || null),
-      }))
-      const matches = markDuplicates(asCandidates, existingCandidates())
+  function settleRows(rows: BatchRow[]): BatchRow[] {
+    const asCandidates: NamedCandidate[] = rows.map((r) => ({
+      vendor: r.whereSpent || null,
+      amountCents: rowAmountCents(r.amount),
+      spentOn: r.spentOn || null,
+      label: candidateLabel(r.whereSpent || null, r.spentOn || null),
+    }))
+    const matches = markDuplicates(asCandidates, existingCandidates())
 
-      return prev.map((r, i) => {
-        const match = matches[i]
-        if (match === null || r.duplicateReason !== null) return r
-        // Label it either way — but the tick is Dan's, not this pass's. If he
-        // has already made his own decision about this row, a late settle
-        // must not quietly reverse it.
-        return {
-          ...r,
-          included: r.touched.has('included') ? r.included : false,
-          duplicateReason: match,
-        }
-      })
+    return rows.map((r, i) => {
+      const match = matches[i]
+      if (match === null || r.duplicateReason !== null) return r
+      // Label it either way — but the tick is Dan's, not this pass's. If he
+      // has already made his own decision about this row, a late settle
+      // must not quietly reverse it.
+      return {
+        ...r,
+        included: r.touched.has('included') ? r.included : false,
+        duplicateReason: match,
+      }
     })
+  }
+
+  function settleDuplicates() {
+    setBatchRows((prev) => prev && settleRows(prev))
   }
 
   /** A worker pool of BATCH_CONCURRENCY, so twelve photos never decode at once. */
@@ -773,25 +783,68 @@ export default function ExpenseLog({
    * their upload — which only exists because OCR needed something to read —
    * is best-effort removed. A row's own paths only ever get deleted here or
    * by cancelBatch below, never a path belonging to any other row.
+   *
+   * A row that is NOT added keeps its place in the list, with its uploaded
+   * pair. The list is the only place its amount can be typed, so clearing it
+   * out from under "1 could not be added — HMS Host: enter an amount" left Dan
+   * reading that next to an empty screen: recovering meant re-picking every
+   * photo, re-uploading it and paying for the reads again.
    */
   function addAllBatch() {
     if (!batchRows) return
+    // Synchronous, because `pending` is not — it only goes true once React has
+    // re-rendered, and a double-tap lands two clicks before that. The second
+    // pass would insert every row again, both copies pointing at the one
+    // uploaded pair: two expenses sharing a receipt, where deleting either
+    // takes the file the other depends on. add() bumps tokenRef before its own
+    // transition for exactly this reason.
+    if (savingRef.current) return
+    savingRef.current = true
     setError(null)
-    const rows = batchRows
+
+    // The duplicate check once more, over what the rows now SAY rather than
+    // what OCR read. Until here it ran only from the worker pool, so a receipt
+    // that came back unreadable and was typed in by hand — the spec's "an
+    // unreadable receipt is still an expense, it just needs typing" — was
+    // never checked against anything at all. Two unreadable photos of one
+    // receipt, typed identically, both went in unflagged. This is the one
+    // moment a hand edit still matters, so this is where the check belongs.
+    const settled = settleRows(batchRows)
+    // Rows this pass has just flagged and unticked are HELD BACK, not dropped:
+    // still in the list, upload intact, named in the summary. Flagging is as
+    // far as the design goes — Dan decides whether the second identical $6
+    // coffee was real, and ticking it says so.
+    const heldBack = new Set(
+      settled.filter((r, i) => (
+        r.duplicateReason !== null && batchRows[i].duplicateReason === null && !r.included
+      )).map((r) => r.id),
+    )
+    setBatchRows(settled)
+    const intended = batchRows.filter((r) => r.included).length
 
     start(async () => {
       setStep('Saving…')
-      try {
-        let added = 0
-        const failed: string[] = []
-        const toDelete: string[] = []
+      // Rows that are finished with — inserted, or deliberately discarded.
+      // Only these leave the list.
+      const handled = new Set<string>()
+      let added = 0
+      const failed: string[] = []
+      const toDelete: string[] = []
+      let lost: string | null = null
 
-        for (const row of rows) {
+      try {
+        for (const row of settled) {
           const name = row.whereSpent.trim() || row.file.name
+
+          if (heldBack.has(row.id)) {
+            failed.push(`${name}: possibly a repeat of ${row.duplicateReason} — tick it to add it anyway`)
+            continue
+          }
 
           if (!row.included) {
             if (row.enhancedPath) toDelete.push(row.enhancedPath)
             if (row.originalPath) toDelete.push(row.originalPath)
+            handled.add(row.id)
             continue
           }
 
@@ -807,28 +860,48 @@ export default function ExpenseLog({
             continue
           }
 
-          const result = await addExpense({
-            showId,
-            category: row.category,
-            whereSpent: row.whereSpent,
-            amountCents: cents,
-            spentOn: row.spentOn,
-            receiptPath: row.enhancedPath,
-            receiptOriginal: row.originalPath,
-            note: '',
-          })
+          let result: Awaited<ReturnType<typeof addExpense>>
+          try {
+            result = await addExpense({
+              showId,
+              category: row.category,
+              whereSpent: row.whereSpent,
+              amountCents: cents,
+              spentOn: row.spentOn,
+              receiptPath: row.enhancedPath,
+              receiptOriginal: row.originalPath,
+              note: '',
+            })
+          } catch {
+            // The ambiguity add() documents at length: a THROWN insert cannot
+            // tell "never happened" from "committed and the response was
+            // lost". Keeping this row for a retry would let a second expense
+            // claim the pair a committed row may already own, so the row goes
+            // and its pair stays behind. One re-pick beats one corrupted
+            // receipt. Everything below it was never attempted and stays.
+            handled.add(row.id)
+            lost = name
+            break
+          }
           if ('error' in result) failed.push(`${name}: ${result.error}`)
-          else added += 1
+          else {
+            added += 1
+            handled.add(row.id)
+          }
         }
-
+      } finally {
         if (toDelete.length) removeSuperseded(toDelete)
 
-        setBatchRows(null)
-        setBatchSkipped(0)
-        setBatchSummary({ added, total: rows.filter((r) => r.included).length, failed })
+        const remaining = settled.filter((r) => !handled.has(r.id))
+        setBatchRows(remaining.length > 0 ? remaining : null)
+        if (remaining.length === 0) setBatchSkipped(0)
+        setBatchSummary({ added, total: intended, failed })
+        if (lost) {
+          setError(`${lost} may or may not have been saved — check the list before adding it again.`)
+        }
         router.refresh()
-      } finally {
         setStep(null)
+        savingRef.current = false
       }
     })
   }
