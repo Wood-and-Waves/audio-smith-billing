@@ -8,6 +8,8 @@ import { formatDateShort, todayInChicago } from '@/lib/dates'
 import { CATEGORY_LABEL, CATEGORY_ORDER, expensesMissingReceipts, type ExpenseCategory } from '@/lib/expenses'
 import { scaleToFit, contrastBounds, buildLut, JPEG_QUALITY } from '@/lib/receiptImage'
 import { addExpense, deleteExpense, extractReceipt } from '@/app/expenses/actions'
+import { dropExactRepeats, duplicateOf, type NamedCandidate } from '@/lib/receiptDuplicates'
+import type { ReceiptFields } from '@/lib/receiptExtraction'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select from '@/components/ui/Select'
 
@@ -19,6 +21,36 @@ type Row = {
   spent_on: string
   receipt_path: string | null
 }
+
+/**
+ * A row of the batch review list — a receipt picked as part of a group of
+ * two or more, on its way through enhance -> upload -> OCR -> fill.
+ *
+ * Fields are named to match the single-receipt form's own state
+ * (category/whereSpent/amount/spentOn), not the DB row above, since this is
+ * what a human edits before Add all ever runs.
+ */
+type BatchRow = {
+  id: string
+  file: File
+  status: 'queued' | 'reading' | 'read' | 'error'
+  category: ExpenseCategory
+  whereSpent: string
+  amount: string
+  spentOn: string
+  /** Ticked rows are inserted by Add all; unticked ones are skipped and their upload cleaned up. */
+  included: boolean
+  /** Which earlier receipt this looks like a repeat of, named — or null. Kept even after a re-tick. */
+  duplicateReason: string | null
+  /** This row's OWN uploaded pair. Never shared with another row — see the trap in the design doc. */
+  enhancedPath: string | null
+  originalPath: string | null
+  /** Fields the user has personally edited, so a slow OCR read can't clobber a hand correction. */
+  touched: Set<'category' | 'vendor' | 'amount' | 'date'>
+}
+
+/** A small number in flight, not twelve — twelve createImageBitmap calls on 5MB photos exhausts a phone. */
+const BATCH_CONCURRENCY = 3
 
 
 /** Receipts arrive as photographs or as emailed PDFs. Both end up a JPEG. */
@@ -153,6 +185,38 @@ async function enhance(file: File): Promise<Blob> {
 }
 
 /**
+ * SHA-256 of a file's exact bytes, hex-encoded.
+ *
+ * Lives here rather than in lib/receiptDuplicates.ts because it needs the
+ * browser's crypto — that module is pure and runs under plain `node --test`.
+ * Run over every picked file BEFORE anything is uploaded, so an exact repeat
+ * (the same photo picked twice from the roll) is dropped for free.
+ */
+async function hashFile(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+/** "HMS Host on 8/22" — what a flagged row names as the receipt it repeats. */
+function candidateLabel(vendor: string | null, spentOn: string | null): string {
+  const who = vendor && vendor.trim() ? vendor.trim() : 'that receipt'
+  return spentOn ? `${who} on ${formatDateShort(spentOn)}` : who
+}
+
+/**
+ * The amount a row currently holds, for duplicate comparison — or null.
+ *
+ * NOT `parseUSD(amount)` directly: parseUSD('') is 0, not null, and a blank
+ * amount box (every row before its own OCR resolves) must never compare as
+ * "a receipt for $0.00" — that would flag every still-reading row as a
+ * repeat of the last one, which is worse than not checking at all.
+ */
+function rowAmountCents(amount: string): number | null {
+  if (amount.trim() === '') return null
+  return parseUSD(amount)
+}
+
+/**
  * Enhances and uploads both receipt copies, all-or-nothing.
  *
  * This block is UNCHANGED from what used to run inside add() — only moved.
@@ -269,6 +333,17 @@ export default function ExpenseLog({
   // block a receipt from correcting today's date or the guessed category;
   // "the user moved the control" is the only signal that means "hands off".
   const touchedRef = useRef<Set<'vendor' | 'amount' | 'date' | 'category'>>(new Set())
+
+  // The review list, open only when two or more files were picked at once.
+  // Null means "not in batch mode" — the single-file form above is what
+  // renders. Non-null replaces it entirely until Add all or Cancel.
+  const [batchRows, setBatchRows] = useState<BatchRow[] | null>(null)
+  // How many of the just-picked files were dropped as exact byte-for-byte
+  // repeats, before anything was uploaded. Told to Dan, never decided for him
+  // beyond the drop itself — see lib/receiptDuplicates.ts.
+  const [batchSkipped, setBatchSkipped] = useState(0)
+  // Set once by Add all, then shown until the next batch pick clears it.
+  const [batchSummary, setBatchSummary] = useState<{ added: number; total: number; failed: string[] } | null>(null)
 
   /**
    * Reads a just-picked file: enhance, upload both copies, then OCR.
@@ -398,6 +473,242 @@ export default function ExpenseLog({
     } catch {
       if (myToken === tokenRef.current) setOcrNote("Couldn't read that one — type it in.")
     }
+  }
+
+  // What a batch row can be a repeat OF, from the show's side — computed once
+  // per render (expenses doesn't change mid-batch; nothing here refreshes
+  // until Add all calls router.refresh, which unmounts the batch anyway).
+  const existingCandidates: NamedCandidate[] = expenses.map((e) => ({
+    vendor: e.where_spent,
+    amountCents: e.amount_cents,
+    spentOn: e.spent_on,
+    label: `${e.where_spent} on ${formatDateShort(e.spent_on)}, already on this show`,
+  }))
+
+  function updateBatchRow(
+    id: string,
+    field: 'category' | 'vendor' | 'amount' | 'date',
+    patch: Partial<BatchRow>,
+  ) {
+    setBatchRows((prev) => prev && prev.map((r) => (
+      r.id === id ? { ...r, ...patch, touched: new Set(r.touched).add(field) } : r
+    )))
+  }
+
+  function toggleBatchRow(id: string) {
+    setBatchRows((prev) => prev && prev.map((r) => (
+      r.id === id ? { ...r, included: !r.included } : r
+    )))
+  }
+
+  /**
+   * Runs one row through enhance -> upload pair -> extractReceipt -> fill,
+   * exactly the order the single-file flow follows above — reusing
+   * uploadReceiptPair and extractReceipt rather than any of it again.
+   *
+   * Every `setBatchRows` update here is functional and keyed by `id`, never
+   * by array index or a captured row snapshot: rows finish in whatever order
+   * their own upload+OCR happen to land in, not the order they were picked,
+   * and a stale closure would silently discard whatever the user had already
+   * typed into a field the OCR result was racing against.
+   */
+  async function runBatchRow(supabase: ReturnType<typeof createClient>, id: string, file: File) {
+    setBatchRows((prev) => prev && prev.map((r) => (r.id === id ? { ...r, status: 'reading' } : r)))
+
+    let uploaded: { error: string } | { enhancedPath: string; originalPath: string }
+    try {
+      uploaded = await uploadReceiptPair(supabase, showId, file, () => {})
+    } catch (e) {
+      uploaded = { error: e instanceof Error ? e.message : 'Could not process that file.' }
+    }
+
+    if ('error' in uploaded) {
+      setBatchRows((prev) => prev && prev.map((r) => (r.id === id ? { ...r, status: 'error' } : r)))
+      return
+    }
+    const { enhancedPath, originalPath } = uploaded
+    setBatchRows((prev) => prev && prev.map((r) => (
+      r.id === id ? { ...r, enhancedPath, originalPath } : r
+    )))
+
+    let fields: ReceiptFields | null = null
+    let unreadable = true
+    try {
+      const result = await extractReceipt(enhancedPath)
+      if (!('error' in result)) {
+        fields = result.fields
+        unreadable = result.unreadable
+      }
+    } catch {
+      // fields stays null — falls through to the "couldn't read" branch below.
+    }
+
+    if (!fields || unreadable) {
+      setBatchRows((prev) => prev && prev.map((r) => (r.id === id ? { ...r, status: 'error' } : r)))
+      return
+    }
+    const read = fields
+
+    // Duplicates: everything ABOVE this row in the batch (by position, not
+    // completion order — the first occurrence keeps its place, same rule as
+    // dropExactRepeats), plus every expense already on the show.
+    setBatchRows((prev) => {
+      if (!prev) return prev
+      const index = prev.findIndex((r) => r.id === id)
+      const earlierInBatch: NamedCandidate[] = prev.slice(0, index).map((r) => ({
+        vendor: r.whereSpent || null,
+        amountCents: rowAmountCents(r.amount),
+        spentOn: r.spentOn || null,
+        label: candidateLabel(r.whereSpent || null, r.spentOn || null),
+      }))
+      const match = duplicateOf(
+        { vendor: read.vendor, amountCents: read.amountCents, spentOn: read.spentOn },
+        [...earlierInBatch, ...existingCandidates],
+      )
+
+      return prev.map((r) => {
+        if (r.id !== id) return r
+        return {
+          ...r,
+          status: 'read',
+          category: read.category !== null && !r.touched.has('category') ? read.category : r.category,
+          whereSpent: read.vendor !== null && !r.touched.has('vendor') ? read.vendor : r.whereSpent,
+          amount: read.amountCents !== null && !r.touched.has('amount')
+            ? formatAmount(read.amountCents) : r.amount,
+          spentOn: read.spentOn !== null && !r.touched.has('date') ? read.spentOn : r.spentOn,
+          included: match === null,
+          duplicateReason: match,
+        }
+      })
+    })
+  }
+
+  /** A worker pool of BATCH_CONCURRENCY, so twelve photos never decode at once. */
+  function runBatch(rows: BatchRow[]) {
+    const supabase = createClient()
+    let cursor = 0
+    const worker = async () => {
+      while (cursor < rows.length) {
+        const row = rows[cursor]
+        cursor += 1
+        await runBatchRow(supabase, row.id, row.file)
+      }
+    }
+    const workerCount = Math.min(BATCH_CONCURRENCY, rows.length)
+    void Promise.all(Array.from({ length: workerCount }, worker))
+  }
+
+  /**
+   * Two or more files picked at once: hash them, drop exact repeats, open
+   * the review list. The single-file input's own onPickFile is untouched and
+   * is the only path a single pick ever takes — see onChange below.
+   */
+  async function onPickFiles(fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) return
+    const files = Array.from(fileList)
+    if (files.length === 1) {
+      void onPickFile(files[0])
+      return
+    }
+
+    setError(null)
+    setBatchSummary(null)
+
+    const withHashes = await Promise.all(files.map(async (file) => ({ file, hash: await hashFile(file) })))
+    const { kept, dropped } = dropExactRepeats(withHashes)
+    setBatchSkipped(dropped)
+
+    const rows: BatchRow[] = kept.map(({ file }, i) => ({
+      id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`,
+      file,
+      status: 'queued',
+      category: 'meals',
+      whereSpent: '',
+      amount: '',
+      spentOn: todayInChicago(),
+      included: true,
+      duplicateReason: null,
+      enhancedPath: null,
+      originalPath: null,
+      touched: new Set(),
+    }))
+    setBatchRows(rows)
+    runBatch(rows)
+  }
+
+  /**
+   * Nothing is written until this runs. Ticked rows become ordinary
+   * addExpense inserts, in order; unticked rows are never inserted, and
+   * their upload — which only exists because OCR needed something to read —
+   * is best-effort removed. A row's own paths only ever get deleted here or
+   * by cancelBatch below, never a path belonging to any other row.
+   */
+  function addAllBatch() {
+    if (!batchRows) return
+    setError(null)
+    const rows = batchRows
+
+    start(async () => {
+      setStep('Saving…')
+      try {
+        let added = 0
+        const failed: string[] = []
+        const toDelete: string[] = []
+
+        for (const row of rows) {
+          const name = row.whereSpent.trim() || row.file.name
+
+          if (!row.included) {
+            if (row.enhancedPath) toDelete.push(row.enhancedPath)
+            if (row.originalPath) toDelete.push(row.originalPath)
+            continue
+          }
+
+          // Never a truthiness check on cents — parseUSD('') is 0, not null,
+          // and rowAmountCents already turns a blank box into null for us.
+          const cents = rowAmountCents(row.amount)
+          if (cents === null || cents <= 0) {
+            failed.push(`${name}: enter an amount`)
+            continue
+          }
+          if (!row.whereSpent.trim()) {
+            failed.push(`${name}: say where the money went`)
+            continue
+          }
+
+          const result = await addExpense({
+            showId,
+            category: row.category,
+            whereSpent: row.whereSpent,
+            amountCents: cents,
+            spentOn: row.spentOn,
+            receiptPath: row.enhancedPath,
+            receiptOriginal: row.originalPath,
+            note: '',
+          })
+          if ('error' in result) failed.push(`${name}: ${result.error}`)
+          else added += 1
+        }
+
+        if (toDelete.length) removeSuperseded(toDelete)
+
+        setBatchRows(null)
+        setBatchSkipped(0)
+        setBatchSummary({ added, total: rows.filter((r) => r.included).length, failed })
+        router.refresh()
+      } finally {
+        setStep(null)
+      }
+    })
+  }
+
+  /** Abandons the batch without saving anything, cleaning up whatever had already uploaded. */
+  function cancelBatch() {
+    if (!batchRows) return
+    const paths = batchRows.flatMap((r) => [r.enhancedPath, r.originalPath]).filter((p): p is string => p !== null)
+    if (paths.length) removeSuperseded(paths)
+    setBatchRows(null)
+    setBatchSkipped(0)
   }
 
   // Newest first, matching PmLog's ordering of its entries.
@@ -541,56 +852,150 @@ export default function ExpenseLog({
         </ul>
       )}
 
-      <div className="grid gap-2 sm:grid-cols-[8rem_1fr_7rem_9rem_auto] items-center mb-3">
-        <Select
-          ariaLabel="Category"
-          value={category}
-          disabled={locked || pending}
-          onChange={(v) => {
-            touchedRef.current.add('category')
-            setCategory(v as ExpenseCategory)
-          }}
-          options={CATEGORY_ORDER.map((c) => ({ value: c, label: CATEGORY_LABEL[c] }))}
-        />
-        <input aria-label="Where" className={FIELD_FULL} placeholder="Where" value={whereSpent}
-               disabled={locked || pending} onChange={(e) => {
-                 touchedRef.current.add('vendor')
-                 setWhereSpent(e.target.value)
-               }} />
-        <input aria-label="Amount" inputMode="decimal" placeholder="0.00"
-               className={`${FIELD_FULL} tabular text-right`} value={amount} disabled={locked || pending}
-               onChange={(e) => {
-                 touchedRef.current.add('amount')
-                 setAmount(e.target.value)
-               }} />
-        <input aria-label="Date" type="date" className={FIELD_FULL} value={spentOn}
-               disabled={locked || pending} onChange={(e) => {
-                 touchedRef.current.add('date')
-                 setSpentOn(e.target.value)
-               }} />
-        <button type="button" onClick={add} disabled={locked || pending || uploading}
-                className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
-                           border border-line text-muted hover:text-ink disabled:opacity-40">
-          {pending ? (step ?? 'Saving…') : uploading ? 'Uploading…' : '+ Add'}
-        </button>
+      {batchRows ? (
+        <div className="mb-3">
+          {batchSkipped > 0 && (
+            <p className="text-xs text-muted mb-2">
+              {batchSkipped} {batchSkipped === 1 ? 'was' : 'were'} skipped — the same photo, picked twice.
+            </p>
+          )}
 
-        <label className="sm:col-span-5 text-xs text-muted">
-          {/* capture="environment" opens the camera directly on a phone, which
-              is where a receipt actually gets photographed. */}
-          <input type="file" accept="image/*,application/pdf" disabled={locked || pending || uploading}
-                 onChange={(e) => { void onPickFile(e.target.files?.[0] ?? null) }}
-                 className="text-xs text-muted file:mr-3 file:px-3 file:py-1.5 file:rounded-field
-                            file:border file:border-line file:bg-transparent file:text-muted
-                            file:text-xs file:font-semibold file:uppercase file:tracking-wider
-                            disabled:opacity-40" />
-          {capture
-            ? ` ${capture.file.name}${ocrNote ? ` — ${ocrNote}` : ''}`
-            : (ocrNote ?? ' Photo or PDF. A receipt is required before this show can be billed.')}
-        </label>
-      </div>
+          {/* One card per receipt, not a table: at 375px six columns would not
+              fit, so every field stacks full-width and only breathes into a
+              row at sm: and up, matching the single-add grid below. */}
+          <ul className="border-t border-line mb-3">
+            {batchRows.map((row, i) => (
+              <li key={row.id} className="border-b border-line py-3">
+                <div className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    checked={row.included}
+                    disabled={locked || pending}
+                    onChange={() => toggleBatchRow(row.id)}
+                    aria-label={`Include ${row.whereSpent || row.file.name}`}
+                    className="mt-3 h-4 w-4 shrink-0 accent-accent"
+                  />
+                  <div className="min-w-0 flex-1 grid gap-2 sm:grid-cols-[8rem_1fr_7rem_9rem] items-center">
+                    <Select
+                      ariaLabel={`Category for receipt ${i + 1}`}
+                      value={row.category}
+                      disabled={locked || pending}
+                      onChange={(v) => updateBatchRow(row.id, 'category', { category: v as ExpenseCategory })}
+                      options={CATEGORY_ORDER.map((c) => ({ value: c, label: CATEGORY_LABEL[c] }))}
+                    />
+                    <input aria-label={`Where for receipt ${i + 1}`} className={FIELD_FULL} placeholder="Where"
+                           value={row.whereSpent} disabled={locked || pending}
+                           onChange={(e) => updateBatchRow(row.id, 'vendor', { whereSpent: e.target.value })} />
+                    <input aria-label={`Amount for receipt ${i + 1}`} inputMode="decimal" placeholder="0.00"
+                           className={`${FIELD_FULL} tabular text-right`} value={row.amount}
+                           disabled={locked || pending}
+                           onChange={(e) => updateBatchRow(row.id, 'amount', { amount: e.target.value })} />
+                    <input aria-label={`Date for receipt ${i + 1}`} type="date" className={FIELD_FULL}
+                           value={row.spentOn} disabled={locked || pending}
+                           onChange={(e) => updateBatchRow(row.id, 'date', { spentOn: e.target.value })} />
+                  </div>
+                </div>
+                <p className="ml-6 mt-1 text-xs text-muted truncate">
+                  {row.file.name}
+                  {' — '}
+                  {row.status === 'queued' && 'Queued…'}
+                  {row.status === 'reading' && 'Reading…'}
+                  {row.status === 'read' && 'Read'}
+                  {row.status === 'error' && "Couldn't read — type it in"}
+                </p>
+                {row.duplicateReason && (
+                  <p className="ml-6 mt-1 text-xs text-danger">
+                    Possibly a repeat of {row.duplicateReason}.
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={addAllBatch}
+              disabled={locked || pending || !batchRows.every((r) => r.status === 'read' || r.status === 'error')}
+              className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
+                         border border-line text-muted hover:text-ink disabled:opacity-40"
+            >
+              {pending ? (step ?? 'Saving…') : 'Add all'}
+            </button>
+            <button
+              type="button"
+              onClick={cancelBatch}
+              disabled={pending}
+              className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="grid gap-2 sm:grid-cols-[8rem_1fr_7rem_9rem_auto] items-center mb-3">
+          <Select
+            ariaLabel="Category"
+            value={category}
+            disabled={locked || pending}
+            onChange={(v) => {
+              touchedRef.current.add('category')
+              setCategory(v as ExpenseCategory)
+            }}
+            options={CATEGORY_ORDER.map((c) => ({ value: c, label: CATEGORY_LABEL[c] }))}
+          />
+          <input aria-label="Where" className={FIELD_FULL} placeholder="Where" value={whereSpent}
+                 disabled={locked || pending} onChange={(e) => {
+                   touchedRef.current.add('vendor')
+                   setWhereSpent(e.target.value)
+                 }} />
+          <input aria-label="Amount" inputMode="decimal" placeholder="0.00"
+                 className={`${FIELD_FULL} tabular text-right`} value={amount} disabled={locked || pending}
+                 onChange={(e) => {
+                   touchedRef.current.add('amount')
+                   setAmount(e.target.value)
+                 }} />
+          <input aria-label="Date" type="date" className={FIELD_FULL} value={spentOn}
+                 disabled={locked || pending} onChange={(e) => {
+                   touchedRef.current.add('date')
+                   setSpentOn(e.target.value)
+                 }} />
+          <button type="button" onClick={add} disabled={locked || pending || uploading}
+                  className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
+                             border border-line text-muted hover:text-ink disabled:opacity-40">
+            {pending ? (step ?? 'Saving…') : uploading ? 'Uploading…' : '+ Add'}
+          </button>
+
+          <label className="sm:col-span-5 text-xs text-muted">
+            {/* capture="environment" opens the camera directly on a phone, which
+                is where a receipt actually gets photographed. `multiple` is what
+                lets a dozen receipts from a trip be picked in one go — picking
+                just one still lands in onPickFile below, untouched. */}
+            <input type="file" accept="image/*,application/pdf" multiple disabled={locked || pending || uploading}
+                   onChange={(e) => { void onPickFiles(e.target.files) }}
+                   className="text-xs text-muted file:mr-3 file:px-3 file:py-1.5 file:rounded-field
+                              file:border file:border-line file:bg-transparent file:text-muted
+                              file:text-xs file:font-semibold file:uppercase file:tracking-wider
+                              disabled:opacity-40" />
+            {capture
+              ? ` ${capture.file.name}${ocrNote ? ` — ${ocrNote}` : ''}`
+              : (ocrNote ?? ' Photo or PDF. A receipt is required before this show can be billed.')}
+          </label>
+        </div>
+      )}
 
       {locked && (
         <p className="text-xs text-muted mt-3">This show is billed, so expenses are locked.</p>
+      )}
+      {batchSummary && (
+        <p className="text-xs mt-3">
+          <span className="text-muted">Added {batchSummary.added} of {batchSummary.total}.</span>
+          {batchSummary.failed.length > 0 && (
+            <span className="text-danger">
+              {' '}{batchSummary.failed.length} could not be added — {batchSummary.failed.join('; ')}.
+            </span>
+          )}
+        </p>
       )}
       {error && <p role="alert" className="text-xs text-danger mt-3">{error}</p>}
     </section>
