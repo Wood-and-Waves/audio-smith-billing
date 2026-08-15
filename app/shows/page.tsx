@@ -1,7 +1,8 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { isIncompleteDay } from '@/lib/chronology'
-import { formatDateShort } from '@/lib/dates'
+import { formatDateShort, todayInChicago } from '@/lib/dates'
+import { byDateClosestFirst } from '@/lib/showOrder'
 import { lineTotal } from '@/lib/money'
 import { computeShowLines, rulesetAndRatesFor, type PmEntryLike } from '@/lib/showBuckets'
 import type { ShowDayLike } from '@/lib/payroll'
@@ -57,8 +58,23 @@ export default async function ShowsPage() {
   }
 
   const rows = (data ?? []) as unknown as Row[]
-  const unbilled = rows.filter((r) => r.status === 'open')
-  const billed = rows.filter((r) => r.status === 'billed')
+  // Closest first, not created_at — the order Dan happened to type shows in
+  // tells him nothing a month later, and what he scans this page for is what
+  // is next. A show still running outranks one that has not started; finished
+  // ones follow, most recent first, because a trip just back from is the one
+  // still being billed.
+  //
+  // Sorted here rather than in the query: the key is the earliest show_days
+  // date, which is not a column on shows. Chicago is fine for the bucket — a
+  // list ordering does not need each show's own zone the way a highlighted
+  // "today" row does.
+  const today = todayInChicago()
+  const byDate = <T extends { show_days: { date: string }[] }>(list: T[]) =>
+    byDateClosestFirst(
+      list.map((r) => ({ ...r, dates: r.show_days.map((d) => d.date) })), today)
+
+  const unbilled = byDate(rows.filter((r) => r.status === 'open'))
+  const billed = byDate(rows.filter((r) => r.status === 'billed'))
 
   // Money lives here, on the server, in integer cents — never in the client
   // component. Each unbilled show gets its own computeShowLines pass, built

@@ -1,0 +1,18 @@
+-- 0018 — travel_full_day, finally
+--
+-- 0015 tried to drop this in the same migration that added the explicit
+-- travel_rate_cents replacing it, and took /clients, /clients/new,
+-- /clients/[id] and /shows/new down at request time until 0016 put it back.
+-- The plan behind 0015 asserted the column was referenced in two files; it was
+-- eight. Nothing caught that at compile time, because this repo's row types are
+-- hand-written and the Supabase client does not type-check .select() strings —
+-- so the build was green and the app 500'd on real pages.
+--
+-- The rule this cost us: a schema change that REMOVES something the running
+-- code still reads has to ship AFTER that code, never with it. Every other
+-- migration here has been additive for exactly that reason.
+--
+-- This one runs only now that the code which stopped selecting it is deployed
+-- and verified serving, and a grep across app, components, lib and scripts
+-- returns nothing outside these migration files.
+alter table client_rate_cards drop column travel_full_day;
