@@ -26,7 +26,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
       .select(
         `id, number, issue_date, due_date, terms_days, status, bill_to_snapshot,
          subtotal_cents, tax_bp, tax_cents, deposit_cents, total_cents, notes, imported,
-         backup_snapshot,
+         work_for, backup_snapshot,
          clients(name, address_line1, address_line2, billing_email),
          invoice_lines(id, position, description, qty_hundredths, unit_price_cents, line_total_cents),
          reminder_log(kind, sent_at)`,
@@ -77,6 +77,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
     total_cents: number
     notes: string | null
     imported: boolean
+    work_for: string | null
     backup_snapshot: BackupSnapshot | null
     clients:
       | (NonNullable<DocumentData['client']> & { billing_email: string | null })
@@ -135,6 +136,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
     total_cents: inv.total_cents,
     // The import note belongs above the document, not printed on it.
     notes: inv.imported ? null : inv.notes,
+    work_for: inv.work_for,
     // Reconstructed field by field, NOT `client: inv.clients`. The query fetches
     // billing_email for the send panel, and assigning the row wholesale would
     // carry it into docData — which is serialized to the browser and handed to

@@ -447,6 +447,15 @@ test('a show with zero net hours renders no hours page', () => {
   assert.ok(!joined.includes('PWC ORLANDO'), 'not even the show heading')
 })
 
+test('the FOR heading prints only when the invoice names its work', () => {
+  const withWork = { ...INVOICE, work_for: 'PwC Orlando, Streamline Napa' }
+  const on = textOf(buildInvoicePdf(PARTS, withWork, ASSETS)).join(' ')
+  assert.ok(on.includes('PwC Orlando, Streamline Napa'))
+
+  const off = textOf(buildInvoicePdf(PARTS, INVOICE, ASSETS)).join(' ')
+  assert.ok(!/\bFOR\b/.test(off), 'a historical invoice gains nothing')
+})
+
 test('no Unicode minus reaches the page', () => {
   // U+2212 renders as NOTHING in Helvetica. A deposit once printed as a charge
   // rather than a credit because of it.

@@ -69,6 +69,8 @@ const s = {
   billTo: { flexGrow: 1, paddingRight: 24 },
   eyebrow: { fontSize: 7, color: MUTED, letterSpacing: 1, marginBottom: 4 },
   billToName: { fontSize: 10, lineHeight: 1.5 },
+  forEyebrow: { fontSize: 7, color: MUTED, letterSpacing: 1, marginBottom: 4, marginTop: 12 },
+  forText: { fontSize: 9, lineHeight: 1.5 },
   meta: { width: 170, borderLeftWidth: 1, borderLeftColor: LINE, paddingLeft: 16 },
   metaRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 2 },
   metaLabel: { fontSize: 7, color: MUTED, letterSpacing: 1 },
@@ -359,6 +361,13 @@ export function buildInvoicePdf(parts: PdfParts, data: DocumentData, assets: Pdf
             V(s.billTo, [
               T(s.eyebrow, 'BILL TO'),
               ...(billTo ? billTo.split('\n') : ['—']).map((l) => T(s.billToName, l)),
+              // Null on every hand-written invoice and all 105 historical
+              // ones — omitted entirely, not printed empty, so they render
+              // exactly as they always have. Mirrors InvoiceDocument.tsx.
+              ...(data.work_for ? [
+                T(s.forEyebrow, 'FOR'),
+                T(s.forText, data.work_for),
+              ] : []),
             ]),
             V(s.meta, [
               metaRow('Invoice', `#${data.number}`),

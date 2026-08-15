@@ -36,6 +36,14 @@ export type DocumentData = {
   deposit_cents: number
   total_cents: number
   notes: string | null
+  /**
+   * What the invoice is for — show names, frozen in at bill time. Separate
+   * from `notes` on purpose: `notes` is InvoiceEditor's textarea and a
+   * hand-edit overwrites it, but `work_for` must survive that edit. Null on
+   * every hand-written invoice and all 105 historical ones, which render
+   * nothing here — unchanged.
+   */
+  work_for?: string | null
   client: { name: string; address_line1: string | null; address_line2: string | null } | null
   lines: {
     id: string
@@ -131,6 +139,14 @@ export default function InvoiceDocument({ data }: { data: DocumentData }) {
             <p className="font-semibold whitespace-pre-line leading-relaxed">
               {billTo || '—'}
             </p>
+            {data.work_for && (
+              <>
+                <h2 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-500 mb-2 mt-4">
+                  For
+                </h2>
+                <p className="text-sm leading-relaxed">{data.work_for}</p>
+              </>
+            )}
           </div>
 
           <dl className="sm:min-w-[15rem] sm:border-l sm:border-paper-line sm:pl-8">

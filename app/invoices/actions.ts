@@ -33,6 +33,10 @@ export type InvoiceInput = {
   // renders no backup pages, which is what every invoice billed before
   // migration 0012 already does.
   backupSnapshot?: BackupSnapshot | null
+  // Same story as backupSnapshot: only billShows passes this, only at
+  // creation. InvoiceEditor's textarea owns `notes`, not `work_for` — see the
+  // insert branch below for why it must never join the shared `row` patch.
+  work_for?: string | null
 }
 
 export type SaveResult =
@@ -167,11 +171,18 @@ export async function saveInvoice(input: InvoiceInput): Promise<SaveResult> {
 
     const { data: created, error } = await supabase
       .from('invoices')
-      // backup_snapshot is set only here, at creation, and left out of `row`
-      // (shared with the update branch above) on purpose: an edit made
-      // through InvoiceEditor never passes one, and if it were in `row` that
-      // edit would silently null out a backup a show already froze in.
-      .insert({ ...row, number, status: 'draft', backup_snapshot: input.backupSnapshot ?? null })
+      // backup_snapshot and work_for are set only here, at creation, and left
+      // out of `row` (shared with the update branch above) on purpose: an
+      // edit made through InvoiceEditor never passes either, and if they were
+      // in `row` that edit would silently null out a backup — or a FOR:
+      // heading — a show already froze in.
+      .insert({
+        ...row,
+        number,
+        status: 'draft',
+        backup_snapshot: input.backupSnapshot ?? null,
+        work_for: input.work_for ?? null,
+      })
       .select('id')
       .single()
     if (error) return { error: error.message }

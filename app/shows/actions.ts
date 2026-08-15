@@ -480,12 +480,17 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
 
   const { saveInvoice } = await import('@/app/invoices/actions')
   const issue = todayInChicago()
+  // The same string that fills `notes` today, but ALSO frozen onto its own
+  // column — work_for — so a hand-edit through InvoiceEditor (which owns
+  // `notes`) can never erase which shows this invoice was for.
+  const workFor = shows.map((s) => s.name).join(', ')
   const result = await saveInvoice({
     client_id: clientId,
     issue_date: issue,
     terms_days: termsDays,
     deposit_cents: 0,
-    notes: shows.map((s) => s.name).join(', '),
+    notes: workFor,
+    work_for: workFor,
     lines: merged,
     backupSnapshot,
   })
