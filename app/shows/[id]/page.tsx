@@ -29,6 +29,7 @@ type PmEntry = { id: string; worked_on: string; minutes: number; note: string | 
 type Expense = {
   id: string; category: ExpenseCategory; where_spent: string
   amount_cents: number; spent_on: string; receipt_path: string | null
+  receipt_original: string | null
 }
 type ShowRow = {
   id: string; name: string; venue: string | null; location: string | null
@@ -61,7 +62,8 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
              show_days(id, date, travel_in, travel_out, pay_as_half_day,
                        punches(id, punch_type, punched_at)),
              pm_entries(id, worked_on, minutes, note),
-             expenses(id, category, where_spent, amount_cents, spent_on, receipt_path)`)
+             expenses(id, category, where_spent, amount_cents, spent_on, receipt_path,
+                      receipt_original)`)
     .eq('id', id)
     .maybeSingle()
 

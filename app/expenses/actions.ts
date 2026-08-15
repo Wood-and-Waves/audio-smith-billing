@@ -220,3 +220,64 @@ export async function extractReceipt(
 
   return { ok: true, fields: result.fields, unreadable: result.unreadable }
 }
+
+export type OriginalRef = {
+  spentOn: string
+  vendor: string | null
+  amountCents: number
+  originalPath: string
+  signedUrl: string
+}
+
+/**
+ * Every original still held for a show, with a signed URL each.
+ *
+ * The browser assembles the zip itself: an 80MB archive must not pass through a
+ * serverless function, which has neither the memory budget nor the time.
+ */
+export async function listShowOriginals(
+  showId: string,
+): Promise<Fail | { originals: OriginalRef[]; showName: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const { data: show, error: showError } = await supabase
+    .from('shows').select('name').eq('id', showId).single()
+  if (showError) return { error: showError.message }
+
+  const { data, error } = await supabase
+    .from('expenses')
+    .select('spent_on, where_spent, amount_cents, receipt_original')
+    .eq('show_id', showId)
+    .not('receipt_original', 'is', null)
+    .order('spent_on', { ascending: true })
+  if (error) return { error: error.message }
+
+  const rows = (data ?? []) as {
+    spent_on: string; where_spent: string; amount_cents: number; receipt_original: string
+  }[]
+  if (rows.length === 0) return { originals: [], showName: show.name }
+
+  // Reuse signedReceiptUrls rather than a second signing path — see its own
+  // doc comment above for why a genuine Storage outage must be told apart
+  // from one missing object.
+  const { urls, storageError } = await signedReceiptUrls(rows.map((r) => r.receipt_original))
+  if (storageError) return { error: 'Storage could not be reached. Try again.' }
+
+  return {
+    showName: show.name,
+    originals: rows.flatMap((r) => {
+      const signedUrl = urls[r.receipt_original]
+      // A row whose object has already gone is skipped rather than failing the
+      // export: the rest of the show is still worth saving.
+      return signedUrl ? [{
+        spentOn: r.spent_on,
+        vendor: r.where_spent || null,
+        amountCents: r.amount_cents,
+        originalPath: r.receipt_original,
+        signedUrl,
+      }] : []
+    }),
+  }
+}

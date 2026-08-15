@@ -7,10 +7,12 @@ import { formatAmount, formatUSD, parseUSD } from '@/lib/money'
 import { formatDateShort, todayInChicago } from '@/lib/dates'
 import { CATEGORY_LABEL, CATEGORY_ORDER, expensesMissingReceipts, type ExpenseCategory } from '@/lib/expenses'
 import { scaleToFit, contrastBounds, buildLut, JPEG_QUALITY } from '@/lib/receiptImage'
-import { addExpense, deleteExpense, extractReceipt } from '@/app/expenses/actions'
+import { addExpense, deleteExpense, extractReceipt, listShowOriginals } from '@/app/expenses/actions'
 import {
   dropExactRepeats, duplicateOf, markDuplicates, type NamedCandidate,
 } from '@/lib/receiptDuplicates'
+import { archiveNames, sanitizeSegment } from '@/lib/receiptArchiveName'
+import { buildZip, type ZipEntry } from '@/lib/zipStore'
 import type { ReceiptFields } from '@/lib/receiptExtraction'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select from '@/components/ui/Select'
@@ -22,6 +24,7 @@ type Row = {
   amount_cents: number
   spent_on: string
   receipt_path: string | null
+  receipt_original: string | null
 }
 
 /**
@@ -313,6 +316,8 @@ export default function ExpenseLog({
   const router = useRouter()
   const [pending, start] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  // True only while a zip is being fetched and assembled — see exportOriginals.
+  const [exporting, setExporting] = useState(false)
   // What the SAVE is doing right now (addExpense only — see `pending`
   // above). The upload no longer happens here; it happens at file pick.
   const [step, setStep] = useState<string | null>(null)
@@ -958,6 +963,11 @@ export default function ExpenseLog({
   // Shared with billShows/expensesMissingReceipts (lib/expenses.ts) so this
   // count agrees with the billing gate about a blank (not just null) path.
   const missing = expensesMissingReceipts(expenses).length
+  const originalsHeld = expenses.filter((e) => e.receipt_original !== null).length
+  // Hard-coded until a later task adds receipt_archived_at to the expenses
+  // table and the Dropbox archive step starts setting it — there is nothing
+  // to count yet.
+  const originalsArchived = 0
 
   function add() {
     setError(null)
@@ -1044,6 +1054,58 @@ export default function ExpenseLog({
     })
   }
 
+  /**
+   * Saves every original for this show as one zip.
+   *
+   * Deliberately a desktop action. The archive is tens of megabytes and the
+   * point of it is to land in a folder, which is not a thing that happens
+   * usefully on a phone over hotel wifi.
+   *
+   * Not wrapped in useTransition/`start`: that flag also gates the Add button
+   * and the batch review list, and a five-minute download of eighty photos
+   * has no reason to freeze either of those.
+   */
+  async function exportOriginals() {
+    setExporting(true)
+    setError(null)
+    try {
+      const result = await listShowOriginals(showId)
+      if ('error' in result) { setError(result.error); return }
+      if (result.originals.length === 0) { setError('No originals are held for this show.'); return }
+
+      const names = archiveNames(result.originals)
+      const entries: ZipEntry[] = []
+      for (let i = 0; i < result.originals.length; i++) {
+        const ref = result.originals[i]
+        const response = await fetch(ref.signedUrl)
+        if (!response.ok) throw new Error(`Could not download ${names[i]}.`)
+        entries.push({
+          name: names[i],
+          bytes: new Uint8Array(await response.arrayBuffer()),
+          date: ref.spentOn,
+        })
+      }
+
+      // .slice() rather than the raw Uint8Array: TS types buildZip's return as
+      // Uint8Array<ArrayBufferLike>, which admits a SharedArrayBuffer backing
+      // store and so is not assignable to BlobPart. slice() always allocates a
+      // fresh, non-shared buffer, which satisfies it.
+      const blob = new Blob([buildZip(entries).slice()], { type: 'application/zip' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${sanitizeSegment(result.showName, 'Show')} originals.zip`
+      a.click()
+      // Revoked on the next tick: revoking synchronously races the download in
+      // Safari and produces an empty file.
+      setTimeout(() => URL.revokeObjectURL(url), 0)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not build the archive.')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <section className="mb-10">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-4">
@@ -1059,6 +1121,23 @@ export default function ExpenseLog({
           </p>
         )}
       </div>
+
+      {originalsHeld > 0 && (
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+          <span className="text-xs text-muted">
+            {originalsHeld} original{originalsHeld === 1 ? '' : 's'} — {originalsArchived} archived
+          </span>
+          <button
+            type="button"
+            onClick={() => void exportOriginals()}
+            disabled={exporting}
+            className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
+                       border border-line text-muted hover:text-ink disabled:opacity-40"
+          >
+            {exporting ? 'Building…' : 'Download originals'}
+          </button>
+        </div>
+      )}
 
       {sorted.length === 0 ? (
         <p className="text-muted border-l-2 border-line pl-4 py-1 mb-4">No expenses yet.</p>
