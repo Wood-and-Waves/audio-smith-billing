@@ -79,10 +79,18 @@ alter table client_rate_cards
   add constraint card_travel_nonneg check (travel_rate_cents >= 0),
   add constraint card_pm_nonneg     check (pm_rate_cents >= 0);
 
--- Superseded by the explicit travel_rate_cents. A switch cannot express a flat
--- arrangement — $200 a leg regardless of the day rate — which is why it goes.
-alter table client_rate_cards drop column travel_full_day;
 ```
+
+**The drop is NOT in this migration.** It was, and it broke the live app: the
+plan claimed `travel_full_day` was referenced in two files when it is in
+**eight**, and this repo has no generated database types, so nothing failed at
+compile time — `/clients`, `/clients/new`, `/clients/[id]` and `/shows/new`
+simply started erroring at request time against a column that no longer existed.
+Migration 0016 restored it.
+
+A schema change that removes something the running code still reads has to ship
+**after** that code, never with it. The drop is now the last step of this plan,
+after Tasks 2 and 3 are deployed.
 
 - [ ] **Step 2: Apply and verify**
 
@@ -193,6 +201,36 @@ Expected: **13 cards** — the editor must not have written anything.
 3. Create a show from `PwC PM` and open Rates and rules — the penalty is there, without being typed.
 4. Create one from the default — no penalty.
 5. Change a card's day rate and watch travel and PM follow; type a travel rate and watch it stop following.
+
+---
+
+### Task 4: Drop the column — ONLY after Tasks 2 and 3 are deployed
+
+**Files:** Create `scripts/sql/migrations/0017_drop_travel_full_day.sql`
+
+Do not start this task until the code from Tasks 2 and 3 is **pushed and live**.
+Nothing running may still select `travel_full_day`.
+
+- [ ] **Step 1: Prove nothing reads it**
+
+```bash
+grep -rn "travel_full_day" app components lib scripts --include=*.ts --include=*.tsx | grep -v migrations
+```
+
+Expected: **no output**. Any hit is a STOP — that file would break the moment
+the column goes, exactly as before.
+
+- [ ] **Step 2: Drop it**
+
+```sql
+-- 0017 — travel_full_day, finally
+--
+-- 0015 tried to drop this alongside the travel_rate_cents that replaced it, and
+-- took four pages of the live app down until 0016 put it back: eight files were
+-- still selecting it, and with no generated database types nothing caught that
+-- at compile time. Every one of those files has since stopped reading it.
+alter table client_rate_cards drop column travel_full_day;
+```
 
 ## Blast radius
 
