@@ -149,6 +149,11 @@ export async function signedReceiptUrls(
 ): Promise<{ urls: Record<string, string>; storageError: boolean }> {
   if (paths.length === 0) return { urls: {}, storageError: false }
   const supabase = await createClient()
+  // Storage RLS already blocks an anonymous or cross-user read regardless —
+  // this is belt-and-suspenders, matching every sibling action in this file,
+  // so the check is never the one place in this file a caller forgot it.
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { urls: {}, storageError: false }
   const { data, error } = await supabase.storage
     .from('receipts').createSignedUrls(paths, SIGNED_URL_SECONDS)
   if (error || !data) return { urls: {}, storageError: true }
