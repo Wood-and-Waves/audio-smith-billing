@@ -256,7 +256,7 @@ export async function sendInvoice(
         .select(
           `id, number, issue_date, due_date, terms_days, status, bill_to_snapshot,
          subtotal_cents, tax_bp, tax_cents, deposit_cents, total_cents, notes, imported,
-         public_token, backup_snapshot,
+         public_token, backup_snapshot, work_for,
          clients(name, address_line1, address_line2, billing_email),
          invoice_lines(id, position, description, qty_hundredths, unit_price_cents, line_total_cents)`,
         )
@@ -301,6 +301,7 @@ export async function sendInvoice(
     total_cents: number; notes: string | null; imported: boolean
     public_token: string | null
     backup_snapshot: BackupSnapshot | null
+    work_for: string | null
     clients: { name: string; address_line1: string | null; address_line2: string | null; billing_email: string | null } | null
     invoice_lines: { id: string; position: number; description: string; qty_hundredths: number; unit_price_cents: number; line_total_cents: number }[]
   }
@@ -393,6 +394,11 @@ export async function sendInvoice(
     deposit_cents: inv.deposit_cents,
     total_cents: inv.total_cents,
     notes: inv.imported ? null : inv.notes,
+    // The EMAILED pdf must carry the same FOR: heading the downloaded one does.
+    // These two assembly points build the same document for the same invoice
+    // number; if only one gained the field, the copy Dan looks at and the copy
+    // the client receives would disagree.
+    work_for: inv.work_for,
     client: inv.clients
       ? {
           name: inv.clients.name,
