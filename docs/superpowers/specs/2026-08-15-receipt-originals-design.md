@@ -80,8 +80,8 @@ Three values: `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN`.
   `app/api/cron/reminders/route.ts`, the same file already permitted to read
   `SUPABASE_SERVICE_ROLE_KEY`.
 - **App folder access type, not Full Dropbox.** The app's root becomes
-  `/Apps/{app name}/` and it can see nothing else. Naming the app `smith-audio`
-  produces `/Apps/smith-audio/receipts/…` while the code writes plain
+  `/Apps/{app name}/` and it can see nothing else. Naming the app `billing-smith-audio`
+  produces `/Apps/billing-smith-audio/receipts/…` while the code writes plain
   `receipts/…`.
 - Access tokens are short-lived; the refresh token is exchanged for one at the
   start of each run. A missing or rejected credential means the archive stage is
