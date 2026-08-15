@@ -25,6 +25,10 @@ type Row = {
   spent_on: string
   receipt_path: string | null
   receipt_original: string | null
+  // Arrives via migration 0019 — set only once an original's Dropbox copy is
+  // verified by size and content hash. Necessary but not sufficient for
+  // deletion: see the full mayDelete gate in lib/receiptRetention.ts.
+  receipt_archived_at: string | null
 }
 
 /**
@@ -964,10 +968,7 @@ export default function ExpenseLog({
   // count agrees with the billing gate about a blank (not just null) path.
   const missing = expensesMissingReceipts(expenses).length
   const originalsHeld = expenses.filter((e) => e.receipt_original !== null).length
-  // Hard-coded until a later task adds receipt_archived_at to the expenses
-  // table and the Dropbox archive step starts setting it — there is nothing
-  // to count yet.
-  const originalsArchived = 0
+  const originalsArchived = expenses.filter((e) => e.receipt_archived_at !== null).length
 
   function add() {
     setError(null)

@@ -30,6 +30,9 @@ type Expense = {
   id: string; category: ExpenseCategory; where_spent: string
   amount_cents: number; spent_on: string; receipt_path: string | null
   receipt_original: string | null
+  // Arrives via migration 0019 — set only once an original's Dropbox copy is
+  // verified by size and content hash.
+  receipt_archived_at: string | null
 }
 type ShowRow = {
   id: string; name: string; venue: string | null; location: string | null
@@ -63,7 +66,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
                        punches(id, punch_type, punched_at)),
              pm_entries(id, worked_on, minutes, note),
              expenses(id, category, where_spent, amount_cents, spent_on, receipt_path,
-                      receipt_original)`)
+                      receipt_original, receipt_archived_at)`)
     .eq('id', id)
     .maybeSingle()
 
