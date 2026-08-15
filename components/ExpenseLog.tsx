@@ -753,28 +753,60 @@ export default function ExpenseLog({
     setError(null)
     setBatchSummary(null)
 
-    const withHashes = await Promise.all(files.map(async (file) => ({ file, hash: await hashFile(file) })))
-    const { kept, dropped } = dropExactRepeats(withHashes)
-    setBatchSkipped(dropped)
+    // One at a time, not Promise.all. Twelve arrayBuffer() calls in flight is
+    // 60MB of live buffers on the phone whose memory ceiling is the whole
+    // reason BATCH_CONCURRENCY exists — spent before the bounded stage even
+    // starts. Hashing is fast; the pick is not where the wait is.
+    const withHashes: { file: File; hash: string }[] = []
+    // The whole rest of the pick sits inside this, because the caller is
+    // `void onPickFiles(...)`: anything that escapes here is an unhandled
+    // rejection, and an unhandled rejection is a blank screen after picking
+    // twelve photos.
+    try {
+      for (const [i, file] of files.entries()) {
+        let hash: string
+        try {
+          hash = await hashFile(file)
+        } catch {
+          // A photo not yet materialised from iCloud throws NotReadableError
+          // on read. Under Promise.all that one rejection took down the whole
+          // pick — unhandled, since the caller is `void onPickFiles(...)`, so
+          // nothing at all appeared on screen: no list, no error, no note.
+          // One unreadable photo out of twelve killed the other eleven.
+          //
+          // A value nothing else can equal, so the file is kept and simply
+          // cannot take part in exact-duplicate detection. It still gets a
+          // row: enhance reads the file again and will say so if it is
+          // genuinely unreadable.
+          hash = `unhashable-${i}-${Math.random().toString(36).slice(2)}`
+        }
+        withHashes.push({ file, hash })
+      }
 
-    const rows: BatchRow[] = kept.map(({ file }, i) => ({
-      id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`,
-      file,
-      status: 'queued',
-      category: 'meals',
-      whereSpent: '',
-      amount: '',
-      spentOn: todayInChicago(),
-      included: true,
-      duplicateReason: null,
-      enhancedPath: null,
-      originalPath: null,
-      touched: new Set(),
-    }))
-    // A fresh token per batch, exactly as onPickFile mints one per pick.
-    batchTokenRef.current += 1
-    setBatchRows(rows)
-    runBatch(rows, batchTokenRef.current)
+      const { kept, dropped } = dropExactRepeats(withHashes)
+      setBatchSkipped(dropped)
+
+      const rows: BatchRow[] = kept.map(({ file }, i) => ({
+        id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`,
+        file,
+        status: 'queued',
+        category: 'meals',
+        whereSpent: '',
+        amount: '',
+        spentOn: todayInChicago(),
+        included: true,
+        duplicateReason: null,
+        enhancedPath: null,
+        originalPath: null,
+        touched: new Set(),
+      }))
+      // A fresh token per batch, exactly as onPickFile mints one per pick.
+      batchTokenRef.current += 1
+      setBatchRows(rows)
+      runBatch(rows, batchTokenRef.current)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not read those files.')
+    }
   }
 
   /**
