@@ -70,10 +70,22 @@ export function uploadArg(path: string): string {
  * upload, the content hash catches a corrupted one. This is the whole licence
  * for deleting the other copy, so a failure here returns ok:false and the
  * caller must leave receipt_archived_at null.
+ *
+ * EVERY failure is a returned ok:false, never a throw. The caller runs inside
+ * the nightly cron alongside the reminders, and a thrown error there turns a run
+ * that sent every reminder correctly into a red one.
+ *
+ * `storedPath` is where the file actually landed. With mode:'add' and
+ * autorename:true a collision does not fail and does not overwrite — Dropbox
+ * quietly stores the file under a different name — and collisions are real:
+ * archiveNames only de-duplicates within one batch, so the same receipt archived
+ * on two different nights asks for the same name twice, and Dropbox paths are
+ * case-insensitive so "Starbucks" and "STARBUCKS" collide inside one batch too.
+ * Nothing recorded where those actually went.
  */
 export async function uploadAndVerify(
   accessToken: string, path: string, bytes: Uint8Array,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true; storedPath: string } | { ok: false; error: string }> {
   let response: Response
   try {
     response = await fetch('https://content.dropboxapi.com/2/files/upload', {
@@ -95,7 +107,25 @@ export async function uploadAndVerify(
 
   if (!response.ok) return { ok: false, error: `Dropbox rejected the upload (HTTP ${response.status}).` }
 
-  const stored = await response.json() as { size?: number; content_hash?: string }
+  // Parsing is inside a try for the same reason the fetch above is, and it is
+  // not hypothetical: a 200 whose body is not JSON — a CDN or proxy error page
+  // served with the wrong status — threw SyntaxError straight out of this
+  // function, and a body of literal `null` threw TypeError on the `.size` read
+  // below. Either one escaped the archive stage and 500'd the whole cron, after
+  // the reminders had already sent, which is exactly the false alarm the route
+  // takes such care to avoid.
+  //
+  // The body is never quoted into the error. Only the fact that it did not
+  // parse, the same rule the HTTP-status-only messages above follow.
+  let stored: { size?: number; content_hash?: string; path_display?: string }
+  try {
+    const parsed: unknown = await response.json()
+    if (parsed === null || typeof parsed !== 'object') throw new Error('not an object')
+    stored = parsed as { size?: number; content_hash?: string; path_display?: string }
+  } catch {
+    return { ok: false, error: 'Dropbox returned a body that is not a JSON object.' }
+  }
+
   if (stored.size !== bytes.length) {
     return { ok: false, error: `Dropbox stored ${stored.size} bytes, not ${bytes.length}.` }
   }
@@ -103,5 +133,8 @@ export async function uploadAndVerify(
   if (stored.content_hash !== expected) {
     return { ok: false, error: 'Dropbox stored a file whose content hash does not match.' }
   }
-  return { ok: true }
+  // Falls back to the requested path only so the caller always has something to
+  // report; a Dropbox that verified the bytes but omitted path_display is not a
+  // reason to refuse an upload that provably arrived intact.
+  return { ok: true, storedPath: stored.path_display ?? path }
 }
