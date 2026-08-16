@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
 import { readableAuthError } from '@/lib/authError'
+import { safeNext } from '@/lib/safeNext'
 
 function LoginForm() {
   const router = useRouter()
@@ -25,7 +26,9 @@ function LoginForm() {
       setBusy(false)
       return
     }
-    router.push(params.get('next') || '/invoices')
+    // safeNext, not the raw param: an attacker-supplied ?next=//lookalike would
+    // otherwise hard-navigate the browser off-origin the instant sign-in succeeds.
+    router.push(safeNext(params.get('next')))
     router.refresh()
   }
 
