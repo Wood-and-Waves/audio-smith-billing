@@ -194,13 +194,19 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
               const ot = paidOvertimeHours(dd, typedDays, rules)
               const dt = paidDoubleTimeHours(dd, typedDays, rules)
               const mp = mealPenaltyCount(dd, rules)
-              const breakdown = [
-                net > 0 && `${fmtHours(net)} net`,
-                st > 0 && `${fmtHours(st)} ST`,
-                ot > 0 && `${fmtHours(ot)} OT`,
-                dt > 0 && `${fmtHours(dt)} DT`,
-                mp > 0 && `meal penalty ×${mp}`,
-              ].filter(Boolean).join(' · ')
+              // A sub-threshold day in an hourly show bills hourly, not ST/OT/DT —
+              // read it that way here too, so the breakdown always matches the
+              // invoice. st is whole hours, so st * hourly_rate_cents is the
+              // exact line total (same product the billing engine uses).
+              const breakdown = (rates.bill_hourly && st > 0 && st < rules.overtime_after_hours)
+                ? `${fmtHours(st)} hrs → ${formatUSD(st * rates.hourly_rate_cents)} hourly`
+                : [
+                    net > 0 && `${fmtHours(net)} net`,
+                    st > 0 && `${fmtHours(st)} ST`,
+                    ot > 0 && `${fmtHours(ot)} OT`,
+                    dt > 0 && `${fmtHours(dt)} DT`,
+                    mp > 0 && `meal penalty ×${mp}`,
+                  ].filter(Boolean).join(' · ')
 
               // Today gets an amber edge and a chip. Before this the only thing
               // separating one day from the next was a hairline in #2a3441 on a
@@ -266,8 +272,10 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
                     // day is meant for a short call, not a full one — but
                     // a day that already has the flag stays visible so it
                     // can always be cleared, even if it later grew past 5
-                    // hours (e.g. after adding punches).
-                    (calculateNetHours(d as unknown as ShowDayLike, rules) < 5 || d.pay_as_half_day) && (
+                    // hours (e.g. after adding punches). Hourly billing is
+                    // already finer-grained than a half day, so it never
+                    // shows in an hourly show.
+                    !rates.bill_hourly && (calculateNetHours(d as unknown as ShowDayLike, rules) < 5 || d.pay_as_half_day) && (
                       <HalfDayToggle
                         showDayId={d.id}
                         checked={d.pay_as_half_day}
