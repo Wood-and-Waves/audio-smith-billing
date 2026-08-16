@@ -40,7 +40,7 @@ export default function UnbilledShows({ shows }: { shows: UnbilledShow[] }) {
                 accent border's side, mirroring the current day on the show page
                 — and never past the right margin, so the price and text keep
                 their edge padding. */}
-            <Link href={`/shows/${s.id}`} className={`block py-4 pl-3 -ml-3 ${
+            <Link href={`/shows/${s.id}`} className={`block py-4 pl-3 -ml-3 pr-3 ${
               s.inProgress ? 'border-l-2 border-l-accent bg-accent-wash' : ''
             }`}>
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
