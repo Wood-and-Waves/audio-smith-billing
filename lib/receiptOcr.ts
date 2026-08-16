@@ -1,3 +1,4 @@
+import 'server-only'
 // Sending a receipt photo to Claude and reading back the extraction.
 //
 // SERVER ONLY — readReceiptImage reads ANTHROPIC_API_KEY. Never import this

@@ -1,3 +1,4 @@
+import 'server-only'
 // Dropbox, over plain fetch.
 //
 // No SDK: this needs two endpoints, and the SDK would be a tenth runtime

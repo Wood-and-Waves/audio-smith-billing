@@ -1,3 +1,4 @@
+import 'server-only'
 // buildDigestEmail and buildOverdueAlertEmail: the two emails Dan gets — a
 // weekly digest, and a one-off note the first morning an invoice goes late.
 // Both link to the authenticated invoice screen, never the client-facing

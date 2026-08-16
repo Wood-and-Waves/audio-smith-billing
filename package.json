@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "TZ=America/Chicago node --test \"scripts/test/*.test.ts\"",
+    "test": "TZ=America/Chicago node --conditions=react-server --test \"scripts/test/*.test.ts\"",
     "test:money": "TZ=America/Chicago node --test scripts/test/money.test.ts",
     "import:parse": "node scripts/import/parse-sheet.mjs",
     "import:load": "node --env-file=.env.local scripts/import/load.mjs",
@@ -27,7 +27,8 @@
     "pdfjs-dist": "^6.2.108",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "resend": "^6.20.0"
+    "resend": "^6.20.0",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",

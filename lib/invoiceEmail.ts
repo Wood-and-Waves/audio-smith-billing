@@ -1,3 +1,4 @@
+import 'server-only'
 // Sending the invoice email.
 //
 // SERVER ONLY — sendInvoiceEmail reads RESEND_API_KEY. Never import this from a
