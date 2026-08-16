@@ -171,6 +171,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
           meal_penalty_cents: s.meal_penalty_cents,
           short_turn_rest_hours: s.short_turn_rest_hours,
           continuous_time_enabled: s.continuous_time_enabled,
+          bill_hourly: s.bill_hourly,
         }}
         locked={locked}
       />

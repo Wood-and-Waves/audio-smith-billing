@@ -21,7 +21,8 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
          terms_days, notes, archived, show_hours_on_invoice,
          client_rate_cards(id, name, day_rate_cents, ot_after_hours, travel_rate_cents, pm_rate_cents,
            dt_after_hours, minimum_meal_break_minutes, meal_break_deduction_cap,
-           meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours, continuous_time_enabled)`,
+           meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours, continuous_time_enabled,
+           bill_hourly)`,
       )
       .eq('id', id)
       // Otherwise this client's card editor lists its cards in whatever

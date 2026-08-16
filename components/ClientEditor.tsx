@@ -24,6 +24,7 @@ export type RateCard = {
   meal_penalty_cents: number
   short_turn_rest_hours: number
   continuous_time_enabled: boolean
+  bill_hourly: boolean
 }
 
 export type EditorClient = {
@@ -71,6 +72,7 @@ type CardRow = {
   mealPenalty: string
   shortTurnRest: string
   continuousTime: boolean
+  billHourly: boolean
 }
 
 let tempKeySeq = 0
@@ -95,6 +97,7 @@ function toCardRow(card: RateCard): CardRow {
     mealPenalty: formatAmount(card.meal_penalty_cents),
     shortTurnRest: String(card.short_turn_rest_hours),
     continuousTime: card.continuous_time_enabled,
+    billHourly: card.bill_hourly,
   }
 }
 
@@ -109,6 +112,7 @@ function blankRules() {
     mealPenalty: '0.00',
     shortTurnRest: '10',
     continuousTime: false,
+    billHourly: false,
   }
 }
 
@@ -254,6 +258,13 @@ function CardFields({
               Continuous time (no meal deduction)
             </label>
           </div>
+          <div className="flex items-end pb-2.5">
+            <label className="flex items-center gap-2 text-sm text-muted">
+              <input type="checkbox" className="h-4 w-4 accent-accent" checked={card.billHourly}
+                     onChange={(e) => onChange({ billHourly: e.target.checked })} />
+              Bill by the hour under the overtime threshold
+            </label>
+          </div>
         </div>
       </details>
     </>
@@ -329,6 +340,7 @@ export default function ClientEditor({ initial }: { initial?: EditorClient }) {
           meal_penalty: c.mealPenalty,
           short_turn_rest_hours: Number(c.shortTurnRest) || 0,
           continuous_time_enabled: c.continuousTime,
+          bill_hourly: c.billHourly,
         }
       }
 

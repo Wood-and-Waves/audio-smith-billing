@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { formatAmount, parseUSD } from '@/lib/money'
+import { formatAmount, formatUSD, parseUSD } from '@/lib/money'
 import { updateShow } from '@/app/shows/actions'
 import { TIMEZONES, DEFAULT_TIMEZONE } from '@/lib/timezones'
 import { FIELD_FULL } from '@/components/ui/field'
@@ -36,6 +36,7 @@ export type EditorShow = {
   meal_penalty_cents: number
   short_turn_rest_hours: number
   continuous_time_enabled: boolean
+  bill_hourly: boolean
 }
 
 export default function ShowSettings({ initial, locked }: { initial: EditorShow; locked: boolean }) {
@@ -69,11 +70,13 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
   const [mealPenalty, setMealPenalty] = useState(formatAmount(initial.meal_penalty_cents))
   const [shortTurnRest, setShortTurnRest] = useState(String(initial.short_turn_rest_hours))
   const [continuousTime, setContinuousTime] = useState(initial.continuous_time_enabled)
+  const [billHourly, setBillHourly] = useState(initial.bill_hourly)
 
   // Preview only, mirroring ClientEditor: parseUSD returns null on junk,
   // which just hides the hint rather than blocking typing. Real validation
   // happens server-side in updateShow.
   const dayRateCents = parseUSD(dayRate)
+  const otHours = Number(otAfterHours) || 0
 
   function submit() {
     setError(null)
@@ -97,6 +100,10 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
         timezone,
         short_turn_rest_hours: Number(shortTurnRest),
         continuous_time_enabled: continuousTime,
+        // Always sent, never omitted — updateShow treats an absent value as
+        // "leave it alone" (see app/shows/actions.ts), so a save meaning to
+        // turn this off must still send `false` explicitly.
+        bill_hourly: billHourly,
       })
       if ('error' in result) { setError(result.error); return }
       setSaved(true)
@@ -251,6 +258,22 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
                      onChange={(e) => setContinuousTime(e.target.checked)} />
               Continuous time (no meal deduction)
             </label>
+          </div>
+          <div className="flex items-end pb-2.5">
+            <div>
+              <label className="flex items-center gap-2 text-sm text-muted">
+                <input type="checkbox" className="h-4 w-4 accent-accent" checked={billHourly}
+                       disabled={locked || pending}
+                       onChange={(e) => setBillHourly(e.target.checked)} />
+                Bill by the hour under the overtime threshold
+              </label>
+              {billHourly && otHours > 0 && dayRateCents !== null && dayRateCents > 0 && (
+                <p className="text-xs text-muted mt-1.5">
+                  Days under {otHours}h bill at {formatUSD(Math.round(dayRateCents / otHours))}/hr
+                  ({formatUSD(dayRateCents)} ÷ {otHours}). {otHours}h+ days bill the day rate plus overtime.
+                </p>
+              )}
+            </div>
           </div>
         </div>
 
