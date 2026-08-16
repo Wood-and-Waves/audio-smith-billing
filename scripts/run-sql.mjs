@@ -51,7 +51,6 @@ const sql = readFileSync(sqlPath, 'utf8')
 
 const client = new Client({
   connectionString: url,
-  ssl: { rejectUnauthorized: false },
 })
 
 try {

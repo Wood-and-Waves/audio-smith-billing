@@ -71,7 +71,7 @@ const files = existsSync(DIR)
 
 const sum = (f) => createHash('sha256').update(readFileSync(join(DIR, f))).digest('hex').slice(0, 16)
 
-const client = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false } })
+const client = new pg.Client({ connectionString: url })
 await client.connect()
 
 try {
