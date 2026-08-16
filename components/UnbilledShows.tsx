@@ -34,11 +34,15 @@ export default function UnbilledShows({ shows }: { shows: UnbilledShow[] }) {
         // "In progress" chip — the same treatment as the current day on the
         // show page — so it stands out rather than fading.
         return (
-          <li key={s.id} className={`border-b border-line ${
-            s.inProgress ? 'border-l-2 border-l-accent bg-accent-wash' : ''
-          }`}>
-            {/* The whole card is one link: a tap anywhere opens the show. */}
-            <Link href={`/shows/${s.id}`} className="block py-4 px-2 -mx-2">
+          <li key={s.id} className="border-b border-line">
+            {/* The whole card is one link: a tap anywhere opens the show. The
+                current show's amber highlight bleeds left into the gutter — the
+                accent border's side, mirroring the current day on the show page
+                — and never past the right margin, so the price and text keep
+                their edge padding. */}
+            <Link href={`/shows/${s.id}`} className={`block py-4 pl-3 -ml-3 ${
+              s.inProgress ? 'border-l-2 border-l-accent bg-accent-wash' : ''
+            }`}>
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                 <span className="font-semibold">
                   {s.name}
