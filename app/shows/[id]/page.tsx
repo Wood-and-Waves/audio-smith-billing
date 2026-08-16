@@ -214,9 +214,9 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
               // together and it was easy to punch the wrong one.
               return (
               <li key={d.id}
-                  className={d.date === todayHere
-                    ? 'border-b border-line py-4 pl-3 -ml-3 border-l-2 border-l-accent bg-accent-wash'
-                    : 'border-b border-line py-4'}>
+                  className={`border-b border-line py-4 pl-3 -ml-3 pr-3 ${
+                    d.date === todayHere ? 'border-l-2 border-l-accent bg-accent-wash' : ''
+                  }`}>
                 <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-2">
                   <span className="font-semibold">
                     {formatDateLong(d.date)}

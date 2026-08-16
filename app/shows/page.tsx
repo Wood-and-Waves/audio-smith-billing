@@ -142,7 +142,7 @@ export default async function ShowsPage() {
     return (
       <li>
         <Link href={`/shows/${r.id}`}
-              className="block border-b border-line py-4 px-2 -mx-2 hover:bg-surface transition-colors">
+              className="block border-b border-line py-4 pl-3 -ml-3 pr-3 hover:bg-surface transition-colors">
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <span className="font-semibold">{r.name}</span>
             <span className="text-sm text-muted tabular">
