@@ -581,6 +581,12 @@ test('short-turnaround is inert in hourly mode: no double-time penalty', () => {
   // no Double Time line.
   const lines = computeShowLines([shortDay1, shortDay2], [], hourlyRates, hourlyRules)
   assert.equal(lines.find((l) => l.description.startsWith('Double Time')), undefined)
+  // Not just "no penalty" — the days must positively bill their own hours
+  // hourly, or an implementation that silently dropped both days would also
+  // pass the assertion above.
+  const hourly = lines.find((l) => l.description.startsWith('Hourly'))
+  assert.ok(hourly, 'the two short days bill as Hourly')
+  assert.equal(hourly.qty_hundredths, 1100)
 })
 
 test('the Hourly line carries the rate card name like every other line', () => {

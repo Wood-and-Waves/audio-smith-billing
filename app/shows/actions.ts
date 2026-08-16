@@ -820,11 +820,11 @@ export type UpdateShowInput = {
   /** IANA zone the show is worked in. Punch times are rendered in it. */
   timezone: string
   continuous_time_enabled: boolean
-  // Optional: ShowSettings doesn't have a box for this yet, so an omitted
-  // value must leave the show's frozen flag alone rather than resetting it
-  // to false on every unrelated save — the object literal below drops the
-  // key entirely (JSON never serializes `undefined`), so Postgres leaves the
-  // column untouched. Same convention as CardInput.bill_hourly.
+  // ShowSettings now always sends an explicit boolean, so turning the box off
+  // persists a real `false`. Kept optional for safety: if a value is ever
+  // omitted, the object literal below drops the key (JSON never serializes
+  // `undefined`) and Postgres leaves the frozen flag untouched — preserve, not
+  // reset. Same convention as CardInput.bill_hourly.
   bill_hourly?: boolean
 }
 

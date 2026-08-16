@@ -34,11 +34,10 @@ export type CardInput = {
   meal_penalty: string
   short_turn_rest_hours: number
   continuous_time_enabled: boolean
-  // Optional: no form field sets this yet (ClientEditor doesn't send it), so
-  // an omitted box must mean "leave it alone", not "turn it off" — see
-  // parseCards, which is the one place that turns "not sent" into a real
-  // default. Same undefined-means-unset convention as travel_rate/pm_rate
-  // above, just for a boolean instead of a raw string.
+  // ClientEditor now always sends this — its card checkbox is wired and threads
+  // the card's real stored value through, so an unrelated client edit resaves
+  // the true flag rather than a stale default. Kept optional for safety: a
+  // future caller that omits it is defaulted by parseCards via `?? false`.
   bill_hourly?: boolean
 }
 
