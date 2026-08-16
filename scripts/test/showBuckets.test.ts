@@ -1,6 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { computeShowLines, mergeLines, type ShowRates, type BucketLine } from '../../lib/showBuckets.ts'
+import {
+  computeShowLines, mergeLines, rulesetAndRatesFor,
+  type ShowRates, type BucketLine, type FrozenShowColumns,
+} from '../../lib/showBuckets.ts'
 import { lineTotal, overtimeRateFrom } from '../../lib/money.ts'
 import type { ShowRuleset, ShowDayLike } from '../../lib/payroll.ts'
 
@@ -12,6 +15,8 @@ const RATES: ShowRates = {
   dt_rate_cents: 14182,
   meal_penalty_cents: 0,
   rate_card_name: null,
+  bill_hourly: false,
+  hourly_rate_cents: 0,
 }
 
 const RULES: ShowRuleset = {
@@ -454,4 +459,156 @@ test('a card name with stray whitespace does not reach the invoice', () => {
   // And a name that is nothing but whitespace decorates nothing at all.
   const blank = computeShowLines(CARD_DAYS, [], { ...RATES, rate_card_name: '   ' }, RULES)
   assert.ok(blank.every((l) => !l.description.includes('—')), 'blank is not a name')
+})
+
+// --- Hourly billing (sub-threshold days, for shows that pay by the hour) -----
+//
+// Church-style billing: a sub-10-hour day pays hours worked at an hourly rate;
+// hit the threshold and it reverts to day-rate-plus-overtime, same as every
+// other show. bill_hourly also disables the short-turnaround penalty — see
+// lib/payroll.ts:108 — since "bill a whole short-notice day at double time"
+// and "bill exactly the hours worked" are mutually exclusive policies.
+
+const baseRates: ShowRates = { ...RATES }
+const baseRules: ShowRuleset = { ...RULES }
+
+// day $600, ot after 10 -> derived $60/hr.
+const hourlyRates: ShowRates = { ...baseRates, day_rate_cents: 60000, bill_hourly: true, hourly_rate_cents: 6000 }
+const hourlyRules: ShowRuleset = { ...baseRules, overtime_after_hours: 10, short_turn_penalty_enabled: false }
+
+const sixHourDay: ShowDayLike = {
+  id: 'six1', date: '2026-07-14', pay_as_half_day: false, travel_in: false, travel_out: false,
+  punches: [
+    { punch_type: 'start', punched_at: '2026-07-14T13:00:00Z' },
+    { punch_type: 'end', punched_at: '2026-07-14T19:00:00Z' },     // 6 hours
+  ],
+}
+
+const sixTwentyFiveDay: ShowDayLike = {
+  id: 'six25', date: '2026-07-14', pay_as_half_day: false, travel_in: false, travel_out: false,
+  punches: [
+    { punch_type: 'start', punched_at: '2026-07-14T13:00:00Z' },
+    { punch_type: 'end', punched_at: '2026-07-14T19:15:00Z' },     // 6.25 hours
+  ],
+}
+
+// Exactly at the 10-hour threshold — the seamless crossover to a day rate.
+const tenHourDay: ShowDayLike = showDay('ten1', '2026-07-14')
+
+const elevenHourDay: ShowDayLike = {
+  id: 'eleven1', date: '2026-07-15', pay_as_half_day: false, travel_in: false, travel_out: false,
+  punches: [
+    { punch_type: 'start', punched_at: '2026-07-15T13:00:00Z' },
+    { punch_type: 'end', punched_at: '2026-07-16T00:00:00Z' },     // 11 hours
+  ],
+}
+
+// Two sub-threshold days close enough together to trip short-turnaround IF it
+// were enabled. shortDay2 starts 7 hours after shortDay1 ends — under
+// RULES.short_turn_rest_hours (10).
+const shortDay1: ShowDayLike = {
+  id: 'short1', date: '2026-07-14', pay_as_half_day: false, travel_in: false, travel_out: false,
+  punches: [
+    { punch_type: 'start', punched_at: '2026-07-14T13:00:00Z' },
+    { punch_type: 'end', punched_at: '2026-07-14T19:00:00Z' },     // 6 hours worked
+  ],
+}
+const shortDay2: ShowDayLike = {
+  id: 'short2', date: '2026-07-15', pay_as_half_day: false, travel_in: false, travel_out: false,
+  punches: [
+    { punch_type: 'start', punched_at: '2026-07-15T02:00:00Z' },   // 7h rest since shortDay1's end
+    { punch_type: 'end', punched_at: '2026-07-15T07:00:00Z' },     // 5 hours worked
+  ],
+}
+
+const frozenColumns: FrozenShowColumns = {
+  day_rate_cents: 78000,
+  travel_rate_cents: 39000,
+  pm_rate_cents: 7800,
+  ot_after_hours: 11,
+  dt_after_hours: null,
+  minimum_meal_break_minutes: 60,
+  meal_break_deduction_cap: 60,
+  meal_penalty_grace_hours: 6,
+  meal_penalty_cents: 0,
+  short_turn_rest_hours: 10,
+  continuous_time_enabled: false,
+  rate_card_name: null,
+  bill_hourly: false,
+}
+
+test('a sub-threshold day bills hours × hourly, not a day rate', () => {
+  // A 6-hour worked day. Expect one Hourly line, 6.00 × $60, no Day Rate line.
+  const lines = computeShowLines([sixHourDay], [], hourlyRates, hourlyRules)
+  const hourly = lines.find((l) => l.description.startsWith('Hourly'))
+  assert.ok(hourly, 'an Hourly line exists')
+  assert.equal(hourly.qty_hundredths, 600)      // 6.00 hours
+  assert.equal(hourly.unit_price_cents, 6000)   // $60.00
+  assert.equal(lines.find((l) => l.description.startsWith('Day Rate')), undefined)
+})
+
+test('6.25 hours rounds up to 7 (per-day ceiling, reused)', () => {
+  const lines = computeShowLines([sixTwentyFiveDay], [], hourlyRates, hourlyRules)
+  const hourly = lines.find((l) => l.description.startsWith('Hourly'))
+  assert.equal(hourly.qty_hundredths, 700)      // 7.00 hours, not 6.25
+})
+
+test('a day at exactly the threshold bills the full day rate, no Hourly line', () => {
+  // 10-hour day. The seamless crossover: $600 either way, but it bills as a day.
+  const lines = computeShowLines([tenHourDay], [], hourlyRates, hourlyRules)
+  assert.ok(lines.find((l) => l.description.startsWith('Day Rate')))
+  assert.equal(lines.find((l) => l.description.startsWith('Hourly')), undefined)
+  assert.equal(lines.find((l) => l.description.startsWith('Overtime')), undefined)
+})
+
+test('a day over the threshold bills day rate + overtime, no Hourly line', () => {
+  const lines = computeShowLines([elevenHourDay], [], hourlyRates, hourlyRules)
+  assert.ok(lines.find((l) => l.description.startsWith('Day Rate')))
+  assert.ok(lines.find((l) => l.description.startsWith('Overtime')))
+  assert.equal(lines.find((l) => l.description.startsWith('Hourly')), undefined)
+})
+
+test('a mixed show: hourly day and a long day on one invoice', () => {
+  const lines = computeShowLines([sixHourDay, elevenHourDay], [], hourlyRates, hourlyRules)
+  assert.equal(lines.find((l) => l.description.startsWith('Hourly')).qty_hundredths, 600)
+  assert.equal(lines.find((l) => l.description.startsWith('Day Rate')).qty_hundredths, 100) // 1 day
+  assert.ok(lines.find((l) => l.description.startsWith('Overtime')))
+})
+
+test('short-turnaround is inert in hourly mode: no double-time penalty', () => {
+  // Two short days close enough to trip short-turnaround. With bill_hourly on,
+  // short_turn_penalty_enabled is false, so each bills its own hours hourly —
+  // no Double Time line.
+  const lines = computeShowLines([shortDay1, shortDay2], [], hourlyRates, hourlyRules)
+  assert.equal(lines.find((l) => l.description.startsWith('Double Time')), undefined)
+})
+
+test('the Hourly line carries the rate card name like every other line', () => {
+  const named = { ...hourlyRates, rate_card_name: 'Willow Creek' }
+  const lines = computeShowLines([sixHourDay], [], named, { ...hourlyRules })
+  assert.ok(lines.find((l) => l.description === 'Hourly — Willow Creek'))
+})
+
+test('bill_hourly OFF is byte-identical to a day-rate show (regression)', () => {
+  // The load-bearing guard. A representative multi-day show billed with
+  // bill_hourly:false must equal exactly what it bills today.
+  const dayRateRates = { ...baseRates, day_rate_cents: 60000, bill_hourly: false, hourly_rate_cents: 6000 }
+  const dayRateRules = { ...baseRules, overtime_after_hours: 10, short_turn_penalty_enabled: true }
+  const lines = computeShowLines([sixHourDay, elevenHourDay], [], dayRateRates, dayRateRules)
+  // 6-hour day bills a full day rate (unchanged behaviour), plus the 11-hour day.
+  assert.equal(lines.find((l) => l.description.startsWith('Hourly')), undefined)
+  assert.equal(lines.find((l) => l.description.startsWith('Day Rate')).qty_hundredths, 200) // 2 days
+})
+
+test('rulesetAndRatesFor derives hourly rate and flips short-turn off', () => {
+  const { rates, rules } = rulesetAndRatesFor({ ...frozenColumns, day_rate_cents: 60000, ot_after_hours: 10, bill_hourly: true })
+  assert.equal(rates.bill_hourly, true)
+  assert.equal(rates.hourly_rate_cents, 6000)     // 60000 / 10
+  assert.equal(rules.short_turn_penalty_enabled, false)
+})
+
+test('rulesetAndRatesFor with bill_hourly false keeps short-turn on', () => {
+  const { rates, rules } = rulesetAndRatesFor({ ...frozenColumns, bill_hourly: false })
+  assert.equal(rates.bill_hourly, false)
+  assert.equal(rules.short_turn_penalty_enabled, true)
 })

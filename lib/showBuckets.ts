@@ -26,6 +26,10 @@ export type ShowRates = {
    * on every invoice for every client, including the many with one rate.
    */
   rate_card_name: string | null
+  /** When true, sub-threshold worked days bill by the hour, not a flat day rate. */
+  bill_hourly: boolean
+  /** Derived day_rate_cents / ot_after_hours; only read when bill_hourly. */
+  hourly_rate_cents: number
 }
 
 export type BucketLine = {
@@ -49,6 +53,7 @@ export function computeShowLines(
   let otHours = 0
   let dtHours = 0
   let penalties = 0
+  let hourlyHours = 0
 
   for (const d of days) {
     travelLegs += (d.travel_in ? 1 : 0) + (d.travel_out ? 1 : 0)
@@ -61,8 +66,15 @@ export function computeShowLines(
     // Gating on st alone (rather than st || ot || dt) is deliberate: paidStraightTimeHours
     // is zeroed on a short-turnaround day (see lib/payroll.ts), so that day contributes no
     // Day Rate line — it bills entirely as Double Time instead, never both.
+    //
+    // bill_hourly diverts a sub-threshold day to hourly billing instead of a
+    // flat day rate. st is already the per-day ceiling-rounded straight time,
+    // so "st < overtime_after_hours" is exactly "under the day-rate threshold,"
+    // and ot/dt are guaranteed zero for that day — the otHours += ot / dtHours
+    // += dt lines below add nothing for it.
     if (st > 0) {
-      if (d.pay_as_half_day) halfDays += 1
+      if (rates.bill_hourly && st < rules.overtime_after_hours) hourlyHours += st
+      else if (d.pay_as_half_day) halfDays += 1
       else dayRateDays += 1
     }
     otHours += ot
@@ -95,6 +107,7 @@ export function computeShowLines(
 
   push(label('Day Rate'), dayRateDays, rates.day_rate_cents)
   push(label('Day Rate (half)'), halfDays, Math.round(rates.day_rate_cents / 2))
+  push(label('Hourly'), hourlyHours, rates.hourly_rate_cents)
   push(label('Travel Rate'), travelLegs, rates.travel_rate_cents)
   push(label('Overtime'), otHours, rates.ot_rate_cents)
   push(label('Double Time'), dtHours, rates.dt_rate_cents)
@@ -125,6 +138,7 @@ export type FrozenShowColumns = {
   short_turn_rest_hours: number
   continuous_time_enabled: boolean
   rate_card_name: string | null
+  bill_hourly: boolean
 }
 
 /**
@@ -147,7 +161,7 @@ export function rulesetAndRatesFor(show: FrozenShowColumns): { rules: ShowRulese
     minimum_meal_break_enabled: show.minimum_meal_break_minutes > 0,
     minimum_meal_break_minutes: show.minimum_meal_break_minutes,
     meal_break_deduction_cap: show.meal_break_deduction_cap,
-    short_turn_penalty_enabled: true,
+    short_turn_penalty_enabled: !show.bill_hourly,
     short_turn_rest_hours: Number(show.short_turn_rest_hours),
     continuous_time_enabled: show.continuous_time_enabled,
   }
@@ -159,6 +173,8 @@ export function rulesetAndRatesFor(show: FrozenShowColumns): { rules: ShowRulese
     dt_rate_cents: doubleTimeRateFrom(show.day_rate_cents, hours),
     meal_penalty_cents: show.meal_penalty_cents,
     rate_card_name: show.rate_card_name,
+    bill_hourly: show.bill_hourly,
+    hourly_rate_cents: Math.round(show.day_rate_cents / hours),
   }
   return { rules, rates }
 }
