@@ -31,3 +31,6 @@ tmp/
 # Real receipts used for testing OCR. Financial records — never committed,
 # and the repo is on GitHub.
 receipts/
+
+# Attack-path maps for a live billing system. Never pushable.
+security-audit/
