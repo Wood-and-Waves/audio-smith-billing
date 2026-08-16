@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { isIncompleteDay } from '@/lib/chronology'
+import { isUnfinishedDay } from '@/lib/chronology'
 import { formatDateShort, todayInChicago } from '@/lib/dates'
 import { byDateClosestFirst } from '@/lib/showOrder'
 import { lineTotal } from '@/lib/money'
@@ -102,12 +102,12 @@ export default async function ShowsPage() {
     ]
     const totalCents = lines.reduce((t, l) => t + lineTotal(l.qty_hundredths, l.unit_price_cents), 0)
 
-    // Shares isIncompleteDay with billShows and the show detail page so this
-    // list can never mark a show billable that billShows would reject. Every
-    // show_days row is a work day now (migration 0005 dropped day_type); a
-    // day with no punches at all is simply not incomplete.
-    const incompleteDates = days
-      .filter((d) => isIncompleteDay(d.punches))
+    // Shares isUnfinishedDay with billShows and the show detail page so this
+    // list can never mark a show billable that billShows would reject. Blocks a
+    // dangling punch AND a day with no punches that isn't marked travel — the
+    // day Dan forgot to clock — while leaving a real travel day alone.
+    const unfinishedDates = days
+      .filter((d) => isUnfinishedDay(d))
       .map((d) => formatDateShort(d.date))
 
     // Shares expensesMissingReceipts with billShows and the show detail page
@@ -115,6 +115,13 @@ export default async function ShowsPage() {
     // disagree about which expenses block billing.
     const expensesNeedingReceipts = expensesMissingReceipts(s.expenses ?? [])
       .map((e) => e.where_spent)
+
+    // In progress = today falls within the show's own days. This is the show
+    // being worked right now, highlighted like the current day on the show
+    // page — a show entirely in the past or future is not. Chicago is close
+    // enough for a list badge; the detail page uses the show's exact zone.
+    const inProgress = days.length > 0
+      && days[0].date <= today && today <= days[days.length - 1].date
 
     return {
       id: s.id,
@@ -126,8 +133,9 @@ export default async function ShowsPage() {
       dates: days.map((d) => d.date),
       totalCents,
       lines,
-      incompleteDates,
+      unfinishedDates,
       expensesNeedingReceipts,
+      inProgress,
     }
   })
 

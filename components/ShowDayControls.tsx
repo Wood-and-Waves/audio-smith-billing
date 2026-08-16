@@ -17,14 +17,14 @@ function defaultRangeStart(lastDayDate: string | null): string {
 }
 
 export default function ShowDayControls({
-  showId, status, invoiceId, hasLines, incompleteDates, expensesNeedingReceipts, lastDayDate,
+  showId, status, invoiceId, hasLines, unfinishedDates, expensesNeedingReceipts, lastDayDate,
 }: {
   showId: string
   status: string
   invoiceId: string | null
   hasLines: boolean
-  incompleteDates: string[]
-  /** where_spent of each expense missing a receipt — mirrors incompleteDates. */
+  unfinishedDates: string[]
+  /** where_spent of each expense missing a receipt — mirrors unfinishedDates. */
   expensesNeedingReceipts: string[]
   lastDayDate: string | null
 }) {
@@ -168,14 +168,14 @@ export default function ShowDayControls({
       </div>
 
       <button type="button" onClick={bill}
-              disabled={pending || !hasLines || incompleteDates.length > 0 || expensesNeedingReceipts.length > 0}
+              disabled={pending || !hasLines || unfinishedDates.length > 0 || expensesNeedingReceipts.length > 0}
               className="px-5 py-2.5 bg-accent-surface text-accent-ink font-bold uppercase tracking-wider
                          text-sm rounded-field hover:opacity-90 disabled:opacity-50">
         {pending ? 'Billing…' : 'Bill this show'}
       </button>
-      {incompleteDates.length > 0 ? (
+      {unfinishedDates.length > 0 ? (
         <p className="text-xs text-accent mt-2">
-          Finish punches for {incompleteDates.join(', ')} before billing.
+          Finish {unfinishedDates.join(', ')} before billing — add punches, mark travel, or remove the day.
         </p>
       ) : expensesNeedingReceipts.length > 0 ? (
         <p className="text-xs text-accent mt-2">

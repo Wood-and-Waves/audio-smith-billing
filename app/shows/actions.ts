@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { chronologyError, isIncompleteDay } from '@/lib/chronology'
+import { chronologyError, isUnfinishedDay } from '@/lib/chronology'
 import { parseUSD } from '@/lib/money'
 import { todayInChicago, addDays, isPlainDate } from '@/lib/dates'
 import {
@@ -606,16 +606,16 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
     return { error: 'All shows on one invoice must be for the same client.' }
   }
 
-  // An incomplete day would silently bill zero hours — or, for an unpaired
-  // meal punch, silently bill the break as worked time — so refuse instead.
-  // Every show_days row is a work day now (migration 0005 dropped
-  // day_type); a day with no punches at all is simply not incomplete
-  // (isIncompleteDay only flags an unpaired start/end or meal), so there is
-  // no "skip travel days" case to carve out any more.
+  // A day that is not finished must not bill: a dangling punch would bill zero
+  // hours (or, for an unpaired meal, bill the break as worked time), and a day
+  // with no punches at all would bill nothing and quietly under-bill a day Dan
+  // forgot to clock. isUnfinishedDay refuses both — but leaves a travel-only day
+  // (a fly day with a leg and no punches) alone, since that is deliberate.
+  type GateDay = { date: string; punches: { punch_type: string }[]; travel_in: boolean; travel_out: boolean }
   for (const s of shows) {
-    for (const d of (s.show_days ?? []) as { date: string; punches: { punch_type: string }[] }[]) {
-      if (isIncompleteDay(d.punches)) {
-        return { error: `${s.name}: ${d.date} has an unfinished punch. Complete or remove it first.` }
+    for (const d of (s.show_days ?? []) as GateDay[]) {
+      if (isUnfinishedDay(d)) {
+        return { error: `${s.name}: ${d.date} isn't finished — add its punches, mark it travel, or remove the day first.` }
       }
     }
   }

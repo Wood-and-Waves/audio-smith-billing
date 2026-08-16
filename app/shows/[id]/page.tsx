@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { isIncompleteDay } from '@/lib/chronology'
+import { isUnfinishedDay } from '@/lib/chronology'
 import { formatDateLong, formatDateShort } from '@/lib/dates'
 import { instantToWall } from '@/lib/zonedTime'
 import { formatUSD, formatQty, lineTotal } from '@/lib/money'
@@ -118,14 +118,13 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
   ]
   const previewTotal = lines.reduce((t, l) => t + lineTotal(l.qty_hundredths, l.unit_price_cents), 0)
 
-  // Shares isIncompleteDay with billShows (app/shows/actions.ts) so this
-  // banner and the billing gate can never disagree about what's billable.
-  // A day with a start punch and no end punch (or vice versa), or an
-  // unpaired meal punch, would otherwise silently bill wrong hours. A day
-  // with no punches at all (e.g. a travel-only leg) is not "incomplete" —
-  // isIncompleteDay only flags an unpaired start/end or meal punch.
-  const incompleteDates = days
-    .filter((d) => isIncompleteDay(d.punches))
+  // Shares isUnfinishedDay with billShows (app/shows/actions.ts) so this banner
+  // and the billing gate can never disagree about what's billable. Flags a
+  // dangling start/end or meal punch, AND a day with no punches that isn't
+  // marked travel — the day forgotten before billing. A travel-only day (a leg,
+  // no punches) is deliberate and stays clear.
+  const unfinishedDates = days
+    .filter((d) => isUnfinishedDay(d))
     .map((d) => formatDateShort(d.date))
 
   // Shares expensesMissingReceipts with billShows (app/shows/actions.ts) so
@@ -332,7 +331,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
           status={s.status}
           invoiceId={s.invoice_id}
           hasLines={lines.length > 0}
-          incompleteDates={incompleteDates}
+          unfinishedDates={unfinishedDates}
           expensesNeedingReceipts={expensesNeedingReceipts}
           lastDayDate={lastDayDate}
         />

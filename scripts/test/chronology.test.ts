@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chronologyError, isIncompleteDay } from '../../lib/chronology.ts'
+import { chronologyError, isIncompleteDay, isUnfinishedDay } from '../../lib/chronology.ts'
 
 const at = (h: number) => `2026-08-10T${String(h).padStart(2, '0')}:00:00Z`
 
@@ -77,4 +77,45 @@ test('a punch at the same moment as another is rejected', () => {
     { punch_type: 'end', punched_at: at(18) },
   ]
   assert.match(chronologyError('meal_out', at(18), withEnd) ?? '', /before/i)
+})
+
+// isUnfinishedDay — the billing gate. A day blocks billing when it has a
+// dangling punch OR is empty and not travel-only (a day likely forgotten).
+const day = (
+  punches: { punch_type: string }[],
+  travel_in = false,
+  travel_out = false,
+) => ({ punches, travel_in, travel_out })
+
+test('a completed work day is finished', () => {
+  assert.equal(isUnfinishedDay(day([{ punch_type: 'start' }, { punch_type: 'end' }])), false)
+})
+
+test('a dangling clock-in blocks — the case Dan hit', () => {
+  assert.equal(isUnfinishedDay(day([{ punch_type: 'start' }])), true)
+})
+
+test('a dangling meal blocks even with start and end present', () => {
+  assert.equal(
+    isUnfinishedDay(day([{ punch_type: 'start' }, { punch_type: 'meal_out' }, { punch_type: 'end' }])),
+    true,
+  )
+})
+
+test('an empty day with no travel blocks — the forgotten day', () => {
+  // The whole point of this rule: a day added but never clocked would otherwise
+  // bill nothing and quietly under-bill the show.
+  assert.equal(isUnfinishedDay(day([])), true)
+})
+
+test('an empty day marked travel is finished — a legit fly day', () => {
+  assert.equal(isUnfinishedDay(day([], true, false)), false)
+  assert.equal(isUnfinishedDay(day([], false, true)), false)
+})
+
+test('a worked day that is also a travel day is finished', () => {
+  assert.equal(
+    isUnfinishedDay(day([{ punch_type: 'start' }, { punch_type: 'end' }], true)),
+    false,
+  )
 })

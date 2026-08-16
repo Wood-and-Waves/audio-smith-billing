@@ -36,9 +36,11 @@ export type UnbilledShow = {
   dates: string[]
   totalCents: number
   lines: BucketLine[]
-  incompleteDates: string[]
-  /** where_spent of each expense missing a receipt — mirrors incompleteDates. */
+  unfinishedDates: string[]
+  /** where_spent of each expense missing a receipt — mirrors unfinishedDates. */
   expensesNeedingReceipts: string[]
+  /** Today falls within the show's days — it is being worked right now. */
+  inProgress: boolean
 }
 
 export default function UnbilledShows({ shows }: { shows: UnbilledShow[] }) {
@@ -82,12 +84,10 @@ export default function UnbilledShows({ shows }: { shows: UnbilledShow[] }) {
     <div>
       <ul className="border-t border-line mb-4">
         {shows.map((s) => {
-          const incomplete = s.incompleteDates.length > 0
-          // A day with no punches isn't "incomplete" (isIncompleteDay([]) is
-          // false), so a show whose days are all punchless would otherwise
-          // stay selectable at $0.00. Mirror ShowDayControls' !hasLines gate
-          // so an empty show can never ride along on someone else's invoice
-          // and get silently marked billed.
+          const unfinished = s.unfinishedDates.length > 0
+          // A show with no billable lines at all still can't ride along on
+          // someone else's invoice and get silently marked billed. Mirrors
+          // ShowDayControls' !hasLines gate.
           const empty = s.lines.length === 0
           // Mirrors ShowDayControls' expensesNeedingReceipts gate and
           // billShows' own refusal (app/shows/actions.ts) — "every expense
@@ -96,7 +96,7 @@ export default function UnbilledShows({ shows }: { shows: UnbilledShow[] }) {
           const receiptsMissing = s.expensesNeedingReceipts.length > 0
           const checked = selected.has(s.id)
           const wrongClient = activeClientId !== null && s.clientId !== activeClientId && !checked
-          const disabled = incomplete || empty || receiptsMissing || wrongClient
+          const disabled = unfinished || empty || receiptsMissing || wrongClient
 
           // The show name stays a real Link to /shows/id (e.g. to finish an
           // incomplete punch) so it lives outside the <label> below — a link
@@ -104,8 +104,15 @@ export default function UnbilledShows({ shows }: { shows: UnbilledShow[] }) {
           // The rest of the row (client/venue/day-count line) is the
           // checkbox's label, giving it a larger, thumb-friendly tap target.
           const inputId = `unbilled-${s.id}`
+          // No greying on a disabled row — a show you're actively working looked
+          // dead that way. The disabled checkbox and the inline reason below say
+          // "can't bill yet" without it. The show being worked right now gets
+          // the amber accent, the same treatment as the current day on the show
+          // page, so it stands out rather than fades.
           return (
-            <li key={s.id} className={`border-b border-line py-4 px-2 -mx-2 ${disabled ? 'opacity-50' : ''}`}>
+            <li key={s.id} className={`border-b border-line py-4 px-2 -mx-2 ${
+              s.inProgress ? 'border-l-2 border-l-accent bg-accent-wash' : ''
+            }`}>
               <div className="flex items-start gap-3">
                 <input
                   id={inputId}
@@ -119,6 +126,12 @@ export default function UnbilledShows({ shows }: { shows: UnbilledShow[] }) {
                   <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                     <Link href={`/shows/${s.id}`} className="font-semibold hover:text-accent">
                       {s.name}
+                      {s.inProgress && (
+                        <span className="ml-2 align-middle text-[11px] font-bold uppercase tracking-wider
+                                         text-accent-ink bg-accent-surface rounded-field px-1.5 py-0.5">
+                          In progress
+                        </span>
+                      )}
                     </Link>
                     <span className="tabular text-sm font-semibold">{formatUSD(s.totalCents)}</span>
                   </div>
@@ -133,9 +146,9 @@ export default function UnbilledShows({ shows }: { shows: UnbilledShow[] }) {
                     {s.dates.length > 0 &&
                       ` · ${s.dates.length} ${s.dates.length === 1 ? 'day' : 'days'} · ${formatDateShort(s.dates[0])}`}
                   </label>
-                  {incomplete ? (
+                  {unfinished ? (
                     <p className="text-xs text-accent mt-1">
-                      Finish punches for {s.incompleteDates.join(', ')} before this can be billed.
+                      Finish {s.unfinishedDates.join(', ')} before billing — add punches, mark travel, or remove the day.
                     </p>
                   ) : receiptsMissing ? (
                     <p className="text-xs text-accent mt-1">

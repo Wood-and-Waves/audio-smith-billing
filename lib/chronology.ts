@@ -29,6 +29,33 @@ export function isIncompleteDay(punches: { punch_type: string }[]): boolean {
   return false
 }
 
+/**
+ * True when a day is not ready to bill. Stronger than isIncompleteDay: it also
+ * catches a day that was added but never clocked.
+ *
+ * A day blocks billing when it has a dangling punch (isIncompleteDay), OR it is
+ * empty AND not marked travel. The second half is the point — a bare day with
+ * no punches used to bill nothing and pass silently, so a day Dan forgot to
+ * clock would quietly under-bill the show. A completed work day (start + end)
+ * and a travel-only day (a fly day with a leg but no punches) are both fine.
+ *
+ * Shared by the billing gate (billShows), the shows list, and the show page so
+ * all three agree on exactly what "unfinished" means.
+ */
+export function isUnfinishedDay(day: {
+  punches: { punch_type: string }[]
+  travel_in: boolean
+  travel_out: boolean
+}): boolean {
+  if (isIncompleteDay(day.punches)) return true
+  const types = new Set(day.punches.map((p) => p.punch_type))
+  // A real work day is start-and-end; isIncompleteDay above already ruled out a
+  // dangling meal, so a complete pair here is genuinely finished.
+  if (types.has('start') && types.has('end')) return false
+  // No worked pair: fine only if this is a deliberate travel day.
+  return !(day.travel_in || day.travel_out)
+}
+
 export function chronologyError(
   type: PunchType,
   at: string,
