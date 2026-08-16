@@ -14,7 +14,7 @@ export default function manifest(): MetadataRoute.Manifest {
     // What appears under the icon. Short: iOS truncates around 12 characters.
     short_name: 'Billing',
     description: 'Invoicing and show tracking for Smith Audio, LLC.',
-    start_url: '/invoices',
+    start_url: '/shows',
     display: 'standalone',
     // Both match --bg in globals.css, the same value the theme-colour meta
     // uses. A splash or status bar in a different charcoal reads as a bug.
