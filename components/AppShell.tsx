@@ -55,6 +55,18 @@ export default function AppShell({
                 {item.label}
               </Link>
             ))}
+            {/* Sign-out is a POST form, not a link: a GET sign-out is CSRF-able
+                and prefetchable. Styled as a nav item so it reads as one. */}
+            <form action="/auth/signout" method="post" className="contents">
+              <button
+                type="submit"
+                className="px-2.5 sm:px-3 py-2 text-[12px] font-semibold uppercase
+                           tracking-wide sm:tracking-wider rounded-field
+                           transition-colors text-muted hover:text-ink"
+              >
+                Sign out
+              </button>
+            </form>
           </nav>
         </div>
       </header>
