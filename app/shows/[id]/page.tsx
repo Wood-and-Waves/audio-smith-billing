@@ -5,7 +5,10 @@ import { formatDateLong, formatDateShort } from '@/lib/dates'
 import { instantToWall } from '@/lib/zonedTime'
 import { formatUSD, formatQty, lineTotal } from '@/lib/money'
 import { computeShowLines, rulesetAndRatesFor, type PmEntryLike } from '@/lib/showBuckets'
-import { calculateNetHours, type ShowDayLike } from '@/lib/payroll'
+import {
+  calculateNetHours, paidNetHours, paidStraightTimeHours, paidOvertimeHours,
+  paidDoubleTimeHours, mealPenaltyCount, type ShowDayLike,
+} from '@/lib/payroll'
 import { expenseLines, expensesMissingReceipts, type ExpenseCategory } from '@/lib/expenses'
 import AppShell from '@/components/AppShell'
 import PunchClock from '@/components/PunchClock'
@@ -92,6 +95,13 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
   const todayHere = instantToWall(new Date().toISOString(), s.timezone).date
 
   const { rules, rates } = rulesetAndRatesFor(s)
+  // The per-day hours breakdown below and the OT/DT bucket functions all need
+  // the whole set of days, because a short turnaround is a relationship between
+  // one day's end and the next day's start.
+  const typedDays = days as unknown as ShowDayLike[]
+  // Hours as they read on the invoice: two decimals, trailing zeros trimmed
+  // (8, 8.5, 10.25) — the same numbers billShows turns into qty_hundredths.
+  const fmtHours = (n: number) => (Math.round(n * 100) / 100).toString()
   // Pure functions — safe to call straight from a server component to render
   // a live preview of what this show would bill if billed right now. Must
   // load the same pm_entries billShows does (app/shows/actions.ts) and append
@@ -172,12 +182,30 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
           </p>
         ) : (
           <ul className="border-t border-line">
-            {days.map((d) => (
+            {days.map((d) => {
+              // The same functions billShows uses, per day, so the breakdown
+              // shown here is exactly what this day would bill — the number Dan
+              // needs to check the OT math on site, which had no home before.
+              const dd = d as unknown as ShowDayLike
+              const net = paidNetHours(dd, rules)
+              const st = paidStraightTimeHours(dd, typedDays, rules)
+              const ot = paidOvertimeHours(dd, typedDays, rules)
+              const dt = paidDoubleTimeHours(dd, typedDays, rules)
+              const mp = mealPenaltyCount(dd, rules)
+              const breakdown = [
+                net > 0 && `${fmtHours(net)} net`,
+                st > 0 && `${fmtHours(st)} ST`,
+                ot > 0 && `${fmtHours(ot)} OT`,
+                dt > 0 && `${fmtHours(dt)} DT`,
+                mp > 0 && `meal penalty ×${mp}`,
+              ].filter(Boolean).join(' · ')
+
               // Today gets an amber edge and a chip. Before this the only thing
               // separating one day from the next was a hairline in #2a3441 on a
               // #121212 background, and each row is tall enough that one or two
               // fill a phone screen — so on site, mid-show, the days ran
               // together and it was easy to punch the wrong one.
+              return (
               <li key={d.id}
                   className={d.date === todayHere
                     ? 'border-b border-line py-4 pl-3 -ml-3 border-l-2 border-l-accent bg-accent-wash'
@@ -207,6 +235,13 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
                     <RemoveDayButton showDayId={d.id} date={d.date} locked={locked} />
                   </span>
                 </div>
+                {/* The hours this day bills, split into buckets. Only shown when
+                    there is something to show — a travel-only or not-yet-punched
+                    day has no hours and stays quiet. An incomplete punch is
+                    flagged by the banner above, not here. */}
+                {breakdown && (
+                  <p className="tabular text-xs text-muted mb-2">{breakdown}</p>
+                )}
                 {/* Every show_days row is a work day now (migration 0005 dropped
                     day_type); travel is an orthogonal flag, so punches, the
                     travel-leg checkboxes and the half-day toggle all apply
@@ -240,7 +275,8 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
                   }
                 </div>
               </li>
-            ))}
+              )
+            })}
           </ul>
         )}
       </section>
