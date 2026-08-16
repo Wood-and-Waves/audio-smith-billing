@@ -231,10 +231,40 @@ export async function GET(request: NextRequest) {
   const failed: string[] = []
 
   if (isDigestDay(today)) {
-    const { subject, text, html } = buildDigestEmail(s, appUrl)
-    const r = await sendReminderEmail({ to, subject, text, html })
-    if (r.error) failed.push(`digest: ${r.error}`)
-    else sent.push('digest')
+    // The digest CLAIMS the day before sending, which is the opposite order to
+    // every other reminder here — and the inversion is deliberate.
+    //
+    // Everywhere else the rule is send-first-log-second, so a failed send never
+    // records a message that did not go. That rule is right when losing the log
+    // means a message that never sends again. For the digest the costs are
+    // reversed: it is weekly, it goes to Dan rather than a client, and the log
+    // is keyed to the DAY rather than to an invoice. A lost digest costs one
+    // Monday; a duplicate arrives every time Vercel retries a slow invocation.
+    //
+    // The insert is also what makes the claim atomic. Reading the log first and
+    // then sending is check-then-act: two overlapping invocations both see
+    // nothing and both send — the exact race 0009's index exists to close for
+    // overdue alerts. Here the unique index on (owner_id, sent_on) where
+    // kind = 'digest' means the second claimant's insert fails and it never
+    // sends at all.
+    const { error: claimErr } = await db.from('reminder_log').insert({
+      owner_id: settings.owner_id,
+      invoice_id: null,
+      kind: 'digest',
+      sent_to: to,
+      sent_on: today,
+    })
+
+    if (claimErr) {
+      // 23505 is unique_violation: today's digest has already gone, so this is
+      // the mechanism working rather than a fault. Anything else is real.
+      if (claimErr.code !== '23505') failed.push(`digest: ${claimErr.message}`)
+    } else {
+      const { subject, text, html } = buildDigestEmail(s, appUrl)
+      const r = await sendReminderEmail({ to, subject, text, html })
+      if (r.error) failed.push(`digest: ${r.error}`)
+      else sent.push('digest')
+    }
   }
 
   // A worker pool of ALERT_CONCURRENCY, the same shape as the batch upload in
@@ -268,6 +298,9 @@ export async function GET(request: NextRequest) {
           invoice_id: inv.id,
           kind: 'overdue_alert',
           sent_to: to,
+          // The Chicago day, so what the invoice page displays never has to
+          // slice a timestamptz and land on the wrong side of midnight UTC.
+          sent_on: today,
         })
         outcomes[i] = logErr
           ? { failed: `#${inv.number} logged: ${logErr.message}` }

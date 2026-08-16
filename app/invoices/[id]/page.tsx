@@ -29,7 +29,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
          work_for, backup_snapshot,
          clients(name, address_line1, address_line2, city, state, postal_code, billing_email),
          invoice_lines(id, position, description, qty_hundredths, unit_price_cents, line_total_cents),
-         reminder_log(kind, sent_at)`,
+         reminder_log(kind, sent_at, sent_on)`,
       )
       .eq('id', id)
       .maybeSingle(),
@@ -83,7 +83,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
       | (NonNullable<DocumentData['client']> & { billing_email: string | null })
       | null
     invoice_lines: DocumentData['lines'] & { position: number }[]
-    reminder_log?: { kind: string; sent_at: string }[]
+    reminder_log?: { kind: string; sent_at: string; sent_on: string | null }[]
   }
 
   const s = displayStatus(inv, today)
@@ -157,14 +157,22 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
     backup: snapshot ? { ...snapshot, expenses: withImages } : undefined,
   }
 
-  // Most recent client reminder, as a plain date for display. reminder_log
-  // stores an instant; formatDateShort takes a calendar date.
+  // Most recent client reminder, as a plain date for display.
+  //
+  // sent_on is the Chicago day the message actually went, written at insert.
+  // This used to be sent_at.slice(0, 10) — the UTC date of a timestamptz — so a
+  // reminder sent after 7pm Central displayed as sent TOMORROW. lib/dates.ts
+  // warns that exact slicing "bit CrewTracker twice"; migration 0021 added the
+  // column so it does not have to be guessed from an instant.
+  //
+  // Rows written before 0021 have no sent_on, and there are none — the table was
+  // empty when the migration ran — but the fallback keeps a null out of the
+  // display rather than rendering "Invalid Date" if one ever appears.
   const lastReminder = (inv.reminder_log ?? [])
     .filter((r) => r.kind === 'client_reminder')
-    .map((r) => r.sent_at)
-    .sort()
+    .sort((a, b) => a.sent_at.localeCompare(b.sent_at))
     .pop() ?? null
-  const lastReminderDate = lastReminder ? lastReminder.slice(0, 10) : null
+  const lastReminderDate = lastReminder?.sent_on ?? null
 
   return (
     <AppShell current="invoices">

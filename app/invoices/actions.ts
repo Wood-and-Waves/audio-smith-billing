@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { computeTotals, formatUSD } from '@/lib/money'
-import { addDays, formatDateLong } from '@/lib/dates'
+import { addDays, formatDateLong, todayInChicago } from '@/lib/dates'
 import { buildInvoicePdf } from '@/lib/invoicePdf'
 import { sendInvoiceEmail } from '@/lib/invoiceEmail'
 import { sendReminderEmail } from '@/lib/reminderEmail'
@@ -645,6 +645,9 @@ export async function sendClientReminder(
     invoice_id: inv.id,
     kind: 'client_reminder',
     sent_to: to,
+    // The Chicago day, so what the invoice page displays never has to slice a
+    // timestamptz and land on the wrong side of midnight UTC.
+    sent_on: todayInChicago(),
   })
   if (logErr) {
     return {
