@@ -106,7 +106,7 @@ export async function createShow(input: {
     .select(`id, name, day_rate_cents, travel_rate_cents, pm_rate_cents, ot_after_hours,
              dt_after_hours, minimum_meal_break_minutes, meal_break_deduction_cap,
              meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours,
-             continuous_time_enabled`)
+             continuous_time_enabled, bill_hourly`)
     .eq('client_id', input.client_id)
 
   if (!cards || cards.length === 0) {
@@ -222,6 +222,7 @@ export async function createShow(input: {
     meal_penalty_cents: card.meal_penalty_cents,
     short_turn_rest_hours: card.short_turn_rest_hours,
     continuous_time_enabled: card.continuous_time_enabled,
+    bill_hourly: card.bill_hourly,
     // Frozen to the CARD's name regardless of any override above — the card
     // names the arrangement, not the number (see ShowSettings, which prints
     // it as "Frozen from the ... rate card" even once the rates beneath it
@@ -590,7 +591,7 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
              day_rate_cents, travel_rate_cents, pm_rate_cents, ot_after_hours,
              dt_after_hours, minimum_meal_break_minutes, meal_break_deduction_cap,
              meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours,
-             continuous_time_enabled, rate_card_name,
+             continuous_time_enabled, bill_hourly, rate_card_name,
              show_days(id, date, travel_in, travel_out, pay_as_half_day,
                        punches(punch_type, punched_at)),
              pm_entries(minutes),
@@ -819,6 +820,12 @@ export type UpdateShowInput = {
   /** IANA zone the show is worked in. Punch times are rendered in it. */
   timezone: string
   continuous_time_enabled: boolean
+  // Optional: ShowSettings doesn't have a box for this yet, so an omitted
+  // value must leave the show's frozen flag alone rather than resetting it
+  // to false on every unrelated save — the object literal below drops the
+  // key entirely (JSON never serializes `undefined`), so Postgres leaves the
+  // column untouched. Same convention as CardInput.bill_hourly.
+  bill_hourly?: boolean
 }
 
 /**
@@ -923,6 +930,7 @@ export async function updateShow(input: UpdateShowInput): Promise<Fail | { ok: t
     meal_penalty_cents: mealPenaltyCents,
     short_turn_rest_hours: input.short_turn_rest_hours,
     continuous_time_enabled: input.continuous_time_enabled,
+    bill_hourly: input.bill_hourly,
     timezone: input.timezone,
   }).eq('id', input.id)
   if (error) return { error: error.message }

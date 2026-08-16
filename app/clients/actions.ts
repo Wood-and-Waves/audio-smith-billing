@@ -34,6 +34,12 @@ export type CardInput = {
   meal_penalty: string
   short_turn_rest_hours: number
   continuous_time_enabled: boolean
+  // Optional: no form field sets this yet (ClientEditor doesn't send it), so
+  // an omitted box must mean "leave it alone", not "turn it off" — see
+  // parseCards, which is the one place that turns "not sent" into a real
+  // default. Same undefined-means-unset convention as travel_rate/pm_rate
+  // above, just for a boolean instead of a raw string.
+  bill_hourly?: boolean
 }
 
 export type ClientInput = {
@@ -72,6 +78,7 @@ type CardRow = {
   meal_penalty_cents: number
   short_turn_rest_hours: number
   continuous_time_enabled: boolean
+  bill_hourly: boolean
 }
 
 // Same override convention as createShow's overrideCents: undefined or blank
@@ -194,6 +201,10 @@ function parseCards(cards: CardInput[]): CardRow[] | Fail {
       meal_penalty_cents: mealPenaltyCents,
       short_turn_rest_hours: card.short_turn_rest_hours,
       continuous_time_enabled: card.continuous_time_enabled,
+      // No form field sends this yet — undefined (not sent) becomes the
+      // migration's own off-by-default, same as every other rule field's
+      // ultimate fallback when a card is created fresh.
+      bill_hourly: card.bill_hourly ?? false,
     })
   }
 
@@ -287,6 +298,7 @@ export async function saveClient(input: ClientInput): Promise<Fail | { ok: true;
       meal_penalty_cents: card.meal_penalty_cents,
       short_turn_rest_hours: card.short_turn_rest_hours,
       continuous_time_enabled: card.continuous_time_enabled,
+      bill_hourly: card.bill_hourly,
     }
     if (card.id) {
       // Scoped to THIS client's id too, not a bare lookup by card id — a
