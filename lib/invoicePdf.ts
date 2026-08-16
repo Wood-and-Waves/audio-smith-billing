@@ -38,14 +38,15 @@ export type PdfAssets = { logoSrc: string }
 const PAPER = '#ffffff'
 const INK = '#121212'
 const LINE = '#cbd5e1'
-const AMBER = '#f59e0b'        // amber as a FILL — the rule across the top
+// The one brand amber — the fill for the rule across the top AND the ink for
+// "Smith" in the wordmark. It was two shades: the wordmark darkened to #b45309
+// for contrast (#f59e0b is 2.15:1 on white, #b45309 is 4.8:1) until Dan asked
+// for a single orange matching the top of the page. The wordmark is large and
+// bold, so it carries — but it is lighter than a body-text amber would be.
+// Mirrors --paper-accent in globals.css; the two must stay in step.
+const AMBER = '#f59e0b'
 const MUTED = '#737373'        // Tailwind neutral-500
 const MUTED_DARK = '#525252'   // Tailwind neutral-600
-
-// Amber as INK. #f59e0b measures 2.15:1 on white and fails WCAG AA even at the
-// 3:1 large-text threshold, so the wordmark's "Smith" darkens to 4.8:1. Mirrors
-// --paper-accent in globals.css; the two must stay in step.
-const AMBER_INK = '#b45309'
 
 // Column widths, shared by the header row and every body row so the two can
 // never drift apart. Description takes whatever is left.
@@ -348,7 +349,7 @@ export function buildInvoicePdf(parts: PdfParts, data: DocumentData, assets: Pdf
                 // Uppercase to match the screen: components/InvoiceDocument.tsx
                 // renders this wordmark with className="display", and
                 // app/globals.css's .display sets text-transform: uppercase.
-                T(s.wordmark, ['THE AUDIO ', T({ color: AMBER_INK }, 'SMITH')]),
+                T(s.wordmark, ['THE AUDIO ', T({ color: AMBER }, 'SMITH')]),
                 T(s.legal, (set?.legal_name ?? 'Smith Audio, LLC').toUpperCase()),
               ]),
             ]),

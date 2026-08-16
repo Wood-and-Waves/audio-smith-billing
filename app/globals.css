@@ -47,14 +47,15 @@
   --paper-ink: #121212;
   --paper-line: #cbd5e1;
 
-  /* Amber AS INK on the paper. The brand amber #f59e0b measures 2.15:1 on
-     white — it fails WCAG AA even at the 3:1 large-text threshold — so the
-     wordmark's "Smith" uses the darker amber the app already uses on light
-     grounds: 4.8:1. Deliberately NOT --accent, which flips with the viewer's
-     theme; a document a client receives must render the same for everyone.
-     The rule across the top stays #f59e0b: it is a fill, not text, and carries
-     no contrast requirement. */
-  --paper-accent: #b45309;
+  /* The wordmark "Smith" on the paper. One brand amber, matching the rule
+     across the top — Dan asked for a single orange on the invoice. It was
+     darkened to #b45309 for contrast (#f59e0b is 2.15:1 on white, which fails
+     WCAG AA even at the 3:1 large-text threshold), so this is lighter than
+     before; the wordmark is large and bold enough to carry it. Still NOT
+     --accent, which flips with the viewer's theme — a document a client
+     receives must render the same for everyone. Mirrors AMBER in
+     lib/invoicePdf.ts; the two must stay in step. */
+  --paper-accent: #f59e0b;
 
   --radius-card: 12px;    /* matches the site's service cards */
   --radius-field: 4px;    /* matches the site's buttons */
