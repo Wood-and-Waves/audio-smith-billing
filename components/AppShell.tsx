@@ -22,7 +22,7 @@ export default function AppShell({
   return (
     <div className="min-h-dvh">
       <header className="sticky top-0 z-50 bg-bg border-b-2 border-accent">
-        <div className="mx-auto max-w-5xl px-5 flex items-center justify-between h-16">
+        <div className="mx-auto max-w-5xl px-6 flex items-center justify-between h-16">
           <Link href="/shows" className="flex items-center gap-3 min-w-0">
             <Image src="/logo.png" alt="The Audio Smith" width={34} height={34} priority />
             {/* On a phone the mark carries the identity on its own — with the
@@ -79,7 +79,7 @@ export default function AppShell({
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-5 py-10">{children}</main>
+      <main className="mx-auto max-w-5xl px-6 py-10">{children}</main>
     </div>
   )
 }
