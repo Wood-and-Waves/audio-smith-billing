@@ -154,8 +154,16 @@ export async function signedReceiptUrls(
   // so the check is never the one place in this file a caller forgot it.
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { urls: {}, storageError: false }
+
+  // Only sign paths under the caller's own prefix, exactly as extractReceipt
+  // does. Storage RLS already refuses a non-owned object, so this changes no
+  // result today — but this was the one receipt-signing entry point resting
+  // solely on the bucket policy, and matching the sibling means the code-side
+  // check is not the single place it is absent if that policy ever loosens.
+  const owned = paths.filter((p) => p.startsWith(`${user.id}/`))
+  if (owned.length === 0) return { urls: {}, storageError: false }
   const { data, error } = await supabase.storage
-    .from('receipts').createSignedUrls(paths, SIGNED_URL_SECONDS)
+    .from('receipts').createSignedUrls(owned, SIGNED_URL_SECONDS)
   if (error || !data) return { urls: {}, storageError: true }
 
   const urls: Record<string, string> = {}

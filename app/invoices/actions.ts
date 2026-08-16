@@ -246,16 +246,31 @@ export async function saveInvoice(input: InvoiceInput): Promise<SaveResult> {
 }
 
 /** draft -> sent, or sent -> paid. Kept separate from editing on purpose. */
+const INVOICE_STATUSES = ['draft', 'sent', 'paid', 'void'] as const
+
 export async function setInvoiceStatus(
   id: string,
   status: 'draft' | 'sent' | 'paid' | 'void',
 ): Promise<{ error: string } | { ok: true }> {
   const supabase = await createClient()
+
+  // This action was the one write in the app with no guards of its own — it
+  // trusted the TypeScript union and RLS alone. A server action is a public
+  // POST endpoint: the type is not present at runtime, so the checks have to be.
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+  if (!INVOICE_STATUSES.includes(status)) return { error: 'Unknown invoice status.' }
+
   const patch: Record<string, unknown> = { status }
   if (status === 'sent') patch.sent_at = new Date().toISOString()
 
-  const { error } = await supabase.from('invoices').update(patch).eq('id', id)
+  // .select('id') so a zero-row result — an id the caller does not own, which
+  // RLS filters to nothing — is reported as a failure rather than a silent
+  // {ok:true} no-op. Matches unlinkShow and billShows.
+  const { data, error } = await supabase
+    .from('invoices').update(patch).eq('id', id).select('id')
   if (error) return { error: error.message }
+  if (!data || data.length === 0) return { error: 'That invoice no longer exists.' }
 
   revalidatePath('/invoices')
   revalidatePath(`/invoices/${id}`)
