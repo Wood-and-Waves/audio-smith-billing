@@ -261,8 +261,11 @@ export async function setInvoiceStatus(
   if (!user) return { error: 'Not signed in.' }
   if (!INVOICE_STATUSES.includes(status)) return { error: 'Unknown invoice status.' }
 
+  // Status only. sent_at belongs to the actual send (sendInvoice stamps it) and
+  // must not be touched here: marking a sent invoice paid and then unmarking it
+  // returns it to 'sent', and re-stamping sent_at would reset the real send date
+  // — moving the reminder clock and the "sent" line on the invoice to today.
   const patch: Record<string, unknown> = { status }
-  if (status === 'sent') patch.sent_at = new Date().toISOString()
 
   // .select('id') so a zero-row result — an id the caller does not own, which
   // RLS filters to nothing — is reported as a failure rather than a silent

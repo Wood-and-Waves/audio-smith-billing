@@ -8,6 +8,7 @@ import InvoiceDocument, { type DocumentData } from '@/components/InvoiceDocument
 import DownloadInvoiceButton from '@/components/DownloadInvoiceButton'
 import SendInvoicePanel from '@/components/SendInvoicePanel'
 import SendReminderButton from '@/components/SendReminderButton'
+import MarkPaidButton from '@/components/MarkPaidButton'
 import InvoiceHoursToggle from '@/components/InvoiceHoursToggle'
 import { signedReceiptUrls } from '@/app/expenses/actions'
 import type { ExpenseCategory } from '@/lib/expenses'
@@ -24,7 +25,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
     supabase
       .from('invoices')
       .select(
-        `id, number, issue_date, due_date, terms_days, status, bill_to_snapshot,
+        `id, number, issue_date, due_date, terms_days, status, sent_at, bill_to_snapshot,
          subtotal_cents, tax_bp, tax_cents, deposit_cents, total_cents, notes, imported,
          work_for, backup_snapshot,
          clients(name, address_line1, address_line2, city, state, postal_code, billing_email),
@@ -69,6 +70,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
     due_date: string
     terms_days: number
     status: 'draft' | 'sent' | 'paid' | 'void'
+    sent_at: string | null
     bill_to_snapshot: string | null
     subtotal_cents: number
     tax_bp: number
@@ -185,6 +187,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           ← All invoices
         </Link>
         <div className="flex flex-wrap items-center justify-end gap-x-5 gap-y-2">
+          <MarkPaidButton invoiceId={inv.id} status={inv.status} wasSent={inv.sent_at != null} />
           {/* `sent` covers overdue too — overdue is derived from a sent
               invoice being past due, never a separate stored status. */}
           {inv.status === 'sent' ? (
