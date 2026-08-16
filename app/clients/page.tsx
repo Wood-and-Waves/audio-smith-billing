@@ -94,7 +94,7 @@ export default async function ClientsPage() {
             <li key={c.id}>
               <Link
                 href={`/clients/${c.id}`}
-                className="block border-b border-line py-4 px-2 -mx-2 hover:bg-surface transition-colors"
+                className="block border-b border-line py-4 pl-3 -ml-3 pr-3 hover:bg-surface transition-colors"
               >
                 <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                   <span className="font-semibold">{c.name}</span>
@@ -144,7 +144,7 @@ export default async function ClientsPage() {
               <li key={c.id}>
                 <Link
                   href={`/clients/${c.id}`}
-                  className="block border-b border-line py-3 px-2 -mx-2 text-sm text-muted
+                  className="block border-b border-line py-3 pl-3 -ml-3 pr-3 text-sm text-muted
                              hover:bg-surface hover:text-ink transition-colors"
                 >
                   {c.name}

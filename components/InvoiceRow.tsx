@@ -45,7 +45,7 @@ export default function InvoiceRow({
     <li>
       <Link
         href={`/invoices/${invoice.id}`}
-        className="relative block border-b border-line py-3 pl-4 pr-1 hover:bg-surface transition-colors"
+        className="relative block border-b border-line py-3 pl-4 pr-3 hover:bg-surface transition-colors"
       >
         <span
           aria-hidden
