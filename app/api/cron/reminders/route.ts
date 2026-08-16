@@ -15,8 +15,12 @@ import {
 
 // The reminder sweep, called by Vercel Cron once a morning.
 //
-// THIS IS THE ONLY FILE PERMITTED TO READ SUPABASE_SERVICE_ROLE_KEY, and the
-// only one permitted to read DROPBOX_APP_KEY, DROPBOX_APP_SECRET and
+// THIS IS THE ONLY PRODUCTION CODE PATH PERMITTED TO READ
+// SUPABASE_SERVICE_ROLE_KEY. app/api/dev/login/route.ts also reads it, but that
+// route is development-only (it 404s unless NODE_ENV is development), so a grep
+// for SUPABASE_SERVICE_ROLE_KEY should return exactly two hits, in those two
+// files. This is still the ONLY file permitted to read DROPBOX_APP_KEY,
+// DROPBOX_APP_SECRET and
 // DROPBOX_REFRESH_TOKEN. The service key bypasses every RLS policy in the
 // database; the Dropbox refresh token is a standing grant on Dan's account.
 // They are here because the sweep has no user session and must read across all
