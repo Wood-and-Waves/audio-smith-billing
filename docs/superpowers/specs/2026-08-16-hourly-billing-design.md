@@ -129,11 +129,18 @@ change it.)
 
 ### Rounding
 
-`hourly_rate_cents = round(day_rate_cents / ot_after_hours)`. For $600 ÷ 10 it is
-exactly 6000. A non-divisible pairing (say $600 ÷ 9) rounds to the nearest cent
-per hour; the line total is `hours × rounded_rate`, a few cents off a "true"
-division at most. Dan's numbers divide cleanly, and the invoice is his to eyeball
-before it sends.
+**Hours round UP to the next whole hour, per day.** 6.25 hours bills 7 hours;
+5h20m bills 6. This is not a new rule — `paidNetHours` already ceilings each
+day's net hours (`Math.ceil`, `lib/payroll.ts`), the figure Dan validated
+against his spreadsheet, and hourly billing reads that same `st` value. So a
+6.25-hour day bills 7 × $60 = $420, and the day-rate world's overtime is figured
+on the identical whole-hour number — the two can never round differently.
+
+The rate itself: `hourly_rate_cents = round(day_rate_cents / ot_after_hours)`.
+For $600 ÷ 10 it is exactly 6000. A non-divisible pairing (say $600 ÷ 9) rounds
+to the nearest cent per hour; the line total is `hours × rounded_rate`, a few
+cents off a "true" division at most. Dan's numbers divide cleanly, and the
+invoice is his to eyeball before it sends.
 
 ## UI
 
