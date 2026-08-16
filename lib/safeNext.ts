@@ -18,7 +18,7 @@
 // A safe value is exactly: begins with a single '/', and the second character is
 // not '/' or '\'. Everything else falls back to the app's home.
 
-const HOME = '/invoices'
+const HOME = '/shows'
 
 export function safeNext(next: string | null | undefined): string {
   if (!next) return HOME

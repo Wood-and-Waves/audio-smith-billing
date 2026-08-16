@@ -11,29 +11,29 @@ test('an ordinary in-app path is kept', () => {
 })
 
 test('nothing falls back to home', () => {
-  assert.equal(safeNext(null), '/invoices')
-  assert.equal(safeNext(undefined), '/invoices')
-  assert.equal(safeNext(''), '/invoices')
+  assert.equal(safeNext(null), '/shows')
+  assert.equal(safeNext(undefined), '/shows')
+  assert.equal(safeNext(''), '/shows')
 })
 
 test('a protocol-relative URL is refused — the browser reads it as a host', () => {
-  assert.equal(safeNext('//evil.com'), '/invoices')
-  assert.equal(safeNext('//evil.com/invoices'), '/invoices')
+  assert.equal(safeNext('//evil.com'), '/shows')
+  assert.equal(safeNext('//evil.com/invoices'), '/shows')
 })
 
 test('a backslash after the slash is refused — some parsers treat it as a slash', () => {
-  assert.equal(safeNext('/\\evil.com'), '/invoices')
+  assert.equal(safeNext('/\\evil.com'), '/shows')
 })
 
 test('an absolute URL is refused', () => {
-  assert.equal(safeNext('https://evil.com'), '/invoices')
-  assert.equal(safeNext('http://evil.com'), '/invoices')
+  assert.equal(safeNext('https://evil.com'), '/shows')
+  assert.equal(safeNext('http://evil.com'), '/shows')
 })
 
 test('userinfo and subdomain tricks are refused — they never start with a slash', () => {
   // These are the payloads that beat the auth-callback string concatenation:
   // `${origin}@evil.com` -> host evil.com, `${origin}.evil.com` -> a subdomain.
-  assert.equal(safeNext('@evil.com'), '/invoices')
-  assert.equal(safeNext('.evil.com'), '/invoices')
-  assert.equal(safeNext('evil.com'), '/invoices')
+  assert.equal(safeNext('@evil.com'), '/shows')
+  assert.equal(safeNext('.evil.com'), '/shows')
+  assert.equal(safeNext('evil.com'), '/shows')
 })

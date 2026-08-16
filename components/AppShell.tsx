@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import Image from 'next/image'
+import MobileNav from '@/components/MobileNav'
 
 // The site's nav, carried over: charcoal bar closed by a 2px amber rule.
 // Anyone who has seen theaudiosmith.com should recognise this immediately.
@@ -22,16 +23,23 @@ export default function AppShell({
     <div className="min-h-dvh">
       <header className="sticky top-0 z-50 bg-bg border-b-2 border-accent">
         <div className="mx-auto max-w-5xl px-5 flex items-center justify-between h-16">
-          <Link href="/invoices" className="flex items-center gap-3 min-w-0">
+          <Link href="/shows" className="flex items-center gap-3 min-w-0">
             <Image src="/logo.png" alt="The Audio Smith" width={34} height={34} priority />
-            {/* The wordmark truncates to "T…" on a phone and the nav needs the
-                room, so below sm the mark carries the identity on its own. */}
+            {/* On a phone the mark carries the identity on its own — with the
+                menu now behind a button there is room for the wordmark again,
+                but the collapse point stays at sm to keep the bar calm. */}
             <span className="hidden sm:inline display font-bold text-lg tracking-wide">
               The Audio <span className="text-accent">Smith</span>
             </span>
           </Link>
 
-          <nav className="flex items-center gap-1 sm:gap-2">
+          {/* Below sm the links collapse into a hamburger; the inline bar is
+              desktop-only. */}
+          <div className="sm:hidden">
+            <MobileNav items={NAV} current={current} />
+          </div>
+
+          <nav className="hidden sm:flex items-center gap-1 sm:gap-2">
             {NAV.map((item) => (
               <Link
                 key={item.key}
