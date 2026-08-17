@@ -55,21 +55,14 @@ export default function PunchClock({
 
   function open(type: PunchType) {
     setError(null)
-    // Prefill from the last punch already on this day where there is one, so a
-    // 6pm out follows a 9am in rather than jumping back to the current clock.
-    // Otherwise use now, rounded, read in the SHOW's zone — an Orlando show
-    // billed from Chicago should offer Orlando's clock.
-    const previous = PUNCH_ORDER
-      .filter((t) => recorded.has(t))
-      .map((t) => punches.find((p) => p.punch_type === t)!)
-      .sort((a, b) => a.punched_at.localeCompare(b.punched_at))
-      .at(-1)
-
-    const wall = previous
-      ? instantToWall(previous.punched_at, timezone)
-      : instantToWall(new Date().toISOString(), timezone)
-
-    setAtDate(previous ? wall.date : date)
+    // Prefill NOW, rounded to the quarter hour, read in the show's zone — an
+    // Orlando show billed from Chicago should offer Orlando's clock. A punch is
+    // recorded at the moment it happens, so "now" is the right default even for
+    // an out that follows a morning in: tapping Out at the end of the shift
+    // should land on the current time, not jump back to the in. (It used to
+    // prefill the previous punch's time, which put a 12:30 out at the 5:30 in.)
+    const wall = instantToWall(new Date().toISOString(), timezone)
+    setAtDate(date)
     setAtTime(nearest15(wall.time))
     setEditing(type)
   }
