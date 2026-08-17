@@ -76,22 +76,25 @@ export function buildInvoiceEmailDefaults(input: {
   return { subject, body: parts.join('\n') }
 }
 
-// The FINAL assembly. Takes Dan's (possibly edited) subject and body and the
-// server-minted public URL, and produces what actually gets sent. The link
-// and the "PDF copy is attached" line are appended here — always, at the end,
-// after whatever Dan wrote — so no edit can drop them. The html is built from
-// the plain-text body: every line escaped, newlines to <br>, then the link as
-// a real anchor. Pure string work; it cannot throw on a bad date because it
-// never formats one (buildInvoiceEmailDefaults already did that at prefill).
-export function assembleInvoiceEmail(input: {
+// The FINAL assembly, shared by the invoice send and the client reminder. Takes
+// the (possibly edited) subject and body plus the server-minted public URL, and
+// appends the link footer — always, at the end, after whatever the sender wrote,
+// so no edit can drop it. The "A PDF copy is attached." line is emitted only
+// when pdfAttached is true (the invoice attaches one; a reminder does not). The
+// html is built from the plain-text body: every line escaped, newlines to <br>,
+// then the link as a real anchor. Pure string work; it never formats a date.
+export function assembleEmail(input: {
   subject: string
   body: string
   publicUrl: string
+  pdfAttached: boolean
 }): { subject: string; text: string; html: string } {
-  const { subject, body, publicUrl } = input
+  const { subject, body, publicUrl, pdfAttached } = input
   const trimmed = body.replace(/\s+$/, '')
 
-  const footerText = `View it online: ${publicUrl}\nA PDF copy is attached.`
+  const footerLines = [`View it online: ${publicUrl}`]
+  if (pdfAttached) footerLines.push('A PDF copy is attached.')
+  const footerText = footerLines.join('\n')
   const text = trimmed ? `${trimmed}\n\n${footerText}` : footerText
 
   const safeBody = escapeHtml(trimmed).replace(/\n/g, '<br>')
@@ -99,7 +102,17 @@ export function assembleInvoiceEmail(input: {
     `<div style="font-family:system-ui,-apple-system,sans-serif;font-size:14px;color:#121212;line-height:1.5">` +
     (trimmed ? `<div style="margin:0 0 16px">${safeBody}</div>` : '') +
     `<p style="margin:0 0 16px"><a href="${escapeHtml(publicUrl)}">View this invoice online</a></p>` +
-    `<p style="margin:0">A PDF copy is attached.</p>` +
+    (pdfAttached ? `<p style="margin:0">A PDF copy is attached.</p>` : '') +
     `</div>`
   return { subject, text, html }
+}
+
+// The invoice send always attaches a PDF. Kept as a named wrapper so its
+// callers (lib/invoiceEmail.ts) and tests read as before.
+export function assembleInvoiceEmail(input: {
+  subject: string
+  body: string
+  publicUrl: string
+}): { subject: string; text: string; html: string } {
+  return assembleEmail({ ...input, pdfAttached: true })
 }

@@ -195,6 +195,10 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
               invoiceId={inv.id}
               to={(inv.clients as { billing_email?: string | null } | null)?.billing_email?.trim() || null}
               lastSentDate={lastReminderDate}
+              number={docData.number}
+              totalCents={docData.total_cents}
+              dueDate={docData.due_date}
+              legalName={docData.settings?.legal_name ?? 'Smith Audio, LLC'}
             />
           ) : null}
           <DownloadInvoiceButton data={docData} />

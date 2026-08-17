@@ -2,11 +2,12 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { computeTotals, formatUSD } from '@/lib/money'
-import { addDays, formatDateLong, todayInChicago } from '@/lib/dates'
+import { computeTotals } from '@/lib/money'
+import { addDays, todayInChicago } from '@/lib/dates'
 import { buildInvoicePdf } from '@/lib/invoicePdf'
 import { sendInvoiceEmail } from '@/lib/invoiceEmail'
 import { sendReminderEmail } from '@/lib/reminderEmail'
+import { assembleEmail } from '@/lib/invoiceEmailBody'
 import { billToText } from '@/lib/clientAddress'
 import { parseRecipients } from '@/lib/invoiceRecipients'
 import { signedReceiptUrls } from '@/app/expenses/actions'
@@ -572,6 +573,7 @@ export async function sendInvoice(
  */
 export async function sendClientReminder(
   invoiceId: string,
+  draft: { to: string; subject: string; body: string },
 ): Promise<{ error: string } | { ok: true }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -580,11 +582,24 @@ export async function sendClientReminder(
   const appUrl = process.env.APP_URL
   if (!appUrl) return { error: 'Email is not configured yet (APP_URL is missing).' }
 
+  // Authoritative recipient + subject validation, before the DB read or token
+  // mint. Same parseRecipients the panel uses for live feedback.
+  const { emails, invalid } = parseRecipients(draft.to)
+  if (invalid.length > 0) {
+    return { error: `Not a valid email: ${invalid.join(', ')}.` }
+  }
+  if (emails.length === 0) {
+    return { error: 'Add at least one recipient.' }
+  }
+  const subject = draft.subject.trim()
+  if (!subject) {
+    return { error: "Subject can't be empty." }
+  }
+
   const [{ data: invoice, error }, { data: settings, error: settingsError }] = await Promise.all([
     supabase
       .from('invoices')
-      .select(`id, number, due_date, total_cents, status, public_token,
-               clients(name, billing_email)`)
+      .select(`id, number, due_date, total_cents, status, public_token`)
       .eq('id', invoiceId)
       .maybeSingle(),
     supabase
@@ -605,20 +620,11 @@ export async function sendClientReminder(
   const inv = invoice as unknown as {
     id: string; number: number; due_date: string; total_cents: number
     status: 'draft' | 'sent' | 'paid' | 'void'; public_token: string | null
-    clients: { name: string; billing_email: string | null } | null
   }
 
   if (inv.status !== 'sent') {
     return { error: `Invoice #${inv.number} is ${inv.status}. Only a sent invoice is chased.` }
   }
-  const to = inv.clients?.billing_email?.trim()
-  if (!to) {
-    return {
-      error: `${inv.clients?.name ?? 'This client'} has no billing email on file. ` +
-        'Add one on the client screen.',
-    }
-  }
-
   // Mint the link on first send, exactly like sendInvoice does. public_token
   // is otherwise only ever set there, so a reminder for an invoice nobody has
   // re-sent since the token feature shipped would go out with no link at all.
@@ -632,31 +638,20 @@ export async function sendClientReminder(
 
   const link = `${appUrl.replace(/\/+$/, '')}/i/${token}`
   // The legal name, not the trading name — this reaches a client's accounts
-  // payable, who have "Smith Audio, LLC" on file. Was hardcoded; now it follows
-  // Settings like everything else.
+  // payable, who have "Smith Audio, LLC" on file. Follows Settings.
   const legalName = settings?.legal_name ?? 'Smith Audio, LLC'
-  const subject = `Reminder: invoice #${inv.number} from ${legalName}`
-  const text = [
-    `A friendly reminder about invoice #${inv.number}.`,
-    '',
-    `Amount due: ${formatUSD(inv.total_cents)}`,
-    `Due: ${formatDateLong(inv.due_date)}`,
-    '',
-    `View it online: ${link}`,
-    '',
-    'Thank you!',
-  ].join('\n')
-  const html =
-    '<div style="font-family:system-ui,-apple-system,sans-serif;font-size:14px;color:#121212;line-height:1.5">' +
-    `<p style="margin:0 0 16px">A friendly reminder about invoice <strong>#${inv.number}</strong>.</p>` +
-    `<p style="margin:0 0 4px">Amount due: <strong>${formatUSD(inv.total_cents)}</strong></p>` +
-    `<p style="margin:0 0 16px">Due: ${formatDateLong(inv.due_date)}</p>` +
-    `<p style="margin:0 0 16px"><a href="${link}">View this invoice online</a></p>` +
-    '<p style="margin:0">Thank you!</p>' +
-    '</div>'
+
+  // Dan's edited subject/body, with the read-only link appended server-side.
+  // pdfAttached: false — a reminder is a link nudge, nothing attached.
+  const { text, html } = assembleEmail({
+    subject,
+    body: draft.body,
+    publicUrl: link,
+    pdfAttached: false,
+  })
 
   const result = await sendReminderEmail({
-    to,
+    to: emails,
     subject,
     text,
     html,
@@ -672,14 +667,14 @@ export async function sendClientReminder(
     owner_id: user.id,
     invoice_id: inv.id,
     kind: 'client_reminder',
-    sent_to: to,
+    sent_to: emails.join(', '),
     // The Chicago day, so what the invoice page displays never has to slice a
     // timestamptz and land on the wrong side of midnight UTC.
     sent_on: todayInChicago(),
   })
   if (logErr) {
     return {
-      error: `The reminder went to ${to}, but recording it failed: ${logErr.message}.`,
+      error: `The reminder went to ${emails.join(', ')}, but recording it failed: ${logErr.message}.`,
     }
   }
 
