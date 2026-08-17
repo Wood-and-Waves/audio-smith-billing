@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { computeTotals } from '@/lib/money'
 import { addDays, todayInChicago } from '@/lib/dates'
-import { buildInvoicePdf } from '@/lib/invoicePdf'
+import { renderInvoicePdf } from '@/lib/renderInvoicePdf'
 import { sendInvoiceEmail } from '@/lib/invoiceEmail'
 import { sendReminderEmail } from '@/lib/reminderEmail'
 import { assembleEmail } from '@/lib/invoiceEmailBody'
@@ -505,21 +505,7 @@ export async function sendInvoice(
   // intact all the way from the PDF render to the caller.
   let pdf: Buffer
   try {
-    const { join } = await import('node:path')
-    const { Document, Page, Text, View, Image, Font, renderToBuffer } =
-      await import('@react-pdf/renderer')
-    Font.register({
-      family: 'Oswald',
-      src: join(process.cwd(), 'public', 'fonts', 'Oswald-Bold.ttf'),
-      fontWeight: 700,
-    })
-    pdf = await renderToBuffer(
-      buildInvoicePdf(
-        { Document, Page, Text, View, Image },
-        data,
-        { logoSrc: join(process.cwd(), 'public', 'logo.png') },
-      ),
-    )
+    pdf = await renderInvoicePdf(data)
   } catch (e) {
     return {
       error: 'The invoice PDF could not be rendered: ' +
