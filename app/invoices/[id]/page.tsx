@@ -222,7 +222,6 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           // button that would then be refused server-side anyway.
           to={inv.clients?.billing_email?.trim() || null}
           status={inv.status}
-          publicUrlBase={process.env.APP_URL ?? ''}
         />
       </div>
 
