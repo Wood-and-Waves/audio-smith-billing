@@ -17,7 +17,7 @@ import 'server-only'
 //
 // No JSX and no '@/' imports — this module is exercised by node --test.
 
-import { buildInvoiceEmail, type InvoiceEmailInput } from './invoiceEmailBody.ts'
+import { assembleInvoiceEmail, type InvoiceEmailInput } from './invoiceEmailBody.ts'
 import { invoiceFilename } from './invoicePdf.ts'
 
 // Re-exported so existing callers (e.g. the test suite) that imported this
@@ -33,17 +33,22 @@ export async function sendInvoiceEmail(
   const from = process.env.INVOICE_FROM_EMAIL
   if (!from) return { error: 'Email is not configured yet (INVOICE_FROM_EMAIL is missing).' }
 
-  // The business lookup and buildInvoiceEmail live inside this try, not just
-  // the network call: buildInvoiceEmail formats the due date, and
-  // formatDateLong throws a RangeError on an unparseable date. This
-  // function's whole contract is to return { error } and never throw, so
-  // anything that can throw on a bad row has to be in here too.
+  // The business lookup and assembleInvoiceEmail live inside this try, not
+  // just the network call: buildInvoiceEmailDefaults (called by the caller,
+  // at prefill) formats the due date, and formatDateLong throws a RangeError
+  // on an unparseable date. This function's whole contract is to return
+  // { error } and never throw, so anything that can throw on a bad row has
+  // to be in here too.
   try {
     // The legal name, matching the subject and body — this is the sender name
     // an accounts-payable clerk sees in their inbox list, and it has to be the
     // one they have on file.
     const business = input.invoice.settings?.legal_name ?? 'Smith Audio, LLC'
-    const { subject, text, html } = buildInvoiceEmail(input)
+    const { subject, text, html } = assembleInvoiceEmail({
+      subject: input.subject,
+      body: input.body,
+      publicUrl: input.publicUrl,
+    })
 
     const { Resend } = await import('resend')
     const { error } = await new Resend(key).emails.send({

@@ -8,6 +8,7 @@ import { buildInvoicePdf } from '@/lib/invoicePdf'
 import { sendInvoiceEmail } from '@/lib/invoiceEmail'
 import { sendReminderEmail } from '@/lib/reminderEmail'
 import { billToText } from '@/lib/clientAddress'
+import { parseRecipients } from '@/lib/invoiceRecipients'
 import { signedReceiptUrls } from '@/app/expenses/actions'
 import type { DocumentData } from '@/components/InvoiceDocument'
 import type { ExpenseCategory } from '@/lib/expenses'
@@ -294,7 +295,8 @@ export async function setInvoiceStatus(
  * receipt. Only void is refused — a voided invoice must never reach a client.
  */
 export async function sendInvoice(
-  invoiceId: string, note: string,
+  invoiceId: string,
+  draft: { to: string; subject: string; body: string },
 ): Promise<{ error: string } | { ok: true }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -302,6 +304,22 @@ export async function sendInvoice(
 
   const appUrl = process.env.APP_URL
   if (!appUrl) return { error: 'Email is not configured yet (APP_URL is missing).' }
+
+  // Authoritative recipient + subject validation, before any DB read or token
+  // mint. parseRecipients is the same function the panel uses for live
+  // feedback, so what Dan saw accepted is what the server accepts. A bad
+  // address is named rather than handed blindly to Resend.
+  const { emails, invalid } = parseRecipients(draft.to)
+  if (invalid.length > 0) {
+    return { error: `Not a valid email: ${invalid.join(', ')}.` }
+  }
+  if (emails.length === 0) {
+    return { error: 'Add at least one recipient.' }
+  }
+  const subject = draft.subject.trim()
+  if (!subject) {
+    return { error: "Subject can't be empty." }
+  }
 
   const [{ data: invoice, error: invoiceError }, { data: settings, error: settingsError }] =
     await Promise.all([
@@ -371,14 +389,6 @@ export async function sendInvoice(
 
   if (inv.status === 'void') {
     return { error: `Invoice #${inv.number} is void. Voided invoices are not sent.` }
-  }
-
-  const to = inv.clients?.billing_email?.trim()
-  if (!to) {
-    return {
-      error: `${inv.clients?.name ?? 'This client'} has no billing email on file, ` +
-        'so there is nowhere to send it. Add one on the client screen.',
-    }
   }
 
   // Mint the link on first send. Historical invoices stay tokenless until they
@@ -517,11 +527,11 @@ export async function sendInvoice(
   }
 
   const result = await sendInvoiceEmail({
-    to,
+    to: emails,
+    subject,
+    body: draft.body,
     invoice: data,
-    status: inv.status,
     publicUrl: `${appUrl.replace(/\/+$/, '')}/i/${token}`,
-    note,
     // From Settings, not hardcoded — it is already editable there, and a
     // second copy in code is one that goes stale silently. The fallback only
     // covers a settings row with no email at all.
@@ -540,7 +550,7 @@ export async function sendInvoice(
     .eq('id', invoiceId)
   if (markErr) {
     return {
-      error: `Invoice #${inv.number} was emailed to ${to}, but recording that failed: ` +
+      error: `Invoice #${inv.number} was emailed to ${emails.join(', ')}, but recording that failed: ` +
         `${markErr.message}. The client has it; the status here is stale.`,
     }
   }
