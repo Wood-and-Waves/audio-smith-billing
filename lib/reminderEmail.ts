@@ -117,7 +117,7 @@ export function buildOverdueAlertEmail(inv: ReminderInvoice, appUrl: string) {
 
 export async function sendReminderEmail(
   input: {
-    to: string; subject: string; text: string; html: string
+    to: string | string[]; subject: string; text: string; html: string
     /** Defaults to the invoice's own reply-to path: nobody replies to Dan's digest. */
     replyTo?: string
     fromName?: string
