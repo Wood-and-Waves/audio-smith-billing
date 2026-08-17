@@ -599,8 +599,7 @@ export async function sendClientReminder(
   const [{ data: invoice, error }, { data: settings, error: settingsError }] = await Promise.all([
     supabase
       .from('invoices')
-      .select(`id, number, due_date, total_cents, status, public_token,
-               clients(name, billing_email)`)
+      .select(`id, number, due_date, total_cents, status, public_token`)
       .eq('id', invoiceId)
       .maybeSingle(),
     supabase
@@ -621,7 +620,6 @@ export async function sendClientReminder(
   const inv = invoice as unknown as {
     id: string; number: number; due_date: string; total_cents: number
     status: 'draft' | 'sent' | 'paid' | 'void'; public_token: string | null
-    clients: { name: string; billing_email: string | null } | null
   }
 
   if (inv.status !== 'sent') {
