@@ -2,8 +2,8 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { computeTotals, formatUSD } from '@/lib/money'
-import { addDays, formatDateLong, todayInChicago } from '@/lib/dates'
+import { computeTotals } from '@/lib/money'
+import { addDays, todayInChicago } from '@/lib/dates'
 import { buildInvoicePdf } from '@/lib/invoicePdf'
 import { sendInvoiceEmail } from '@/lib/invoiceEmail'
 import { sendReminderEmail } from '@/lib/reminderEmail'
