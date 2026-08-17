@@ -84,6 +84,16 @@ export default async function PublicInvoicePage(
               : `Due in ${days} ${days === 1 ? 'day' : 'days'}`}
         </p>
         <InvoiceDocument data={invoice} />
+        <div className="mt-6 text-center">
+          <a
+            href={`/i/${token}/pdf`}
+            className="inline-block px-5 py-2.5 bg-accent-surface text-accent-ink font-bold
+                       uppercase tracking-wider text-sm rounded-field hover:opacity-90
+                       transition-opacity"
+          >
+            Download PDF
+          </a>
+        </div>
         <p className="mt-6 text-center text-xs text-muted">
           Questions about this invoice? Reply to the email it came with.
         </p>

@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
   // to Vercel and is not bundled into a function unless it is traced here.
   outputFileTracingIncludes: {
     '/invoices/[id]': ['./public/fonts/Oswald-Bold.ttf', './public/logo.png'],
+    '/i/[token]/pdf': ['./public/fonts/Oswald-Bold.ttf', './public/logo.png'],
   },
   // Baseline security headers on every response. frame-ancestors 'none' (plus
   // the legacy X-Frame-Options) is the clickjacking fix; this is deliberately
