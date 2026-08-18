@@ -7,7 +7,9 @@ import { formatAmount, formatUSD, parseUSD } from '@/lib/money'
 import { formatDateShort, todayInChicago } from '@/lib/dates'
 import { CATEGORY_LABEL, CATEGORY_ORDER, expensesMissingReceipts, type ExpenseCategory } from '@/lib/expenses'
 import { scaleToFit, contrastBounds, buildLut, JPEG_QUALITY } from '@/lib/receiptImage'
-import { addExpense, deleteExpense, extractReceipt, listShowOriginals } from '@/app/expenses/actions'
+import {
+  addExpense, deleteExpense, extractReceipt, listShowOriginals, setExpenseBillable,
+} from '@/app/expenses/actions'
 import {
   dropExactRepeats, duplicateOf, markDuplicates, type NamedCandidate,
 } from '@/lib/receiptDuplicates'
@@ -56,6 +58,8 @@ type BatchRow = {
   whereSpent: string
   amount: string
   spentOn: string
+  /** Mirrors Row's own field — true unless Dan ticks "My cost" on this row. */
+  billable: boolean
   /** Ticked rows are inserted by Add all; unticked ones are skipped and their upload cleaned up. */
   included: boolean
   /** Which earlier receipt this looks like a repeat of, named — or null. Kept even after a re-tick. */
@@ -340,6 +344,10 @@ export default function ExpenseLog({
   const [whereSpent, setWhereSpent] = useState('')
   const [amount, setAmount] = useState('')
   const [spentOn, setSpentOn] = useState(todayInChicago())
+  // Checked = Dan's own per-diem cost, never billed to the client — see
+  // migration 0025. Defaults unchecked (billable) since most expenses are.
+  // Reset to false after every successful Add, same as the fields above.
+  const [myCost, setMyCost] = useState(false)
 
   // The picked file's already-uploaded receipt pair, ready to attach to the
   // next Add. Null until upload finishes; also null again the instant a new
@@ -554,6 +562,18 @@ export default function ExpenseLog({
   function toggleBatchRow(id: string) {
     setBatchRows((prev) => prev && prev.map((r) => (
       r.id === id ? { ...r, included: !r.included, touched: new Set(r.touched).add('included') } : r
+    )))
+  }
+
+  /**
+   * Flips one row's my-cost tick. Not routed through updateBatchRow: that
+   * function's `touched` set only exists to keep a slow OCR read from
+   * clobbering a hand-typed field, and OCR never reads or writes billable —
+   * there is nothing here for a re-read to race.
+   */
+  function toggleBatchBillable(id: string) {
+    setBatchRows((prev) => prev && prev.map((r) => (
+      r.id === id ? { ...r, billable: !r.billable } : r
     )))
   }
 
@@ -813,6 +833,7 @@ export default function ExpenseLog({
         whereSpent: '',
         amount: '',
         spentOn: todayInChicago(),
+        billable: true,
         included: true,
         duplicateReason: null,
         enhancedPath: null,
@@ -922,6 +943,7 @@ export default function ExpenseLog({
               receiptPath: row.enhancedPath,
               receiptOriginal: row.originalPath,
               note: '',
+              billable: row.billable,
             })
           } catch {
             // The ambiguity add() documents at length: a THROWN insert cannot
@@ -973,7 +995,11 @@ export default function ExpenseLog({
 
   // Newest first, matching PmLog's ordering of its entries.
   const sorted = [...expenses].sort((a, b) => b.spent_on.localeCompare(a.spent_on))
-  const total = expenses.reduce((t, e) => t + e.amount_cents, 0)
+  // Split, not summed together: "Billable" is what the client eventually
+  // sees on the invoice (expenseLines skips my-cost rows the same way), and
+  // "My costs" is Dan's own per-diem money, which never reaches either.
+  const billableTotal = expenses.reduce((t, e) => t + (e.billable ? e.amount_cents : 0), 0)
+  const myCostTotal = expenses.reduce((t, e) => t + (e.billable ? 0 : e.amount_cents), 0)
   // Shared with billShows/expensesMissingReceipts (lib/expenses.ts) so this
   // count agrees with the billing gate about a blank (not just null) path.
   const missing = expensesMissingReceipts(expenses).length
@@ -1003,6 +1029,7 @@ export default function ExpenseLog({
           receiptPath: attached?.enhancedPath ?? null,
           receiptOriginal: attached?.originalPath ?? null,
           note: '',
+          billable: !myCost,
         })
         if ('error' in result) { setError(result.error); return }
 
@@ -1019,6 +1046,10 @@ export default function ExpenseLog({
         // trip's worth at once) that this is worth the retyping.
         setSpentOn(todayInChicago())
         setCategory('meals')
+        // Same reasoning as spentOn/category just above: a my-cost tick left
+        // on would silently carry into the next entry, quietly excluding an
+        // ordinary billable expense from the client's invoice.
+        setMyCost(false)
         // THE SHARP EDGE: clear the capture — file, both paths, the token
         // (already bumped above) and the touched set — right alongside the
         // fields already reset above. Leaving any of it would let the next
@@ -1061,6 +1092,21 @@ export default function ExpenseLog({
       // The expense is gone either way — a storage warning here is not a
       // rollback, just Dan's heads-up that a receipt file was left behind.
       if (result.warning) setError(result.warning)
+      router.refresh()
+    })
+  }
+
+  /**
+   * Flips a logged expense between billable and my-cost — the fix for typing
+   * the wrong one at Add time, without deleting the row and re-uploading its
+   * receipt. Same shape as remove() above: one call, same transition, same
+   * alert paragraph for the error.
+   */
+  function toggleBillable(id: string, next: boolean) {
+    setError(null)
+    start(async () => {
+      const result = await setExpenseBillable(id, next)
+      if ('error' in result) { setError(result.error); return }
       router.refresh()
     })
   }
@@ -1162,7 +1208,10 @@ export default function ExpenseLog({
         <h2 className="eyebrow">Expenses</h2>
         {expenses.length > 0 && (
           <p className="tabular text-sm text-muted">
-            {formatUSD(total)}
+            Billable {formatUSD(billableTotal)}
+            {/* Omitted entirely at $0 — a show with no my-cost rows (every
+                show, before this feature existed) reads exactly as before. */}
+            {myCostTotal > 0 && ` · My costs ${formatUSD(myCostTotal)}`}
             {missing > 0 && (
               <span className="text-danger">
                 {' · '}{missing} {missing === 1 ? 'needs a receipt' : 'need receipts'}
@@ -1215,7 +1264,28 @@ export default function ExpenseLog({
               <span className="basis-full text-xs text-muted flex flex-wrap items-baseline gap-x-2">
                 <span className="tabular">{formatDateShort(e.spent_on)}</span>
                 <span>{CATEGORY_LABEL[e.category]}</span>
-                {!e.receipt_path && <span className="text-danger">needs a receipt</span>}
+                {!e.billable && (
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-muted
+                                   bg-surface-2 rounded-field px-1.5 py-0.5">
+                    My cost
+                  </span>
+                )}
+                {/* Danger only reaches a billable row — that is the one kind
+                    of missing receipt that actually blocks billing. A
+                    my-cost row without one is a non-issue, worded as one. */}
+                {!e.receipt_path && (
+                  e.billable
+                    ? <span className="text-danger">needs a receipt</span>
+                    : <span>no receipt (optional)</span>
+                )}
+                <button
+                  type="button"
+                  disabled={locked || pending}
+                  onClick={() => toggleBillable(e.id, !e.billable)}
+                  className="underline hover:text-ink disabled:opacity-40"
+                >
+                  {e.billable ? 'Make my cost' : 'Make billable'}
+                </button>
               </span>
             </li>
           ))}
@@ -1265,6 +1335,19 @@ export default function ExpenseLog({
                            onChange={(e) => updateBatchRow(row.id, 'date', { spentOn: e.target.value })} />
                   </div>
                 </div>
+                {/* Same `ml-6` indent as the status/duplicate lines below —
+                    it lines up under the fields, past the include tick. */}
+                <label className="ml-6 mt-1 flex items-center gap-2 text-xs text-muted">
+                  <input
+                    type="checkbox"
+                    checked={!row.billable}
+                    disabled={locked || pending}
+                    onChange={() => toggleBatchBillable(row.id)}
+                    aria-label={`My cost for receipt ${i + 1}`}
+                    className="h-4 w-4 accent-accent"
+                  />
+                  My cost — per-diem, not billed to the client
+                </label>
                 <p className="ml-6 mt-1 text-xs text-muted truncate">
                   {row.file.name}
                   {' — '}
@@ -1345,6 +1428,17 @@ export default function ExpenseLog({
             {pending ? (step ?? 'Saving…') : uploading ? 'Uploading…' : '+ Add'}
           </button>
 
+          <label className="sm:col-span-5 flex items-center gap-2 text-xs text-muted">
+            <input
+              type="checkbox"
+              checked={myCost}
+              disabled={locked || pending}
+              onChange={(e) => setMyCost(e.target.checked)}
+              className="h-4 w-4 accent-accent"
+            />
+            My cost — per-diem, not billed to the client
+          </label>
+
           <label className="sm:col-span-5 text-xs text-muted">
             {/* capture="environment" opens the camera directly on a phone, which
                 is where a receipt actually gets photographed. `multiple` is what
@@ -1358,7 +1452,9 @@ export default function ExpenseLog({
                               disabled:opacity-40" />
             {capture
               ? ` ${capture.file.name}${ocrNote ? ` — ${ocrNote}` : ''}`
-              : (ocrNote ?? ' Photo or PDF. A receipt is required before this show can be billed.')}
+              : (ocrNote ?? (myCost
+                  ? ' Photo or PDF. A receipt is optional for my-cost expenses — still worth keeping for tax records.'
+                  : ' Photo or PDF. A receipt is required before this show can be billed.'))}
           </label>
         </div>
       )}
