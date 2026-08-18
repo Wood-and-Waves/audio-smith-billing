@@ -1208,10 +1208,12 @@ export default function ExpenseLog({
         <h2 className="eyebrow">Expenses</h2>
         {expenses.length > 0 && (
           <p className="tabular text-sm text-muted">
-            Billable {formatUSD(billableTotal)}
-            {/* Omitted entirely at $0 — a show with no my-cost rows (every
-                show, before this feature existed) reads exactly as before. */}
-            {myCostTotal > 0 && ` · My costs ${formatUSD(myCostTotal)}`}
+            {/* The split — and its "Billable" label — appears only once a
+                my-cost row exists. A show with none (every show, before this
+                feature existed) reads exactly as before: just the total. */}
+            {myCostTotal > 0
+              ? `Billable ${formatUSD(billableTotal)} · My costs ${formatUSD(myCostTotal)}`
+              : formatUSD(billableTotal)}
             {missing > 0 && (
               <span className="text-danger">
                 {' · '}{missing} {missing === 1 ? 'needs a receipt' : 'need receipts'}
