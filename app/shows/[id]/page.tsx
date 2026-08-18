@@ -52,7 +52,7 @@ type ShowRow = {
   bill_hourly: boolean
   rate_card_name: string | null
   clients: { name: string } | null
-  invoices: { number: number; status: string; total_cents: number } | null
+  invoices: { number: number; status: string; subtotal_cents: number } | null
   show_days: Day[]
   pm_entries: PmEntry[]
   expenses: Expense[]
@@ -70,7 +70,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
              meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours,
              continuous_time_enabled, bill_hourly, rate_card_name,
              clients(name),
-             invoices(number, status, total_cents),
+             invoices(number, status, subtotal_cents),
              show_days(id, date, travel_in, travel_out, pay_as_half_day,
                        punches(id, punch_type, punched_at)),
              pm_entries(id, worked_on, minutes, note),
@@ -136,22 +136,35 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
   // makes a reimbursement show read as pure labor — while my-cost (per-diem)
   // ones only subtract. This card is the whole reason my-cost exists.
   const expensesPaidCents = (s.expenses ?? []).reduce((t, e) => t + e.amount_cents, 0)
-  // The invoice total is only THIS show's revenue when the invoice covers
-  // exactly this show. billShows can merge several shows onto one invoice
-  // (nothing in the UI does today, but the capability exists and historical
-  // data could), and invoice_lines carries no per-show split — so on a shared
-  // invoice the honest per-show figure is this show's own lines, and the card
-  // says so rather than silently inflating profit with other shows' money.
-  let invoiceShowCount = 1
+  // The invoice subtotal is only THIS show's revenue when the invoice covers
+  // exactly this show, isn't void, and the coverage count itself is known.
+  // subtotal_cents, not total_cents: total_cents is net of any deposit
+  // (subtotal + tax − deposit, see lib/money.ts), so a recorded deposit would
+  // silently shrink the revenue and set-aside this card shows. subtotal also
+  // makes the preview→billed transition continuous, since previewTotal IS
+  // this show's subtotal by construction. billShows can merge several shows
+  // onto one invoice (nothing in the UI does today, but the capability
+  // exists and historical data could), and invoice_lines carries no per-show
+  // split — so on a shared invoice the honest per-show figure is this show's
+  // own lines, and the card says so rather than silently inflating profit
+  // with other shows' money. A void invoice is the same story: it isn't
+  // revenue, so the card falls back to this show's own lines there too.
+  let invoiceShowCount: number | null = null
   if (locked && s.invoice_id) {
-    const { count } = await supabase
+    const { count, error: countError } = await supabase
       .from('shows')
       .select('id', { count: 'exact', head: true })
       .eq('invoice_id', s.invoice_id)
-    invoiceShowCount = count ?? 1
+    // null means unknown — a failed query or (defensively) a null count from
+    // Supabase. Fail SAFE: an unknown count must never resolve to "sole
+    // coverage" the way `count ?? 1` used to — that is the exact inflation
+    // this guard exists to prevent. Unknown falls through to previewTotal
+    // below, exactly like a confirmed >1.
+    invoiceShowCount = countError || count === null ? null : count
   }
-  const revenueCents = locked && s.invoices && invoiceShowCount === 1
-    ? s.invoices.total_cents
+  const invoiceIsVoid = s.invoices?.status === 'void'
+  const revenueCents = locked && s.invoices && !invoiceIsVoid && invoiceShowCount === 1
+    ? s.invoices.subtotal_cents
     : previewTotal
   const profit = showProfit({ revenueCents, expensesPaidCents, setasideBp })
 
@@ -371,10 +384,15 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
             <li className="flex items-baseline justify-between gap-x-4 border-b border-line py-2">
               <span>
                 Revenue
-                {locked && s.invoices && invoiceShowCount === 1 && (
+                {locked && s.invoices && invoiceIsVoid && (
+                  <span className="text-muted">
+                    {' '}· invoice #{s.invoices.number} is void — showing this show&rsquo;s lines
+                  </span>
+                )}
+                {locked && s.invoices && !invoiceIsVoid && invoiceShowCount === 1 && (
                   <span className="text-muted"> · invoice #{s.invoices.number} · {s.invoices.status}</span>
                 )}
-                {locked && s.invoices && invoiceShowCount > 1 && (
+                {locked && s.invoices && invoiceShowCount !== null && invoiceShowCount > 1 && (
                   <span className="text-muted">
                     {' '}· this show&rsquo;s lines — invoice #{s.invoices.number} covers {invoiceShowCount} shows
                   </span>

@@ -1006,8 +1006,11 @@ export default function ExpenseLog({
   // Split, not summed together: "Billable" is what the client eventually
   // sees on the invoice (expenseLines skips my-cost rows the same way), and
   // "My costs" is Dan's own per-diem money, which never reaches either.
-  const billableTotal = expenses.reduce((t, e) => t + (e.billable ? e.amount_cents : 0), 0)
-  const myCostTotal = expenses.reduce((t, e) => t + (e.billable ? 0 : e.amount_cents), 0)
+  // `!== false` / `=== false`, not truthiness — same dropped-select reason
+  // lib/expenses.ts gives at length: undefined must fail toward the OLD
+  // behavior (billable), never silently toward my-cost.
+  const billableTotal = expenses.reduce((t, e) => t + (e.billable !== false ? e.amount_cents : 0), 0)
+  const myCostTotal = expenses.reduce((t, e) => t + (e.billable === false ? e.amount_cents : 0), 0)
   // Shared with billShows/expensesMissingReceipts (lib/expenses.ts) so this
   // count agrees with the billing gate about a blank (not just null) path.
   const missing = expensesMissingReceipts(expenses).length
@@ -1274,7 +1277,7 @@ export default function ExpenseLog({
               <span className="basis-full text-xs text-muted flex flex-wrap items-baseline gap-x-2">
                 <span className="tabular">{formatDateShort(e.spent_on)}</span>
                 <span>{CATEGORY_LABEL[e.category]}</span>
-                {!e.billable && (
+                {e.billable === false && (
                   <span className="text-[11px] font-bold uppercase tracking-wider text-muted
                                    bg-surface-2 rounded-field px-1.5 py-0.5">
                     My cost
@@ -1284,7 +1287,7 @@ export default function ExpenseLog({
                     of missing receipt that actually blocks billing. A
                     my-cost row without one is a non-issue, worded as one. */}
                 {!e.receipt_path && (
-                  e.billable
+                  e.billable !== false
                     ? <span className="text-danger">needs a receipt</span>
                     : <span>no receipt (optional)</span>
                 )}
@@ -1292,10 +1295,10 @@ export default function ExpenseLog({
                   type="button"
                   disabled={locked || pending}
                   onClick={() => toggleBillable(e.id, !e.billable)}
-                  aria-label={`${e.billable ? 'Make my cost' : 'Make billable'}: ${e.where_spent}`}
+                  aria-label={`${e.billable !== false ? 'Make my cost' : 'Make billable'}: ${e.where_spent}`}
                   className="underline hover:text-ink disabled:opacity-40"
                 >
-                  {e.billable ? 'Make my cost' : 'Make billable'}
+                  {e.billable !== false ? 'Make my cost' : 'Make billable'}
                 </button>
               </span>
             </li>
