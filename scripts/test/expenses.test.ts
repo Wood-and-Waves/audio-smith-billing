@@ -21,6 +21,7 @@ const exp = (over: Partial<ExpenseLike> = {}): ExpenseLike => ({
   amount_cents: 2669,
   spent_on: '2026-05-17',
   receipt_path: 'owner/show/e1-enhanced.jpg',
+  billable: true,
   ...over,
 })
 
@@ -106,6 +107,27 @@ test('an empty string is not a receipt', () => {
   assert.equal(expensesMissingReceipts([exp({ receipt_path: '   ' })]).length, 1)
 })
 
+test('a my-cost expense never becomes an invoice line', () => {
+  const lines = expenseLines([
+    exp({ amount_cents: 2000 }),
+    exp({ id: 'e2', amount_cents: 1875, billable: false }),
+  ])
+  assert.equal(lines.length, 1)
+  assert.equal(lines[0].unit_price_cents, 2000, 'only the billable amount')
+})
+
+test('a show with only my-cost expenses produces no expense lines at all', () => {
+  assert.deepEqual(expenseLines([exp({ billable: false })]), [])
+})
+
+test('a my-cost expense without a receipt never blocks billing', () => {
+  const missing = expensesMissingReceipts([
+    exp({ id: 'b1', receipt_path: null }),                      // billable, blocks
+    exp({ id: 'm1', receipt_path: null, billable: false }),     // my-cost, ignored
+  ])
+  assert.deepEqual(missing.map((e) => e.id), ['b1'])
+})
+
 // Regression for the preview/invoice parity bug: a $5,850 preview against a
 // $6,226.21 invoice, because one of the two `...expenseLines(...)` spreads
 // was missing. Both call sites are modelled exactly as they build their
@@ -151,9 +173,13 @@ test("the preview's flat sequence and billShows' grouped sequence agree", () => 
   const expensesA: ExpenseLike[] = [
     exp({ id: 'a1', category: 'meals', where_spent: 'Diner', amount_cents: 1200 }),
     exp({ id: 'a2', category: 'meals', where_spent: 'Cafe', amount_cents: 798 }),
+    // My-cost: must not reach either shape's expenseLines output, so it must
+    // not move either total below.
+    exp({ id: 'a3', category: 'meals', where_spent: 'Personal Snack', amount_cents: 5000, billable: false }),
   ]
   const expensesB: ExpenseLike[] = [
     exp({ id: 'b1', category: 'meals', where_spent: 'Grill', amount_cents: 1998 }),
+    exp({ id: 'b2', category: 'meals', where_spent: 'Personal Coffee', amount_cents: 4200, billable: false }),
   ]
 
   // preview's shape: per show, computeShowLines then expenseLines spread
@@ -188,5 +214,7 @@ test("the preview's flat sequence and billShows' grouped sequence agree", () => 
   assert.equal(dayRate?.qty_hundredths, 200)
   assert.equal(meals?.qty_hundredths, 200)
   assert.equal(meals?.unit_price_cents, 1998)
+  // Unchanged from before the my-cost fixtures were added: the $50 and $42
+  // my-cost rows must not appear in either shape's total.
   assert.equal(formatUSD(billingTotal), '$1,439.96') // 2 x $700 day rate + $19.98 x 2 meals
 })

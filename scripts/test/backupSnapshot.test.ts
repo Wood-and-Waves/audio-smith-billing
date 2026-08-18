@@ -133,6 +133,7 @@ test('expenses are frozen onto the snapshot with their receipt paths', () => {
     shows: [show([], { expenses: [{
       id: 'e1', category: 'meals', where_spent: 'HMS Host',
       amount_cents: 1998, spent_on: '2026-08-29', receipt_path: 'owner/show/x-enhanced.jpg',
+      billable: true,
     }] })],
     showHours: false,
   })
@@ -140,6 +141,28 @@ test('expenses are frozen onto the snapshot with their receipt paths', () => {
   assert.equal(snap.expenses[0].amount_cents, 1998)
   assert.equal(snap.expenses[0].receipt_path, 'owner/show/x-enhanced.jpg',
     'the path is what can be frozen — the bucket is private and its URLs expire')
+})
+
+test('a my-cost expense never reaches the snapshot', () => {
+  // The snapshot is the CLIENT-facing itemization: a my-cost row here would
+  // print on the invoice PDF and the public link.
+  const snap = buildBackupSnapshot({
+    shows: [show([], { expenses: [
+      {
+        id: 'e1', category: 'meals', where_spent: 'HMS Host',
+        amount_cents: 1998, spent_on: '2026-08-29', receipt_path: 'owner/show/x-enhanced.jpg',
+        billable: true,
+      },
+      {
+        id: 'e2', category: 'meals', where_spent: 'Personal Snack',
+        amount_cents: 500, spent_on: '2026-08-29', receipt_path: null,
+        billable: false,
+      },
+    ] })],
+    showHours: false,
+  })
+  assert.equal(snap.expenses.length, 1)
+  assert.equal(snap.expenses[0].where_spent, 'HMS Host', 'only the billable row is frozen')
 })
 
 test('no prep data reaches the snapshot', () => {
