@@ -1,9 +1,11 @@
+import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { isUnfinishedDay } from '@/lib/chronology'
 import { formatDateLong, formatDateShort } from '@/lib/dates'
 import { instantToWall } from '@/lib/zonedTime'
 import { formatUSD, formatQty, lineTotal } from '@/lib/money'
+import { showProfit } from '@/lib/showProfit'
 import { computeShowLines, rulesetAndRatesFor, type PmEntryLike } from '@/lib/showBuckets'
 import {
   calculateNetHours, paidNetHours, paidStraightTimeHours, paidOvertimeHours,
@@ -50,6 +52,7 @@ type ShowRow = {
   bill_hourly: boolean
   rate_card_name: string | null
   clients: { name: string } | null
+  invoices: { number: number; status: string; total_cents: number } | null
   show_days: Day[]
   pm_entries: PmEntry[]
   expenses: Expense[]
@@ -67,6 +70,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
              meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours,
              continuous_time_enabled, bill_hourly, rate_card_name,
              clients(name),
+             invoices(number, status, total_cents),
              show_days(id, date, travel_in, travel_out, pay_as_half_day,
                        punches(id, punch_type, punched_at)),
              pm_entries(id, worked_on, minutes, note),
@@ -87,6 +91,13 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
   if (!data) notFound()
 
   const s = data as unknown as ShowRow
+
+  // The set-aside rate is Dan's own settings row — RLS scopes the read the
+  // same way the shows query above is scoped.
+  const { data: settingsRow } = await supabase
+    .from('settings').select('tax_setaside_bp').maybeSingle()
+  const setasideBp = settingsRow?.tax_setaside_bp ?? 0
+
   const days = [...s.show_days].sort((a, b) => a.date.localeCompare(b.date))
   const locked = s.status === 'billed'
 
@@ -118,6 +129,15 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
     ...expenseLines(s.expenses ?? []),
   ]
   const previewTotal = lines.reduce((t, l) => t + lineTotal(l.qty_hundredths, l.unit_price_cents), 0)
+
+  // Dan's side of the show. Revenue is the real invoice once billed (the
+  // frozen truth), the live preview before that. Costs are EVERY expense he
+  // paid: billable ones sit in revenue too and net to zero — which is what
+  // makes a reimbursement show read as pure labor — while my-cost (per-diem)
+  // ones only subtract. This card is the whole reason my-cost exists.
+  const expensesPaidCents = (s.expenses ?? []).reduce((t, e) => t + e.amount_cents, 0)
+  const revenueCents = locked && s.invoices ? s.invoices.total_cents : previewTotal
+  const profit = showProfit({ revenueCents, expensesPaidCents, setasideBp })
 
   // Shares isUnfinishedDay with billShows (app/shows/actions.ts) so this banner
   // and the billing gate can never disagree about what's billable. Flags a
@@ -324,6 +344,55 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
           </ul>
         )}
       </section>
+
+      {(lines.length > 0 || expensesPaidCents > 0) && (
+        <section className="mb-10">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-4">
+            <h2 className="eyebrow">Profit</h2>
+            <p className="text-xs text-muted">estimate — your money, never on the invoice</p>
+          </div>
+          <ul className="border-t border-line text-sm">
+            <li className="flex items-baseline justify-between gap-x-4 border-b border-line py-2">
+              <span>
+                Revenue
+                {locked && s.invoices && (
+                  <span className="text-muted"> · invoice #{s.invoices.number} · {s.invoices.status}</span>
+                )}
+                {!locked && <span className="text-muted"> · preview</span>}
+              </span>
+              <span className="tabular font-semibold">{formatUSD(revenueCents)}</span>
+            </li>
+            {expensesPaidCents > 0 && (
+              <li className="flex items-baseline justify-between gap-x-4 border-b border-line py-2">
+                <span>Expenses you paid</span>
+                <span className="tabular">−{formatUSD(expensesPaidCents)}</span>
+              </li>
+            )}
+            <li className="flex items-baseline justify-between gap-x-4 border-b border-line py-2">
+              <span className="font-semibold">Profit</span>
+              <span className="tabular font-semibold">{formatUSD(profit.profitCents)}</span>
+            </li>
+            {setasideBp > 0 && profit.setasideCents > 0 && (
+              <>
+                <li className="flex items-baseline justify-between gap-x-4 border-b border-line py-2">
+                  <span>Set aside for taxes ({setasideBp % 100 === 0 ? setasideBp / 100 : (setasideBp / 100).toFixed(2)}%)</span>
+                  <span className="tabular">−{formatUSD(profit.setasideCents)}</span>
+                </li>
+                <li className="flex items-baseline justify-between gap-x-4 border-b border-line py-2">
+                  <span className="font-semibold">Take-home</span>
+                  <span className="tabular font-semibold text-good">{formatUSD(profit.takeHomeCents)}</span>
+                </li>
+              </>
+            )}
+          </ul>
+          {setasideBp === 0 && (
+            <p className="text-xs text-muted mt-2">
+              Set a tax set-aside rate in <Link href="/settings" className="underline hover:text-ink">Settings</Link> to
+              estimate take-home.
+            </p>
+          )}
+        </section>
+      )}
 
       <section className="mb-10">
         <h2 className="eyebrow mb-4">{locked ? 'Billed' : 'Actions'}</h2>
