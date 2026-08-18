@@ -135,9 +135,12 @@ export function buildBackupSnapshot(
     total_dt: sum((d) => d.dt_hours),
     // The snapshot is the CLIENT-facing itemization: a my-cost expense here
     // would print on the invoice PDF and the public link, so it is filtered
-    // out before it is ever mapped.
+    // out before it is ever mapped. (`!== false`, not truthiness, so a select
+    // that drops `billable` fails toward the old include-everything behavior —
+    // visible on the preview Dan reviews — never toward silent omission. See
+    // expenseLines in lib/expenses.ts.)
     expenses: input.shows.flatMap((s) => s.expenses
-      .filter((e) => e.billable)
+      .filter((e) => e.billable !== false)
       .map((e) => ({
         category: e.category,
         where_spent: e.where_spent,

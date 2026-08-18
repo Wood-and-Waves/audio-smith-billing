@@ -56,7 +56,8 @@ regression extended with mixed billable/my-cost rows.
 - `ExpenseLike` gains `billable: boolean`; every expense select that feeds the
   lib functions adds the column: `billShows` (app/shows/actions.ts:598), the
   show page (app/shows/[id]/page.tsx), the shows overview (app/shows/page.tsx).
-- `addExpense` (app/expenses/actions.ts) accepts `billable: boolean`.
+- `addExpense` (app/expenses/actions.ts) accepts `billable?: boolean`, defaulting
+  `true` — my-cost is always an explicit opt-in.
 - New `setExpenseBillable(expenseId, billable)` action — owner-scoped, refuses
   once the show is billed (same lock rule as delete). Exists because expenses
   are otherwise add/delete-only and a mis-flag would force deleting and

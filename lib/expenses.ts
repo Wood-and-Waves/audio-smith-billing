@@ -51,6 +51,13 @@ export const CATEGORY_ORDER: ExpenseCategory[] = ['meals', 'rides', 'baggage', '
  *
  * A my-cost (`billable: false`) row is skipped: it is Dan's own expense, not
  * the client's, and must never turn into money on an invoice.
+ *
+ * `=== false`, not `!e.billable`, here and below — deliberately. The type
+ * promises a boolean, but the value really comes from hand-written select
+ * strings the compiler cannot check (every query result is cast). If a future
+ * edit drops `billable` from a select, undefined must fail toward the OLD
+ * behavior — the expense stays on the invoice and in the receipts gate, where
+ * Dan can see it — never silently vanish from billing.
  */
 export function expenseLines(expenses: ExpenseLike[]): BucketLine[] {
   const lines: BucketLine[] = []
@@ -58,7 +65,7 @@ export function expenseLines(expenses: ExpenseLike[]): BucketLine[] {
   for (const category of CATEGORY_ORDER) {
     let total = 0
     for (const e of expenses) {
-      if (!e.billable) continue
+      if (e.billable === false) continue
       if (e.category === category) total += e.amount_cents
     }
     if (total > 0) {
@@ -84,10 +91,12 @@ export function expenseLines(expenses: ExpenseLike[]): BucketLine[] {
  * bill with nothing behind it.
  *
  * A my-cost (`billable: false`) row is skipped: it never reaches the client,
- * so a missing receipt on it can never block billing.
+ * so a missing receipt on it can never block billing. (`!== false` for the
+ * same dropped-select reason expenseLines gives: undefined must gate, not
+ * silently pass.)
  */
 export function expensesMissingReceipts(expenses: ExpenseLike[]): ExpenseLike[] {
   return expenses.filter(
-    (e) => e.billable && (!e.receipt_path || e.receipt_path.trim() === ''),
+    (e) => e.billable !== false && (!e.receipt_path || e.receipt_path.trim() === ''),
   )
 }

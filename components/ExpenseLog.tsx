@@ -833,7 +833,11 @@ export default function ExpenseLog({
         whereSpent: '',
         amount: '',
         spentOn: todayInChicago(),
-        billable: true,
+        // Inherits the form's "My cost" tick: ticking it and then snapping
+        // eight per-diem receipts in one go must not silently bill all eight
+        // to the client. Each row keeps its own checkbox, so the inherited
+        // value is visible and correctable in the review list.
+        billable: !myCost,
         included: true,
         duplicateReason: null,
         enhancedPath: null,
@@ -967,6 +971,10 @@ export default function ExpenseLog({
 
         const remaining = settled.filter((r) => !handled.has(r.id))
         setBatchRows(remaining.length > 0 ? remaining : null)
+        // Same reason add() resets it: a my-cost tick left on would silently
+        // carry into the next entry. Cleared only when the batch is done —
+        // rows still in review keep the mode they inherited.
+        if (remaining.length === 0) setMyCost(false)
         if (remaining.length === 0) setBatchSkipped(0)
         setBatchSummary({ added, total: intended, failed })
         if (lost) {
@@ -1284,6 +1292,7 @@ export default function ExpenseLog({
                   type="button"
                   disabled={locked || pending}
                   onClick={() => toggleBillable(e.id, !e.billable)}
+                  aria-label={`${e.billable ? 'Make my cost' : 'Make billable'}: ${e.where_spent}`}
                   className="underline hover:text-ink disabled:opacity-40"
                 >
                   {e.billable ? 'Make my cost' : 'Make billable'}
