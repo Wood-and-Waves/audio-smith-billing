@@ -136,7 +136,23 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
   // makes a reimbursement show read as pure labor — while my-cost (per-diem)
   // ones only subtract. This card is the whole reason my-cost exists.
   const expensesPaidCents = (s.expenses ?? []).reduce((t, e) => t + e.amount_cents, 0)
-  const revenueCents = locked && s.invoices ? s.invoices.total_cents : previewTotal
+  // The invoice total is only THIS show's revenue when the invoice covers
+  // exactly this show. billShows can merge several shows onto one invoice
+  // (nothing in the UI does today, but the capability exists and historical
+  // data could), and invoice_lines carries no per-show split — so on a shared
+  // invoice the honest per-show figure is this show's own lines, and the card
+  // says so rather than silently inflating profit with other shows' money.
+  let invoiceShowCount = 1
+  if (locked && s.invoice_id) {
+    const { count } = await supabase
+      .from('shows')
+      .select('id', { count: 'exact', head: true })
+      .eq('invoice_id', s.invoice_id)
+    invoiceShowCount = count ?? 1
+  }
+  const revenueCents = locked && s.invoices && invoiceShowCount === 1
+    ? s.invoices.total_cents
+    : previewTotal
   const profit = showProfit({ revenueCents, expensesPaidCents, setasideBp })
 
   // Shares isUnfinishedDay with billShows (app/shows/actions.ts) so this banner
@@ -355,8 +371,13 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
             <li className="flex items-baseline justify-between gap-x-4 border-b border-line py-2">
               <span>
                 Revenue
-                {locked && s.invoices && (
+                {locked && s.invoices && invoiceShowCount === 1 && (
                   <span className="text-muted"> · invoice #{s.invoices.number} · {s.invoices.status}</span>
+                )}
+                {locked && s.invoices && invoiceShowCount > 1 && (
+                  <span className="text-muted">
+                    {' '}· this show&rsquo;s lines — invoice #{s.invoices.number} covers {invoiceShowCount} shows
+                  </span>
                 )}
                 {!locked && <span className="text-muted"> · preview</span>}
               </span>
@@ -375,7 +396,8 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
             {setasideBp > 0 && profit.setasideCents > 0 && (
               <>
                 <li className="flex items-baseline justify-between gap-x-4 border-b border-line py-2">
-                  <span>Set aside for taxes ({setasideBp % 100 === 0 ? setasideBp / 100 : (setasideBp / 100).toFixed(2)}%)</span>
+                  {/* toFixed(2) then trim: 3000→30, 2750→27.5, 3333→33.33 — never "27.50". */}
+                  <span>Set aside for taxes ({(setasideBp / 100).toFixed(2).replace(/\.?0+$/, '')}%)</span>
                   <span className="tabular">−{formatUSD(profit.setasideCents)}</span>
                 </li>
                 <li className="flex items-baseline justify-between gap-x-4 border-b border-line py-2">
