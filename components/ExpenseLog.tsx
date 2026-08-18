@@ -29,6 +29,9 @@ type Row = {
   // verified by size and content hash. Necessary but not sufficient for
   // deletion: see the full mayDelete gate in lib/receiptRetention.ts.
   receipt_archived_at: string | null
+  // false = Dan's own cost (per-diem meals): never billed, never blocks
+  // billing. See migration 0025 and lib/expenses.ts.
+  billable: boolean
 }
 
 /**
