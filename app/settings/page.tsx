@@ -26,7 +26,7 @@ export default async function SettingsPage() {
     .from('settings')
     .select(
       `business_name, legal_name, address_line1, address_line2, phone, email,
-       remit_to, ach_details, default_terms_days, next_invoice_number`,
+       remit_to, ach_details, default_terms_days, next_invoice_number, tax_setaside_bp`,
     )
     // owner_id, not `id = 1`. This screen is the one that EDITS the letterhead
     // every invoice prints, so loading a row that is not the signed-in owner's

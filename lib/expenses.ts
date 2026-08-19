@@ -23,6 +23,12 @@ export type ExpenseLike = {
   spent_on: string
   /** Storage key of the enhanced image, or null when not yet photographed. */
   receipt_path: string | null
+  /**
+   * true = billed to the client (invoice line, receipt gates billing, frozen
+   * into the snapshot). false = Dan's own cost (per-diem meals): never reaches
+   * the invoice or the client, never blocks billing, receipt optional.
+   */
+  billable: boolean
 }
 
 /** Wording taken from the invoices Dan already sends. */
@@ -42,6 +48,16 @@ export const CATEGORY_ORDER: ExpenseCategory[] = ['meals', 'rides', 'baggage', '
  * Quantity is always exactly 1 and the price is a sum of stored cents: an
  * expense is money already spent, so there is no rate and no quantity to
  * multiply. Nothing here is recomputed.
+ *
+ * A my-cost (`billable: false`) row is skipped: it is Dan's own expense, not
+ * the client's, and must never turn into money on an invoice.
+ *
+ * `=== false`, not `!e.billable`, here and below — deliberately. The type
+ * promises a boolean, but the value really comes from hand-written select
+ * strings the compiler cannot check (every query result is cast). If a future
+ * edit drops `billable` from a select, undefined must fail toward the OLD
+ * behavior — the expense stays on the invoice and in the receipts gate, where
+ * Dan can see it — never silently vanish from billing.
  */
 export function expenseLines(expenses: ExpenseLike[]): BucketLine[] {
   const lines: BucketLine[] = []
@@ -49,6 +65,7 @@ export function expenseLines(expenses: ExpenseLike[]): BucketLine[] {
   for (const category of CATEGORY_ORDER) {
     let total = 0
     for (const e of expenses) {
+      if (e.billable === false) continue
       if (e.category === category) total += e.amount_cents
     }
     if (total > 0) {
@@ -72,7 +89,14 @@ export function expenseLines(expenses: ExpenseLike[]): BucketLine[] {
  *
  * A blank string is not a receipt: it would pass a null check and let a show
  * bill with nothing behind it.
+ *
+ * A my-cost (`billable: false`) row is skipped: it never reaches the client,
+ * so a missing receipt on it can never block billing. (`!== false` for the
+ * same dropped-select reason expenseLines gives: undefined must gate, not
+ * silently pass.)
  */
 export function expensesMissingReceipts(expenses: ExpenseLike[]): ExpenseLike[] {
-  return expenses.filter((e) => !e.receipt_path || e.receipt_path.trim() === '')
+  return expenses.filter(
+    (e) => e.billable !== false && (!e.receipt_path || e.receipt_path.trim() === ''),
+  )
 }

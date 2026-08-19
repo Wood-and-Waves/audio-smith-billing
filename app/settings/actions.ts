@@ -19,6 +19,9 @@ export type SettingsInput = {
   ach_details: string
   default_terms_days: number
   next_invoice_number: number
+  // Basis points, 3000 = 30%. Estimate-only — the rate is Dan's/his CPA's
+  // number, never computed by this app.
+  tax_setaside_bp: number
 }
 
 type Fail = { error: string }
@@ -37,6 +40,13 @@ export async function saveSettings(input: SettingsInput): Promise<Fail | { ok: t
 
   if (!Number.isFinite(input.next_invoice_number) || !Number.isInteger(input.next_invoice_number)) {
     return { error: 'Next invoice number must be a whole number.' }
+  }
+
+  if (
+    !Number.isInteger(input.tax_setaside_bp) ||
+    input.tax_setaside_bp < 0 || input.tax_setaside_bp > 10000
+  ) {
+    return { error: 'Tax set-aside must be between 0% and 100%.' }
   }
 
   // Lowering this would hand out an invoice number that already exists, and
@@ -63,6 +73,7 @@ export async function saveSettings(input: SettingsInput): Promise<Fail | { ok: t
     ach_details: input.ach_details.trim() || null,
     default_terms_days: input.default_terms_days,
     next_invoice_number: input.next_invoice_number,
+    tax_setaside_bp: input.tax_setaside_bp,
   }
 
   // owner_id, not `id = 1`. This is a WRITE: keyed on the singleton row it

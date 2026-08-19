@@ -17,6 +17,7 @@ export type EditorSettings = {
   ach_details: string | null
   default_terms_days: number
   next_invoice_number: number
+  tax_setaside_bp: number
 }
 
 export default function SettingsEditor({ initial }: { initial: EditorSettings }) {
@@ -34,6 +35,9 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
 
   const [nextInvoiceNumber, setNextInvoiceNumber] = useState(String(initial.next_invoice_number))
   const [termsDays, setTermsDays] = useState(String(initial.default_terms_days))
+  const [taxSetasidePct, setTaxSetasidePct] = useState(
+    initial.tax_setaside_bp === 0 ? '' : String(initial.tax_setaside_bp / 100),
+  )
 
   const [remitTo, setRemitTo] = useState(initial.remit_to ?? '')
   const [achDetails, setAchDetails] = useState(initial.ach_details ?? '')
@@ -53,6 +57,7 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
         ach_details: achDetails,
         default_terms_days: Number(termsDays),
         next_invoice_number: Number(nextInvoiceNumber),
+        tax_setaside_bp: taxSetasidePct.trim() === '' ? 0 : Math.round(Number(taxSetasidePct) * 100),
       })
       if ('error' in result) { setError(result.error); return }
       setSaved(true)
@@ -119,6 +124,17 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
           <label className="eyebrow block mb-2" htmlFor="terms">Default terms (days)</label>
           <input id="terms" type="number" min={0} className={FIELD_FULL} value={termsDays}
                  onChange={(e) => setTermsDays(e.target.value)} />
+        </div>
+
+        <div>
+          <label className="eyebrow block mb-2" htmlFor="tax-setaside">Tax set-aside (%)</label>
+          <input id="tax-setaside" type="number" min={0} max={100} step="0.25"
+                 className={FIELD_FULL} value={taxSetasidePct} placeholder="e.g. 30"
+                 onChange={(e) => setTaxSetasidePct(e.target.value)} />
+          <p className="text-xs text-muted mt-1.5">
+            Used only to estimate per-show take-home. Ask your CPA for the number;
+            leave blank to skip the estimate.
+          </p>
         </div>
       </div>
 

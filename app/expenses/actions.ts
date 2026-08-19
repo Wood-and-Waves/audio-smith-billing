@@ -37,6 +37,8 @@ export async function addExpense(input: {
   receiptPath: string | null
   receiptOriginal: string | null
   note: string
+  /** Omitted = true; my-cost is an explicit opt-in. */
+  billable?: boolean
 }): Promise<Fail | { ok: true; id: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -80,6 +82,7 @@ export async function addExpense(input: {
     receipt_path: input.receiptPath,
     receipt_original: input.receiptOriginal,
     note: input.note.trim() || null,
+    billable: input.billable ?? true,
   }).select('id').single()
   if (error) return { error: error.message }
 
@@ -130,6 +133,39 @@ export async function deleteExpense(expenseId: string): Promise<Fail | { ok: tru
 
   revalidatePath(`/shows/${row.show_id}`)
   return warning ? { ok: true, warning } : { ok: true }
+}
+
+/**
+ * Flips an expense between billable and my-cost. Exists because expenses are
+ * otherwise add/delete-only, and fixing a mis-flag by delete would force
+ * re-uploading the receipt. Same lock rule as deleteExpense: a billed show's
+ * expenses are frozen.
+ */
+export async function setExpenseBillable(
+  expenseId: string, billable: boolean,
+): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const { data: row, error: readErr } = await supabase
+    .from('expenses')
+    .select('show_id, shows(status)')
+    .eq('id', expenseId)
+    .maybeSingle()
+  if (readErr) return { error: readErr.message }
+  if (!row) return { error: 'That expense no longer exists.' }
+  const status = (row as unknown as { shows: { status: string } | null }).shows?.status
+  if (status === 'billed') {
+    return { error: 'This show is billed. Unlink it before editing.' }
+  }
+
+  const { error } = await supabase
+    .from('expenses').update({ billable }).eq('id', expenseId)
+  if (error) return { error: error.message }
+
+  revalidatePath(`/shows/${(row as unknown as { show_id: string }).show_id}`)
+  return { ok: true }
 }
 
 /**
