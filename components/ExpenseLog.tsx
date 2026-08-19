@@ -1418,8 +1418,12 @@ export default function ExpenseLog({
           </div>
         </div>
       ) : (
-        <div className="grid gap-2 sm:grid-cols-[8rem_1fr_7rem_9rem_auto] items-center mb-3">
+        <div className="grid gap-2 grid-cols-2 sm:grid-cols-[8rem_1fr_7rem_9rem_auto] items-center mb-3">
+          {/* Phone: a 2-col grid — category full width, then Where|Amount and
+              Date|Add paired — instead of five stacked full-width fields. The
+              sm layout is the original single row. */}
           <Select
+            className="col-span-2 sm:col-span-1"
             ariaLabel="Category"
             value={category}
             disabled={locked || pending}
@@ -1455,7 +1459,7 @@ export default function ExpenseLog({
               flag are both metadata of the same entry, and a lone checkbox row
               between the fields and the picker read as clutter. flex-wrap lets
               the flag drop under the picker on a narrow phone. */}
-          <div className="sm:col-span-5 flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+          <div className="col-span-2 sm:col-span-5 flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
           <label className="text-xs text-muted">
             {/* capture="environment" opens the camera directly on a phone, which
                 is where a receipt actually gets photographed. `multiple` is what
@@ -1467,11 +1471,12 @@ export default function ExpenseLog({
                               file:border file:border-line file:bg-transparent file:text-muted
                               file:text-xs file:font-semibold file:uppercase file:tracking-wider
                               disabled:opacity-40" />
+            {/* Just the format. The receipt REQUIREMENT is enforced by the
+                red row hint and the billing gate at the moment it matters —
+                repeating it here was one instruction too many (Dan). */}
             {capture
               ? ` ${capture.file.name}${ocrNote ? ` — ${ocrNote}` : ''}`
-              : (ocrNote ?? (myCost
-                  ? ' Photo or PDF.'
-                  : ' Photo or PDF. A receipt is required before this show can be billed.'))}
+              : (ocrNote ?? ' Photo or PDF.')}
           </label>
           <label className="flex items-center gap-2 text-xs text-muted">
             <input
