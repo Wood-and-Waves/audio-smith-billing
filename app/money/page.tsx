@@ -222,6 +222,12 @@ export default async function MoneyPage({
           <>
             <LedgerImportReconcile accountId={account.id} />
             <Link
+              href="/money/budget"
+              className="text-xs text-muted hover:text-ink transition-colors"
+            >
+              Budget
+            </Link>
+            <Link
               href="/money/reports"
               className="text-xs text-muted hover:text-ink transition-colors"
             >
