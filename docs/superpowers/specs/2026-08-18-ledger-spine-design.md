@@ -81,18 +81,24 @@ covers re-import safety without it).
 
 ## Server actions — `app/money/actions.ts` (owner-scoped like the rest of the app)
 
-`createLedgerAccount`, `updateLedgerAccount` (rename/close),
+`createLedgerAccount` (rename/close deferred until a UI needs it — the
+`updateLedgerAccount` action was removed as dead code in hardening),
 `ensureDefaultCategories` (seeds DEFAULT_CATEGORIES once, when the owner has
-none), `saveCategory` (add/rename/hide), `addLedgerTransaction`,
+none), `saveCategory` (add/rename/hide/deductible/equipment),
+`addLedgerTransaction`,
 `updateLedgerTransaction`, `deleteLedgerTransaction` (both **refuse
 `cleared='reconciled'` rows** — reconciliation locks history),
 `setTransactionCleared`, `importOfx(accountId, fileText)` (server-side parse +
 match inside the action; returns `{ imported, matched, duplicates, skipped,
 statementBalanceCents, autoCategorized }`),
-`reconcileAccount(accountId, statementBalanceCents, reconciledOn)` — compares
-the cleared balance to the statement; when they differ the UI offers a
-**balance-adjustment transaction** (payee "Balance Adjustment", uncategorized);
-on success everything cleared → reconciled and a reconciliation row is written.
+`reconcileAccount(accountId, statementBalanceCents, reconciledOn,
+createAdjustment)` — compares the cleared balance (rows dated ≤ reconciledOn
+only) to the statement; a mismatch returns a structured `{ mismatch }` variant
+and the UI offers a **balance-adjustment transaction** (payee "Balance
+Adjustment", uncategorized, left merely cleared so a mistake stays correctable);
+the apply itself is ONE atomic call to the `reconcile_ledger_account` RPC
+(migration 0029): lock cleared→reconciled, adjustment, reconciliation record,
+account stamp.
 
 ## UI
 

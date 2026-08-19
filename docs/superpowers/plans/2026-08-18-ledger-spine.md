@@ -447,4 +447,4 @@ All gates green (`npm test` grows by the four new suites; tsc/build clean from c
 
 ## Blast radius
 
-All new tables/pages; the only existing file touched is AppShell (one nav item). Nothing client-facing. DEV database only until the ship gate (migrate prod 0027 first, then deploy).
+All new tables/pages; the only existing file touched is AppShell (one nav item). Nothing client-facing. DEV database only until the ship gate (migrate prod 0027 + 0028 + 0029, in order, first — then deploy).
