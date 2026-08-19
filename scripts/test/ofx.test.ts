@@ -75,6 +75,16 @@ test('not an OFX file throws the friendly error', () => {
   assert.throws(() => parseOfx('Date,Payee,Amount\n...'), /Not an OFX file\./)
 })
 
+test('a missing DTPOSTED throws, naming the date', () => {
+  const noDate = SGML.replace('<DTPOSTED>20260810120000[-5:CDT]\n', '')
+  assert.throws(() => parseOfx(noDate), /malformed transaction.*date/i)
+})
+
+test('an unparsable TRNAMT throws, naming the amount', () => {
+  const badAmount = SGML.replace('<TRNAMT>-42.53', '<TRNAMT>N/A')
+  assert.throws(() => parseOfx(badAmount), /malformed transaction.*amount/i)
+})
+
 test('the ledger balance comes from LEDGERBAL, never AVAILBAL', () => {
   const both = SGML.replace(
     '<LEDGERBAL><BALAMT>1234.56<DTASOF>20260812</LEDGERBAL>',

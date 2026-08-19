@@ -56,12 +56,34 @@ export function parseOfx(text: string): ParsedOfx {
   let block: RegExpExecArray | null
   while ((block = stmttrnBlocks.exec(text))) {
     const body = block[1]
-    const posted = tagValue(body, 'DTPOSTED') ?? ''
-    const day = posted.slice(0, 8) // DTPOSTED may carry a time and TZ offset after the date
+
+    const postedRaw = tagValue(body, 'DTPOSTED')
+    const day = (postedRaw ?? '').slice(0, 8) // DTPOSTED may carry a time and TZ offset after the date
+    // importOfx parses the whole file before writing a single row, so a
+    // throw here is a clean Fail with no partial import — much better than
+    // letting a missing/garbled DTPOSTED become the date "--" and either
+    // crash on write or land silently wrong in the ledger.
+    if (!/^\d{8}$/.test(day)) {
+      throw new Error(`This OFX file has a malformed transaction (invalid date "${postedRaw ?? ''}").`)
+    }
+
+    const amountRaw = tagValue(body, 'TRNAMT')
+    const amountCents = toCents(amountRaw)
+    // toCents treats an ABSENT TRNAMT as a real $0.00 (tagValue -> null ->
+    // parseFloat('0')), which is exactly right — some banks send $0 auth-hold
+    // reversals with no amount tag at all, and ledgerImport already has a
+    // dedicated skip path for that. A PRESENT but unparsable one (e.g. "N/A")
+    // is a different problem — parseFloat silently reads that as NaN too — so
+    // it's checked for finiteness explicitly rather than let fall through to
+    // the same $0.
+    if (!Number.isFinite(amountCents)) {
+      throw new Error(`This OFX file has a malformed transaction (invalid amount "${amountRaw ?? ''}").`)
+    }
+
     transactions.push({
       fitid: tagValue(body, 'FITID'),
       date: `${day.slice(0, 4)}-${day.slice(4, 6)}-${day.slice(6, 8)}`,
-      amountCents: toCents(tagValue(body, 'TRNAMT')),
+      amountCents,
       name: tagValue(body, 'NAME') ?? '',
       memo: tagValue(body, 'MEMO'),
     })

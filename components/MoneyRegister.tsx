@@ -7,8 +7,8 @@ import { formatDateShort, todayInChicago } from '@/lib/dates'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select from '@/components/ui/Select'
 import {
-  createLedgerAccount, addLedgerTransaction, updateLedgerTransaction,
-  deleteLedgerTransaction, setTransactionCleared,
+  createLedgerAccount, addLedgerTransaction,
+  deleteLedgerTransaction, setTransactionCleared, setTransactionCategory,
 } from '@/app/money/actions'
 
 export type LedgerKind = 'income' | 'expense' | 'owner_pay'
@@ -251,21 +251,13 @@ export default function MoneyRegister({
     })
   }
 
-  /** The inline picker on an uncategorized row — saves the row's existing
-   *  fields untouched, plus the category just picked. */
+  /** The inline picker on an uncategorized row — setTransactionCategory
+   *  touches only category_id, so it works even on a reconciled row (see
+   *  the action's own doc comment for why that's safe). */
   function setRowCategory(row: LedgerTxnRow, newCategoryId: string) {
     setError(null)
     start(async () => {
-      const result = await updateLedgerTransaction({
-        id: row.id,
-        date: row.date,
-        amountCents: row.amount_cents,
-        kind: row.kind,
-        categoryId: newCategoryId || null,
-        showId: row.show_id,
-        payee: row.payee,
-        memo: row.memo ?? '',
-      })
+      const result = await setTransactionCategory(row.id, newCategoryId || null)
       if ('error' in result) { setError(result.error); return }
       router.refresh()
     })
@@ -364,13 +356,13 @@ export default function MoneyRegister({
         <ul className="border-t border-line">
           {transactions.map((t) => {
             const reconciled = t.cleared === 'reconciled'
-            // Reconciled excluded even though updateLedgerTransaction would
-            // refuse it anyway ("Reconciled transactions are locked.") — an
-            // uncategorized row that got reconciled before anyone got to it
-            // (an import, say) should read as locked, not offer a picker
-            // that can only ever come back with a server error.
+            // Shown even when reconciled: setTransactionCategory has no
+            // reconciled lock (a category assignment moves no money — see
+            // its own doc comment), unlike updateLedgerTransaction, so an
+            // uncategorized row that got swept into a reconciliation before
+            // anyone got to it (an import, say) still has a working picker
+            // instead of sitting stuck in the "uncategorized" count forever.
             const inlineCategory = t.category_id === null && (t.kind === 'income' || t.kind === 'expense')
-              && !reconciled
             return (
               <li key={t.id} className="border-b border-line py-4 pl-3 -ml-3 pr-3">
                 <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">

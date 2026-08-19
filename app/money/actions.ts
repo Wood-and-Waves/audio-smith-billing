@@ -98,9 +98,23 @@ export async function ensureDefaultCategories(): Promise<Fail | { ok: true; seed
       is_equipment: c.is_equipment,
     })),
   )
-  if (error) return { error: error.message }
+  if (error) {
+    // Migration 0028's unique index (owner_id, name) is the backstop for the
+    // race this function's count-then-insert can't close on its own: two
+    // first loads (a Next prefetch racing the real navigation is enough) can
+    // both read zero categories and both attempt to seed. The second
+    // writer's bulk insert now fails on that index instead of doubling every
+    // category — that's this call losing the race, not a real failure, so it
+    // reports the same "already seeded" outcome as the count check above.
+    if (error.code === '23505') return { ok: true, seeded: 0 }
+    return { error: error.message }
+  }
 
-  revalidatePath('/money')
+  // No revalidatePath('/money') here — this runs during app/money/page.tsx's
+  // own render (Next 16 throws if a revalidation runs mid-render, since it's
+  // meant for the aftermath of a user-triggered Server Action, not a page's
+  // own data loading), and that same render is about to read the categories
+  // it just seeded fresh anyway, so there's nothing stale left to fix.
   return { ok: true, seeded: DEFAULT_CATEGORIES.length }
 }
 
@@ -404,6 +418,49 @@ export async function setTransactionCleared(
   return { ok: true }
 }
 
+/**
+ * Sets (or clears) one transaction's category. Deliberately NOT gated on
+ * `cleared === 'reconciled'` the way updateLedgerTransaction is — a category
+ * assignment moves no money and touches nothing reconcileAccount's cleared-
+ * balance math depends on, so there is no reason to make an uncategorized
+ * import sit locked forever just because it was swept into a reconciliation
+ * before anyone got to it. Amount, date, kind, and deletion stay locked
+ * through updateLedgerTransaction/deleteLedgerTransaction; only this one
+ * field is exempt.
+ */
+export async function setTransactionCategory(
+  id: string,
+  categoryId: string | null,
+): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const { data: existing } = await supabase
+    .from('ledger_transactions').select('kind').eq('id', id).maybeSingle()
+  if (!existing) return { error: 'That transaction no longer exists.' }
+  // Same rule updateLedgerTransaction's validateTxnShape enforces on write
+  // (lt_nocat_for_owner_or_transfer, migration 0027): paying yourself is not
+  // a deduction and a transfer moves money between your own accounts, so
+  // neither kind ever carries a category.
+  if (existing.kind === 'owner_pay' || existing.kind === 'transfer') {
+    return { error: 'Owner pay and transfers do not use a category.' }
+  }
+
+  if (categoryId !== null && !(await belongsToCaller(supabase, 'ledger_categories', categoryId))) {
+    return { error: 'That category does not belong to you.' }
+  }
+
+  const { error } = await supabase
+    .from('ledger_transactions')
+    .update({ category_id: categoryId })
+    .eq('id', id)
+  if (error) return { error: error.message }
+
+  revalidatePath('/money')
+  return { ok: true }
+}
+
 // A real statement is a few hundred KB at most; this is a fat-finger/DoS
 // guard on the string a browser hands the server action body, not a limit
 // anyone should ever brush up against.
@@ -464,7 +521,14 @@ export async function importOfx(
       .eq('id', m.existingId)
       .is('import_id', null)
       .select('id')
-    if (error) return { error: error.message }
+    if (error) {
+      // Same race as the insert loop below: a concurrent writer claimed this
+      // import_id on the (owner_id, account_id, import_id) index between
+      // planImport's read and this write. Count it as a duplicate instead of
+      // failing the whole batch.
+      if (error.code === '23505') { duplicates += 1; continue }
+      return { error: error.message }
+    }
     if (updated && updated.length > 0) matched += 1
     else duplicates += 1
   }

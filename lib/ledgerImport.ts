@@ -43,18 +43,19 @@ function daysApart(a: string, b: string): number {
 }
 
 /**
- * Seed the GEN occurrence counter from existing import ids, so a second
- * import of a statement that overlaps the first one continues numbering
- * instead of colliding with GEN ids the first import already claimed.
- *
- * Seeded from the MAX occurrence number seen per key, not the count of rows
- * — a deleted row leaves a gap (":1" and ":3" survive, ":2" is gone), and
- * count-based numbering would propose ":3" again, collide with the survivor,
- * and get read back as a duplicate, silently dropping a real transaction.
- * Max-based numbering always proposes one past the highest id ever issued.
+ * Seeds two per-key facts from existing GEN import ids: `count` (how many
+ * rows of that key already exist) and `maxN` (the highest suffix ever
+ * issued for it). planImport compares each batch row's OCCURRENCE POSITION
+ * within the key against `count` to decide duplicate vs. new — see the doc
+ * comment there — and anchors a genuinely-new occurrence's id at `maxN`, so
+ * it can never collide with a surviving higher suffix even after some id in
+ * between was deleted (":1" and ":3" survive, ":2" is gone: `count` is 2,
+ * `maxN` is 3, so the next new occurrence is ":4", not the ":3" a
+ * count-only scheme would propose and collide with the survivor).
  */
-function seedGenCounters(existing: ExistingTxn[]): Map<string, number> {
-  const counters = new Map<string, number>()
+function seedGenCounters(existing: ExistingTxn[]): { count: Map<string, number>; maxN: Map<string, number> } {
+  const count = new Map<string, number>()
+  const maxN = new Map<string, number>()
   for (const e of existing) {
     if (!e.import_id || !e.import_id.startsWith('GEN:')) continue
     const rest = e.import_id.slice('GEN:'.length) // "<amountCents>:<date>:<n>"
@@ -62,23 +63,10 @@ function seedGenCounters(existing: ExistingTxn[]): Map<string, number> {
     const key = rest.slice(0, sep)
     const n = Number(rest.slice(sep + 1))
     if (!Number.isFinite(n)) continue
-    counters.set(key, Math.max(counters.get(key) ?? 0, n))
+    count.set(key, (count.get(key) ?? 0) + 1)
+    maxN.set(key, Math.max(maxN.get(key) ?? 0, n))
   }
-  return counters
-}
-
-/**
- * A bank FITID is the real identity when the bank sends one. When it doesn't
- * (some banks omit it on older exports), fall back to a synthetic id built
- * from amount + date + an occurrence count, so two identical transactions on
- * the same day still get distinct, stable ids across re-imports.
- */
-function importIdFor(row: ParsedOfxTxn, genCounters: Map<string, number>): string {
-  if (row.fitid !== null && row.fitid.trim() !== '') return `OFX:${row.fitid}`
-  const key = `${row.amountCents}:${row.date}`
-  const n = (genCounters.get(key) ?? 0) + 1
-  genCounters.set(key, n)
-  return `GEN:${key}:${n}`
+  return { count, maxN }
 }
 
 /**
@@ -114,7 +102,17 @@ export function planImport(rows: ParsedOfxTxn[], existing: ExistingTxn[]): Impor
   const existingImportIds = new Set(
     existing.map((e) => e.import_id).filter((id): id is string => id !== null),
   )
-  const genCounters = seedGenCounters(existing)
+  const { count: existingGenCount, maxN: genMaxN } = seedGenCounters(existing)
+  // Position within the current batch, per (amountCents,date) key — counts
+  // only GEN-eligible (fitid-less) rows of that key, in the order they're
+  // walked below.
+  const genBatchPosition = new Map<string, number>()
+  // OFX ids this batch has already handed out (to a match or an insert), so
+  // a second row in the SAME FILE proposing the same FITID reads as a
+  // duplicate instead of double-claiming a manual row or racing itself on
+  // insert (I3) — existingImportIds alone only catches ids from PAST
+  // imports, not siblings within this one.
+  const issuedThisBatch = new Set<string>()
   const claimed = new Set<string>()
 
   const duplicates: ParsedOfxTxn[] = []
@@ -126,27 +124,63 @@ export function planImport(rows: ParsedOfxTxn[], existing: ExistingTxn[]): Impor
     // A $0.00 line (e.g. an auth-hold reversal) is neither income nor
     // expense — there's no sign to classify it by, and the DB's
     // expense ⇒ amount < 0 check would reject it outright. Set it aside
-    // before it ever claims a GEN id or gets matched against a manual row.
+    // before it ever claims an id or gets matched against a manual row.
     if (row.amountCents === 0) {
       skipped.push(row)
       continue
     }
 
-    const importId = importIdFor(row, genCounters)
+    let importId: string
 
-    if (existingImportIds.has(importId)) {
-      duplicates.push(row)
-      continue
+    if (row.fitid !== null && row.fitid.trim() !== '') {
+      importId = `OFX:${row.fitid}`
+      if (existingImportIds.has(importId) || issuedThisBatch.has(importId)) {
+        duplicates.push(row)
+        continue
+      }
+    } else {
+      // GEN (fitid-less bank export): bank statements overlap on
+      // re-download — the file Dan re-imports typically repeats rows the
+      // ledger already has, in the same order, before it gets to anything
+      // new. So rather than trust a max-based id to always be unseen (which
+      // is exactly what let a re-import duplicate EVERY row: a fresh
+      // maxN+1, maxN+2, … never collides with what's already there),
+      // classify by OCCURRENCE POSITION: the Nth GEN row of this key in the
+      // batch lines up with the Nth GEN row of this key already in the
+      // ledger. Positions within `existingCount` are re-sends → duplicate;
+      // only positions beyond it are genuinely new. New ids still count up
+      // from `maxN` (not from `existingCount`), so a survivor from a
+      // deleted row's gap is never collided with.
+      //
+      // The unavoidable ambiguity this can't resolve — a NON-overlapping
+      // partial file whose same-amount-same-day row is genuinely new, not a
+      // re-send — is resolved toward "duplicate": silently double-booking
+      // real money is worse than a rare skipped insert Dan can key in by
+      // hand.
+      const key = `${row.amountCents}:${row.date}`
+      const position = (genBatchPosition.get(key) ?? 0) + 1
+      genBatchPosition.set(key, position)
+
+      const existingCount = existingGenCount.get(key) ?? 0
+      if (position <= existingCount) {
+        duplicates.push(row)
+        continue
+      }
+
+      const maxN = genMaxN.get(key) ?? 0
+      importId = `GEN:${key}:${maxN + (position - existingCount)}`
     }
 
     const match = findMatch(row, existing, claimed)
     if (match) {
       claimed.add(match.id)
       matches.push({ row, importId, existingId: match.id })
+      issuedThisBatch.add(importId)
       continue
     }
 
     inserts.push({ row, importId, kind: row.amountCents > 0 ? 'income' : 'expense' })
+    issuedThisBatch.add(importId)
   }
 
   return { duplicates, matches, inserts, skipped }
