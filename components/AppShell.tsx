@@ -8,6 +8,7 @@ import MobileNav from '@/components/MobileNav'
 const NAV = [
   { href: '/invoices', label: 'Invoices', key: 'invoices' },
   { href: '/shows', label: 'Shows', key: 'shows' },
+  { href: '/money', label: 'Money', key: 'money' },
   { href: '/clients', label: 'Clients', key: 'clients' },
   { href: '/settings', label: 'Settings', key: 'settings' },
 ] as const
