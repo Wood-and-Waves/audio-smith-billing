@@ -206,7 +206,8 @@ export default async function MoneyReportsPage({
       )}
 
       <section className="mb-10">
-        <h2 className="eyebrow mb-4">This year</h2>
+        {/* Honest label: paging back to 2025 must not read "This year". */}
+        <h2 className="eyebrow mb-4">{year === currentYear ? 'This year' : `${year} totals`}</h2>
         <div className="border-t border-line">
           <div className="flex items-center justify-between py-3 border-b border-line">
             <span className="text-muted">Income</span>
