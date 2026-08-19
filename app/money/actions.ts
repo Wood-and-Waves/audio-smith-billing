@@ -504,13 +504,20 @@ export async function importOfx(
  * stray penny. Either way, every 'cleared' row — including the adjustment,
  * once it exists — is then locked to 'reconciled' together, because they
  * were all just confirmed against the same statement.
+ *
+ * Three-way return, not just Fail | ok: a no-adjustment mismatch is a normal,
+ * expected outcome (the caller is meant to offer booking an adjustment), not
+ * an error — so it gets its own `{ mismatch: true, ... }` variant instead of
+ * being squeezed into `Fail` and told apart from a real failure by pattern-
+ * matching the message text. LedgerReconcile narrows on `'mismatch' in
+ * result`; a genuine `Fail` never carries that key.
  */
 export async function reconcileAccount(input: {
   accountId: string
   statementBalanceCents: number
   reconciledOn: string
   createAdjustment: boolean
-}): Promise<Fail | { ok: true; adjustedCents: number }> {
+}): Promise<Fail | { ok: true; adjustedCents: number } | { mismatch: true; diffCents: number; message: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not signed in.' }
@@ -534,8 +541,16 @@ export async function reconcileAccount(input: {
   const diff = input.statementBalanceCents - cleared
 
   if (diff !== 0 && !input.createAdjustment) {
+    // A distinct `mismatch` variant, not a Fail: the caller (LedgerReconcile)
+    // needs to tell "the numbers don't match yet" apart from every other way
+    // this action can fail, so it can offer the adjustment button only for
+    // this one case. Encoding that in the return type means a reworded
+    // message can never silently break that branch the way string-matching
+    // on `error` did before.
     return {
-      error: `The register is off from the statement by ${formatUSD(diff)}. Fix the mismatched ` +
+      mismatch: true,
+      diffCents: diff,
+      message: `The register is off from the statement by ${formatUSD(diff)}. Fix the mismatched ` +
         'transactions, or turn on "create adjustment" to book the difference and close out.',
     }
   }

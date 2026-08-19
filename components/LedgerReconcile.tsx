@@ -7,20 +7,16 @@ import { parseUSD } from '@/lib/money'
 import { FIELD_FULL } from '@/components/ui/field'
 import { reconcileAccount } from '@/app/money/actions'
 
-// reconcileAccount's no-adjustment mismatch path (app/money/actions.ts) always
-// phrases its Fail the same way: "...is off from the statement by $X.XX...".
-// Matching on that phrase — rather than the action returning a new, more
-// structured shape — is what lets this panel tell "the statement doesn't
-// match" apart from every other reason the call can fail (a blank balance, a
-// bad date, an account that isn't the caller's).
-const MISMATCH_PHRASE = 'is off from the statement by'
-
 /**
  * Collapsed "Reconcile" text-button that opens into a small panel, same
  * pattern as SendReminderButton: statement balance + date, submitted with
- * createAdjustment: false first. A mismatch comes back as an ordinary error
- * message; recognizing that specific one adds a second button that resubmits
- * with createAdjustment: true to book the difference and close out anyway.
+ * createAdjustment: false first. reconcileAccount's return is a discriminated
+ * union rather than Fail-or-ok: a no-adjustment mismatch comes back as its
+ * own `{ mismatch: true, ... }` variant (narrowed with `'mismatch' in
+ * result`, not by matching words in an error string), which is what lets
+ * this panel offer a second button that resubmits with createAdjustment:
+ * true — without that button ever appearing for a real failure, or failing
+ * to appear because someone reworded the message.
  */
 export default function LedgerReconcile({ accountId }: { accountId: string }) {
   const router = useRouter()
@@ -42,6 +38,13 @@ export default function LedgerReconcile({ accountId }: { accountId: string }) {
 
   function submit(createAdjustment: boolean) {
     setError(null)
+    // NOT parseUSD(balance) directly: parseUSD('') is 0, not null (see
+    // lib/money.ts), so an untouched field would silently submit
+    // statementBalanceCents: 0 — and a real cleared balance that isn't
+    // already zero would then read as a mismatch against a $0 statement,
+    // offering to book a phantom Balance Adjustment nobody asked for. Check
+    // for blank before parsing so a genuine typed "$0.00" still gets through.
+    if (!balance.trim()) { setError('Enter the statement balance.'); return }
     const cents = parseUSD(balance)
     if (cents === null) { setError('Enter the statement balance.'); return }
     if (!reconciledOn) { setError('Pick a reconciliation date.'); return }
@@ -52,7 +55,12 @@ export default function LedgerReconcile({ accountId }: { accountId: string }) {
       })
       if ('error' in result) {
         setError(result.error)
-        setMismatch(result.error.includes(MISMATCH_PHRASE))
+        setMismatch(false)
+        return
+      }
+      if ('mismatch' in result) {
+        setError(result.message)
+        setMismatch(true)
         return
       }
       setDone(true)
