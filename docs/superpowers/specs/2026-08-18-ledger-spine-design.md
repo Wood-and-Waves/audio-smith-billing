@@ -60,8 +60,11 @@ covers re-import safety without it).
   Fully editable after seeding; Dan's CPA list can reshape it later.
 - **lib/ofx.ts** — OFX/QFX parser for both OFX 1.x SGML (unclosed tags) and
    2.x XML: extracts `STMTTRN` rows → `{ fitid, date (YYYY-MM-DD from DTPOSTED),
-  amountCents (TRNAMT × 100, rounded), name (NAME or PAYEE), memo }`, plus the
-  statement's `LEDGERBAL` when present. Tolerant of banks' quirks; tested
+  amountCents (TRNAMT × 100, rounded), name, memo }`, plus the statement's
+  `LEDGERBAL` when present. `name` is the first `NAME` leaf found anywhere in
+  the `STMTTRN` block, including one nested inside a `PAYEE` aggregate — not
+  a `NAME`-or-`PAYEE` alternation; a bank that sends a bare `PAYEE` leaf with
+  no nested `NAME` yields an empty name. Tolerant of banks' quirks; tested
   against representative fixtures.
 - **lib/ledgerImport.ts** — the YNAB-style matcher. For each parsed row, with
   the account's existing transactions in hand: `duplicate` (import_id already
@@ -84,7 +87,8 @@ none), `saveCategory` (add/rename/hide), `addLedgerTransaction`,
 `updateLedgerTransaction`, `deleteLedgerTransaction` (both **refuse
 `cleared='reconciled'` rows** — reconciliation locks history),
 `setTransactionCleared`, `importOfx(accountId, fileText)` (server-side parse +
-match inside the action; returns `{ imported, matched, duplicates }` counts),
+match inside the action; returns `{ imported, matched, duplicates, skipped,
+statementBalanceCents, autoCategorized }`),
 `reconcileAccount(accountId, statementBalanceCents, reconciledOn)` — compares
 the cleared balance to the statement; when they differ the UI offers a
 **balance-adjustment transaction** (payee "Balance Adjustment", uncategorized);
@@ -129,4 +133,4 @@ fixture OFX file).
 
 ## Ship gate (unchanged rule)
 
-Dev only until Dan says ship: then migrate prod 0027 BEFORE deploying code.
+Dev only until Dan says ship: then migrate prod 0027 + 0028 + 0029, in order, BEFORE deploying code.

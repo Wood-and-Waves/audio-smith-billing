@@ -212,7 +212,7 @@ export default function MoneyRegister({
   // confirmation after that sweep runs. A plain timeout (not a transition),
   // same idiom as DeleteShowButton's own auto-clearing state.
   const [applyPrompt, setApplyPrompt] = useState<
-    { rowId: string; payee: string; categoryId: string; count: number } | null
+    { rowId: string; payee: string; categoryId: string; count: number; atLeast: boolean } | null
   >(null)
   const [appliedNotice, setAppliedNotice] = useState<{ rowId: string; count: number } | null>(null)
   const appliedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -224,6 +224,13 @@ export default function MoneyRegister({
   // toggleCleared, ...) for a binding it can prove is never reassigned, and a
   // function parameter doesn't qualify even though this one never is.
   const account = accountProp
+
+  // Whether the rendered `transactions` list is a strict subset of the
+  // account (or, on ?filter=uncategorized, of the uncategorized queue) —
+  // moved up here, ahead of the functions below, because setRowCategory
+  // needs it too: the apply-to-more count it shows is only ever exact when
+  // this is false.
+  const truncated = transactions.length < totalCount
 
   const categoryOptions = [
     { value: '', label: '—' },
@@ -296,9 +303,14 @@ export default function MoneyRegister({
    *  (not a clear back to blank) also checks the rows already on screen for
    *  the same normalized payee, still uncategorized income/expense — when
    *  there are any, the row grows an "apply to all" offer instead of firing
-   *  the sweep unasked, so a bulk change is never a surprise. A blank payee
-   *  is skipped entirely, mirroring the server's own refusal to sweep from
-   *  one (see setTransactionCategory's doc comment).
+   *  the sweep unasked. The count in that offer is only ever a floor: it's
+   *  drawn from the rendered `transactions` list, which is capped at 200
+   *  rows (`truncated`, above), while "Apply to all" itself sweeps every
+   *  matching row across the whole account server-side — so when the list
+   *  is capped, the offer is worded "at least N more" rather than claiming
+   *  N is the exact count. A blank payee is skipped entirely, mirroring the
+   *  server's own refusal to sweep from one (see setTransactionCategory's
+   *  doc comment).
    */
   function setRowCategory(row: LedgerTxnRow, newCategoryId: string) {
     setError(null)
@@ -314,7 +326,9 @@ export default function MoneyRegister({
           (other.kind === 'income' || other.kind === 'expense') &&
           normalizePayee(other.payee) === key
         )).length
-        if (count > 0) setApplyPrompt({ rowId: row.id, payee: row.payee, categoryId: newCategoryId, count })
+        if (count > 0) {
+          setApplyPrompt({ rowId: row.id, payee: row.payee, categoryId: newCategoryId, count, atLeast: truncated })
+        }
       }
       router.refresh()
     })
@@ -394,8 +408,6 @@ export default function MoneyRegister({
       router.refresh()
     })
   }
-
-  const truncated = transactions.length < totalCount
 
   return (
     <section>
@@ -501,7 +513,7 @@ export default function MoneyRegister({
           and Apply-to-all (applyToAll) behavior as before. */}
       {applyPrompt && (
         <p className="mb-3 text-xs text-muted border-l-2 border-line pl-4 py-1.5">
-          Applied. {applyPrompt.count} more &ldquo;{applyPrompt.payee}&rdquo; row
+          Applied. {applyPrompt.atLeast ? 'At least ' : ''}{applyPrompt.count} more &ldquo;{applyPrompt.payee}&rdquo; row
           {applyPrompt.count === 1 ? '' : 's'} —{' '}
           <button
             type="button"
@@ -536,6 +548,24 @@ export default function MoneyRegister({
             const inlineCategory = t.category_id === null && (t.kind === 'income' || t.kind === 'expense')
 
             if (editingId === t.id) {
+              // categoryOptions is filtered to unhidden categories
+              // (app/money/page.tsx's query), so a row whose category was
+              // hidden after the fact isn't in it — the Select would show
+              // "—" for editCategoryId, which reads as "no category" and
+              // invites overwriting a real, still-assigned one by accident.
+              // editCategoryId can only hold an out-of-list id in that exact
+              // case (startEdit seeds it from row.category_id and the Select
+              // below only ever hands back one of its own option values), so
+              // when that happens, append one extra option for it — labeled
+              // from t.categoryName, the denormalized join already carried
+              // on the row for exactly this "since-hidden or since-deleted"
+              // case (see RawTxnRow's own comment in app/money/page.tsx) —
+              // rather than leave the picker lying about there being nothing
+              // there.
+              const editCategoryOptions = editCategoryId && !categoryOptions.some((o) => o.value === editCategoryId)
+                ? [...categoryOptions, { value: editCategoryId, label: `${t.categoryName ?? 'Unknown'} (hidden)` }]
+                : categoryOptions
+
               // Mirrors the add row's own grid exactly (same columns, same
               // phone pairing) so editing feels like the same form, just
               // pre-filled — the only addition is the Save/Cancel pair
@@ -563,7 +593,7 @@ export default function MoneyRegister({
                       value={editCategoryId}
                       disabled={pending || editKind === 'owner_pay'}
                       onChange={setEditCategoryId}
-                      options={categoryOptions}
+                      options={editCategoryOptions}
                     />
                     <Select
                       ariaLabel="Show"
@@ -655,8 +685,14 @@ export default function MoneyRegister({
                       amount/date/kind/deletion stay locked through
                       updateLedgerTransaction/deleteLedgerTransaction, so
                       there is nothing here for a reconciled row to edit or
-                      delete. */}
-                  {!reconciled && (
+                      delete. Transfer rows hide Edit for a separate reason:
+                      nothing creates transfers yet, so the edit Select's
+                      kind options only cover income/expense/owner_pay and
+                      startEdit falls back to 'expense' for anything else —
+                      editing a transfer row would silently convert an inert
+                      row into a counted expense. Hiding the control beats
+                      that silent conversion. */}
+                  {!reconciled && t.kind !== 'transfer' && (
                     <button
                       type="button"
                       disabled={pending}
