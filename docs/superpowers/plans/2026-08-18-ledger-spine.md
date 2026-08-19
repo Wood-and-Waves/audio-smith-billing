@@ -400,12 +400,12 @@ updateLedgerTransaction(input: { id: string; date: string; amountCents: number; 
 deleteLedgerTransaction(id: string): Promise<Fail | { ok: true }>   // same reconciled refusal
 setTransactionCleared(id: string, cleared: 'uncleared' | 'cleared'): Promise<Fail | { ok: true }>
   // never sets 'reconciled' directly (reconcile does), and refuses to touch a reconciled row
-importOfx(accountId: string, fileText: string): Promise<Fail | { imported: number; matched: number; duplicates: number }>
+importOfx(accountId: string, fileText: string): Promise<Fail | { imported: number; matched: number; duplicates: number; skipped: number }>
   // guard fileText length (2MB cap); parseOfx inside try → Fail on throw; load the account's
   // transactions (id, date, amount_cents, import_id, source); planImport; apply matches
   // (update import_id + cleared='cleared' where still unlinked) then inserts
   // (source='import', cleared='cleared', category null, payee = row.name, memo = row.memo);
-  // count and return. Unique index violations on a race → count as duplicates, not errors.
+  // count and return (skipped = planImport's zero-amount rows). Unique index violations on a race → count as duplicates, not errors.
 reconcileAccount(input: { accountId: string; statementBalanceCents: number; reconciledOn: string; createAdjustment: boolean }): Promise<Fail | { ok: true; adjustedCents: number }>
   // compute clearedBalance (lib/ledgerBalance) from opening_balance + rows; diff = statement − cleared;
   // if diff !== 0 and !createAdjustment → Fail naming the formatted difference;
