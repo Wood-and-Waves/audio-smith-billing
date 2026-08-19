@@ -77,6 +77,16 @@ type BatchRow = {
   touched: Set<'category' | 'vendor' | 'amount' | 'date' | 'included'>
 }
 
+/**
+ * Short names for the category pickers. The long CATEGORY_LABEL wording
+ * ("Meal Expenses") belongs to invoice lines, where it reads right; in an
+ * 8rem dropdown trigger it truncates to "Meal Exp…", which is what made the
+ * add form look clunky. Display-only — the invoice keeps the long wording.
+ */
+const CATEGORY_SHORT: Record<ExpenseCategory, string> = {
+  meals: 'Meals', rides: 'Rides', baggage: 'Baggage', other: 'Other',
+}
+
 /** A small number in flight, not twelve — twelve createImageBitmap calls on 5MB photos exhausts a phone. */
 const BATCH_CONCURRENCY = 3
 
@@ -1334,7 +1344,7 @@ export default function ExpenseLog({
                       value={row.category}
                       disabled={locked || pending}
                       onChange={(v) => updateBatchRow(row.id, 'category', { category: v as ExpenseCategory })}
-                      options={CATEGORY_ORDER.map((c) => ({ value: c, label: CATEGORY_LABEL[c] }))}
+                      options={CATEGORY_ORDER.map((c) => ({ value: c, label: CATEGORY_SHORT[c] }))}
                     />
                     <input aria-label={`Where for receipt ${i + 1}`} className={FIELD_FULL} placeholder="Where"
                            value={row.whereSpent} disabled={locked || pending}
@@ -1417,7 +1427,7 @@ export default function ExpenseLog({
               touchedRef.current.add('category')
               setCategory(v as ExpenseCategory)
             }}
-            options={CATEGORY_ORDER.map((c) => ({ value: c, label: CATEGORY_LABEL[c] }))}
+            options={CATEGORY_ORDER.map((c) => ({ value: c, label: CATEGORY_SHORT[c] }))}
           />
           <input aria-label="Where" className={FIELD_FULL} placeholder="Where" value={whereSpent}
                  disabled={locked || pending} onChange={(e) => {
@@ -1441,18 +1451,12 @@ export default function ExpenseLog({
             {pending ? (step ?? 'Saving…') : uploading ? 'Uploading…' : '+ Add'}
           </button>
 
-          <label className="sm:col-span-5 flex items-center gap-2 text-xs text-muted">
-            <input
-              type="checkbox"
-              checked={myCost}
-              disabled={locked || pending}
-              onChange={(e) => setMyCost(e.target.checked)}
-              className="h-4 w-4 accent-accent"
-            />
-            Non-reimbursable
-          </label>
-
-          <label className="sm:col-span-5 text-xs text-muted">
+          {/* One line, not two: the receipt picker and the non-reimbursable
+              flag are both metadata of the same entry, and a lone checkbox row
+              between the fields and the picker read as clutter. flex-wrap lets
+              the flag drop under the picker on a narrow phone. */}
+          <div className="sm:col-span-5 flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+          <label className="text-xs text-muted">
             {/* capture="environment" opens the camera directly on a phone, which
                 is where a receipt actually gets photographed. `multiple` is what
                 lets a dozen receipts from a trip be picked in one go — picking
@@ -1469,6 +1473,17 @@ export default function ExpenseLog({
                   ? ' Photo or PDF.'
                   : ' Photo or PDF. A receipt is required before this show can be billed.'))}
           </label>
+          <label className="flex items-center gap-2 text-xs text-muted">
+            <input
+              type="checkbox"
+              checked={myCost}
+              disabled={locked || pending}
+              onChange={(e) => setMyCost(e.target.checked)}
+              className="h-4 w-4 accent-accent"
+            />
+            Non-reimbursable
+          </label>
+          </div>
         </div>
       )}
 
