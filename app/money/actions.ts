@@ -518,7 +518,11 @@ export async function setTransactionCategory(
   if (error) return { error: error.message }
 
   let applied = 0
-  if (applyToSamePayee && categoryId !== null) {
+  // A blank payee matches nothing, deliberately: normalizePayee('') === '',
+  // and sweeping every other payee-less row would categorize rows that share
+  // no payee at all — the same rule rememberedCategories applies when it
+  // refuses to learn from a blank payee.
+  if (applyToSamePayee && categoryId !== null && normalizePayee(existing.payee) !== '') {
     const { rows: candidates, error: candidatesError } =
       await fetchUncategorizedSamePayeeCandidates(supabase, existing.account_id, id)
     if (candidatesError) return { error: candidatesError }
