@@ -67,7 +67,13 @@ export function parseOfx(text: string): ParsedOfx {
     })
   }
 
-  const balamt = tagValue(text, 'BALAMT')
+  // BALAMT appears under both LEDGERBAL and AVAILBAL, and a statement can
+  // carry both. Reading the first BALAMT in the whole document is a coin
+  // flip on tag order; scope to the LEDGERBAL block specifically — that's
+  // the balance the ledger reconciles against, not what's currently
+  // available (which can be lower, e.g. with a pending hold).
+  const ledgerbalBlock = text.match(/<LEDGERBAL>([\s\S]*?)<\/LEDGERBAL>/i)
+  const balamt = ledgerbalBlock ? tagValue(ledgerbalBlock[1], 'BALAMT') : null
   const ledgerBalanceCents = balamt === null ? null : toCents(balamt)
 
   return { transactions, ledgerBalanceCents }

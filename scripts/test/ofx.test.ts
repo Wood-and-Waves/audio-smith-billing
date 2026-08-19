@@ -74,3 +74,18 @@ test('floating-point amounts round to exact cents', () => {
 test('not an OFX file throws the friendly error', () => {
   assert.throws(() => parseOfx('Date,Payee,Amount\n...'), /Not an OFX file\./)
 })
+
+test('the ledger balance comes from LEDGERBAL, never AVAILBAL', () => {
+  const both = SGML.replace(
+    '<LEDGERBAL><BALAMT>1234.56<DTASOF>20260812</LEDGERBAL>',
+    '<AVAILBAL><BALAMT>999.00<DTASOF>20260812</AVAILBAL>' +
+    '<LEDGERBAL><BALAMT>1234.56<DTASOF>20260812</LEDGERBAL>')
+  assert.equal(parseOfx(both).ledgerBalanceCents, 123456)
+})
+
+test('no LEDGERBAL block: the balance is null even when AVAILBAL exists', () => {
+  const availOnly = SGML.replace(
+    '<LEDGERBAL><BALAMT>1234.56<DTASOF>20260812</LEDGERBAL>',
+    '<AVAILBAL><BALAMT>999.00<DTASOF>20260812</AVAILBAL>')
+  assert.equal(parseOfx(availOnly).ledgerBalanceCents, null)
+})

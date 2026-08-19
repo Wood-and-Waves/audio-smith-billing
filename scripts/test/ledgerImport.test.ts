@@ -75,3 +75,23 @@ test('GEN occurrence counting also respects existing GEN ids', () => {
   assert.equal(plan.duplicates.length, 0)
   assert.equal(plan.inserts[0].importId, 'GEN:-4253:2026-08-10:2')
 })
+
+test('a zero-amount bank line is skipped, never inserted', () => {
+  const plan = planImport([row({ amountCents: 0, fitid: 'z' })], [])
+  assert.equal(plan.inserts.length, 0)
+  assert.equal(plan.duplicates.length, 0)
+  assert.deepEqual(plan.skipped.map((r) => r.fitid), ['z'])
+})
+
+test('GEN numbering survives gaps without dropping real transactions', () => {
+  // :2 was deleted from the ledger; count-based numbering would propose :3,
+  // collide with the survivor, and silently drop a REAL transaction as a
+  // duplicate. Max-based numbering proposes :4.
+  const plan = planImport([row({ fitid: null })], [
+    { id: 'e1', date: '2026-08-10', amount_cents: -4253, import_id: 'GEN:-4253:2026-08-10:1', source: 'import' },
+    { id: 'e3', date: '2026-08-10', amount_cents: -4253, import_id: 'GEN:-4253:2026-08-10:3', source: 'import' },
+  ])
+  assert.equal(plan.duplicates.length, 0)
+  assert.equal(plan.inserts.length, 1)
+  assert.equal(plan.inserts[0].importId, 'GEN:-4253:2026-08-10:4')
+})

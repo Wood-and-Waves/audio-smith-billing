@@ -3,7 +3,9 @@
 // is one the register has seen), or it adopts a manual row someone typed in
 // before the statement arrived (same amount, close date), or it's genuinely
 // new. Getting this wrong means either a client dinner appears twice or a
-// hand-entered expense gets orphaned next to its own bank line.
+// hand-entered expense gets orphaned next to its own bank line. A fourth,
+// narrower outcome: a $0.00 line has no sign to classify by and no money to
+// book, so it's skipped rather than forced into income or expense.
 //
 // Pure: no database, no clock beyond the plain dates it's handed. That's
 // what lets every branch be pinned by a test instead of a live import.
@@ -22,6 +24,11 @@ export type ImportPlan = {
   duplicates: ParsedOfxTxn[]
   matches: { row: ParsedOfxTxn; importId: string; existingId: string }[]
   inserts: { row: ParsedOfxTxn; importId: string; kind: 'income' | 'expense' }[]
+  // A $0.00 bank line (an auth-hold reversal, typically) carries no money to
+  // book. It can't be classified income or expense — the DB check
+  // expense ⇒ amount < 0 would reject a zero-amount expense row and abort
+  // the whole batch — so it's set aside here instead. The UI reports a count.
+  skipped: ParsedOfxTxn[]
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000
@@ -39,14 +46,23 @@ function daysApart(a: string, b: string): number {
  * Seed the GEN occurrence counter from existing import ids, so a second
  * import of a statement that overlaps the first one continues numbering
  * instead of colliding with GEN ids the first import already claimed.
+ *
+ * Seeded from the MAX occurrence number seen per key, not the count of rows
+ * — a deleted row leaves a gap (":1" and ":3" survive, ":2" is gone), and
+ * count-based numbering would propose ":3" again, collide with the survivor,
+ * and get read back as a duplicate, silently dropping a real transaction.
+ * Max-based numbering always proposes one past the highest id ever issued.
  */
 function seedGenCounters(existing: ExistingTxn[]): Map<string, number> {
   const counters = new Map<string, number>()
   for (const e of existing) {
     if (!e.import_id || !e.import_id.startsWith('GEN:')) continue
     const rest = e.import_id.slice('GEN:'.length) // "<amountCents>:<date>:<n>"
-    const key = rest.slice(0, rest.lastIndexOf(':'))
-    counters.set(key, (counters.get(key) ?? 0) + 1)
+    const sep = rest.lastIndexOf(':')
+    const key = rest.slice(0, sep)
+    const n = Number(rest.slice(sep + 1))
+    if (!Number.isFinite(n)) continue
+    counters.set(key, Math.max(counters.get(key) ?? 0, n))
   }
   return counters
 }
@@ -104,8 +120,18 @@ export function planImport(rows: ParsedOfxTxn[], existing: ExistingTxn[]): Impor
   const duplicates: ParsedOfxTxn[] = []
   const matches: ImportPlan['matches'] = []
   const inserts: ImportPlan['inserts'] = []
+  const skipped: ParsedOfxTxn[] = []
 
   for (const row of rows) {
+    // A $0.00 line (e.g. an auth-hold reversal) is neither income nor
+    // expense — there's no sign to classify it by, and the DB's
+    // expense ⇒ amount < 0 check would reject it outright. Set it aside
+    // before it ever claims a GEN id or gets matched against a manual row.
+    if (row.amountCents === 0) {
+      skipped.push(row)
+      continue
+    }
+
     const importId = importIdFor(row, genCounters)
 
     if (existingImportIds.has(importId)) {
@@ -123,5 +149,5 @@ export function planImport(rows: ParsedOfxTxn[], existing: ExistingTxn[]): Impor
     inserts.push({ row, importId, kind: row.amountCents > 0 ? 'income' : 'expense' })
   }
 
-  return { duplicates, matches, inserts }
+  return { duplicates, matches, inserts, skipped }
 }
