@@ -1,3 +1,9 @@
+> **Postscript (2026-08-18, same day):** Dan renamed the user-facing term to
+> **"Non-reimbursable"** ("my cost" was invented vocabulary; non-reimbursable is
+> how his clients actually work). The column stayed `billable`; only UI copy
+> changed. The explainer captions described below were later trimmed at Dan's
+> request ("There are too many instructions").
+
 # Per-diem "my cost" expenses — design
 
 ## Problem

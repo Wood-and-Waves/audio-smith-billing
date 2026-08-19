@@ -1,3 +1,7 @@
+> **Note (2026-08-19):** this plan is a dated build recipe. Task 2's
+> DEFAULT_CATEGORIES code was later replaced by Dan's own YNAB chart
+> (lib/ledgerCategories.ts is the truth).
+
 # Ledger Spine ("Money") Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

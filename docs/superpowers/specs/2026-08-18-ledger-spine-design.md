@@ -1,3 +1,9 @@
+> **Postscript (2026-08-19):** SHIPPED to production (migrations 0027–0030 —
+> envelopes/0030 arrived in a later wave). Two things below are superseded:
+> the DEFAULT_CATEGORIES list (the seed is now Dan's own YNAB chart — see
+> lib/ledgerCategories.ts) and the GEN import-id description (re-import is now
+> a no-op via occurrence-position classification; see lib/ledgerImport.ts).
+
 # Money — the ledger spine (bookkeeping phase 1) — design
 
 ## Problem

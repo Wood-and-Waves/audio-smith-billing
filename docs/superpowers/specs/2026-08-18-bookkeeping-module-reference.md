@@ -1,3 +1,14 @@
+> **Postscript (2026-08-19):** the module is BUILT AND LIVE in production
+> (migrations 0027–0030). Three notes where reality diverged from this design:
+> (1) a full YNAB Rule-1 **envelope layer was built** (/money/budget — immutable
+> move ledger, Available-to-allocate) even though this doc lists the
+> goals/targets engine as skipped; the tax jar is the Taxes envelope.
+> (2) File import is **OFX/QFX only** — CSV was dropped (Dan's bank offers OFX,
+> which carries real transaction ids). (3) The category seed is **Dan's own
+> YNAB chart** (Bills/Expenses/Purchases/Taxes groups), not the invented S-Corp
+> set below; income is tracked per client via the payee. Current conventions
+> live in CLAUDE.md; the deferred list in docs/BACKLOG.md.
+
 # Bookkeeping module — design reference
 
 *Promoted from the 2026-08-17/18 planning sessions. This is the durable record of
