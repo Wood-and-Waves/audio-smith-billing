@@ -142,7 +142,7 @@ function CreateAccountCard() {
 
 export default function MoneyRegister({
   account: accountProp, categories, shows, transactions, workingBalanceCents, clearedBalanceCents,
-  uncategorizedCount, totalCount,
+  uncategorizedCount, totalCount, headerActions,
 }: {
   /** Null in first-run mode — every other prop is meaningless then. */
   account: LedgerAccountSummary | null
@@ -154,6 +154,15 @@ export default function MoneyRegister({
   clearedBalanceCents: number
   uncategorizedCount: number
   totalCount: number
+  /**
+   * Import / Reconcile / "Edit categories" — built in app/money/page.tsx
+   * (which is where account.id and the categories link both make sense to
+   * assemble) and handed down as a slot, rather than imported here directly,
+   * because the page never renders this component at all in first-run mode
+   * (see CreateAccountCard above): undefined here just means "no account
+   * yet", the same thing accountProp being null already means.
+   */
+  headerActions?: React.ReactNode
 }) {
   const router = useRouter()
   const [pending, start] = useTransition()
@@ -274,8 +283,11 @@ export default function MoneyRegister({
               {uncategorizedCount} uncategorized
             </p>
           )}
-          {/* Task 6 adds Import / Reconcile here. Nothing else belongs in
-              this header until then. */}
+          {headerActions && (
+            <div className="mt-3 flex flex-wrap items-center gap-4">
+              {headerActions}
+            </div>
+          )}
         </div>
 
         <div className="text-right">
