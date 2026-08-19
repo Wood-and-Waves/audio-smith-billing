@@ -18,6 +18,13 @@ export type ExistingTxn = {
   amount_cents: number
   import_id: string | null
   source: 'manual' | 'import'
+  // Carried through so importOfx's match-application can decide whether
+  // adopting this row is allowed to write 'cleared' (its normal outcome) or
+  // must preserve 'reconciled' instead — this planner itself makes no
+  // decision based on it: matching a reconciled manual row is still correct
+  // (see the "still matchable" test), it's the WRITE after the match that
+  // must not downgrade an already-locked row.
+  cleared: 'uncleared' | 'cleared' | 'reconciled'
 }
 
 export type ImportPlan = {

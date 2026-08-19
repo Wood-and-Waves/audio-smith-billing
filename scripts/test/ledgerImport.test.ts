@@ -15,7 +15,7 @@ const row = (over: Partial<ParsedOfxTxn> = {}): ParsedOfxTxn => ({
 test('a row whose import_id already exists is a duplicate', () => {
   const plan = planImport([row()], [{
     id: 'e1', date: '2026-08-10', amount_cents: -4253,
-    import_id: 'OFX:f1', source: 'import',
+    import_id: 'OFX:f1', source: 'import', cleared: 'cleared',
   }])
   assert.equal(plan.duplicates.length, 1)
   assert.equal(plan.matches.length + plan.inserts.length, 0)
@@ -23,24 +23,40 @@ test('a row whose import_id already exists is a duplicate', () => {
 
 test('a manual twin within ±10 days is matched and adopts the import id', () => {
   const plan = planImport([row()], [{
-    id: 'm1', date: '2026-08-06', amount_cents: -4253, import_id: null, source: 'manual',
+    id: 'm1', date: '2026-08-06', amount_cents: -4253, import_id: null, source: 'manual', cleared: 'uncleared',
   }])
   assert.deepEqual(plan.matches, [{
     row: row(), importId: 'OFX:f1', existingId: 'm1',
   }])
 })
 
+// I2: matching must not care whether the manual row it's adopting is already
+// reconciled — a hand-entered expense that Dan already reconciled against a
+// PRIOR statement can still be the one a later-arriving bank line matches
+// against (the bank was just slow to post it). Refusing to match it would
+// double-book the transaction once the bank line inserts separately instead
+// of adopting it. Whether that adoption may downgrade the row's cleared
+// state back out of 'reconciled' is decided by the caller (app/money/
+// actions.ts's importOfx), not by this pure planner.
+test('a reconciled manual row is still matchable — cleared state never blocks adoption', () => {
+  const plan = planImport([row()], [{
+    id: 'm1', date: '2026-08-06', amount_cents: -4253, import_id: null, source: 'manual', cleared: 'reconciled',
+  }])
+  assert.equal(plan.matches.length, 1)
+  assert.equal(plan.matches[0].existingId, 'm1')
+})
+
 test('same amount 11 days away is NOT a match — it inserts', () => {
   const plan = planImport([row()], [{
-    id: 'm1', date: '2026-07-30', amount_cents: -4253, import_id: null, source: 'manual',
+    id: 'm1', date: '2026-07-30', amount_cents: -4253, import_id: null, source: 'manual', cleared: 'uncleared',
   }])
   assert.equal(plan.matches.length, 0)
   assert.equal(plan.inserts.length, 1)
 })
 
 test('two candidates: the closest date wins; each manual row is claimed once', () => {
-  const near = { id: 'near', date: '2026-08-09', amount_cents: -4253, import_id: null, source: 'manual' as const }
-  const far = { id: 'far', date: '2026-08-01', amount_cents: -4253, import_id: null, source: 'manual' as const }
+  const near = { id: 'near', date: '2026-08-09', amount_cents: -4253, import_id: null, source: 'manual' as const, cleared: 'uncleared' as const }
+  const far = { id: 'far', date: '2026-08-01', amount_cents: -4253, import_id: null, source: 'manual' as const, cleared: 'uncleared' as const }
   const plan = planImport([row(), row({ fitid: 'f2' })], [near, far])
   assert.equal(plan.matches.length, 2)
   assert.equal(plan.matches[0].existingId, 'near', 'first row takes the closest')
@@ -53,7 +69,7 @@ test('two rows sharing one FITID within the same file: the first matches, the se
   // it or slip through to a second insert — issuedThisBatch catches what
   // existingImportIds (past imports only) can't.
   const plan = planImport([row({ fitid: 'z9' }), row({ fitid: 'z9' })], [
-    { id: 'm1', date: '2026-08-10', amount_cents: -4253, import_id: null, source: 'manual' },
+    { id: 'm1', date: '2026-08-10', amount_cents: -4253, import_id: null, source: 'manual', cleared: 'uncleared' },
   ])
   assert.equal(plan.matches.length, 1)
   assert.equal(plan.duplicates.length, 1)
@@ -62,7 +78,7 @@ test('two rows sharing one FITID within the same file: the first matches, the se
 
 test('an import-sourced or already-linked row is never a match candidate', () => {
   const plan = planImport([row()], [
-    { id: 'i1', date: '2026-08-10', amount_cents: -4253, import_id: 'OFX:other', source: 'import' },
+    { id: 'i1', date: '2026-08-10', amount_cents: -4253, import_id: 'OFX:other', source: 'import', cleared: 'cleared' },
   ])
   assert.equal(plan.inserts.length, 1)
 })
@@ -86,7 +102,7 @@ test('GEN occurrence counting respects existing GEN ids: a genuinely new occurre
   // (duplicate, a re-send), the second is beyond what exists and is new.
   const plan = planImport([row({ fitid: null }), row({ fitid: null })], [{
     id: 'e1', date: '2026-08-10', amount_cents: -4253,
-    import_id: 'GEN:-4253:2026-08-10:1', source: 'import',
+    import_id: 'GEN:-4253:2026-08-10:1', source: 'import', cleared: 'cleared',
   }])
   assert.equal(plan.duplicates.length, 1)
   assert.equal(plan.inserts.length, 1)
@@ -108,8 +124,8 @@ test('GEN numbering survives gaps without dropping real transactions', () => {
   // genuinely new. Its id counts up from maxN, not from existingCount, so
   // it lands on :4 rather than colliding with the ":3" survivor.
   const plan = planImport([row({ fitid: null }), row({ fitid: null }), row({ fitid: null })], [
-    { id: 'e1', date: '2026-08-10', amount_cents: -4253, import_id: 'GEN:-4253:2026-08-10:1', source: 'import' },
-    { id: 'e3', date: '2026-08-10', amount_cents: -4253, import_id: 'GEN:-4253:2026-08-10:3', source: 'import' },
+    { id: 'e1', date: '2026-08-10', amount_cents: -4253, import_id: 'GEN:-4253:2026-08-10:1', source: 'import', cleared: 'cleared' },
+    { id: 'e3', date: '2026-08-10', amount_cents: -4253, import_id: 'GEN:-4253:2026-08-10:3', source: 'import', cleared: 'cleared' },
   ])
   assert.equal(plan.duplicates.length, 2)
   assert.equal(plan.inserts.length, 1)
@@ -131,7 +147,7 @@ test('re-importing the same GEN-only file is a no-op (idempotence)', () => {
   // duplicates; nothing is inserted a second time.
   const existing = first.inserts.map((i, idx) => ({
     id: `e${idx}`, date: '2026-08-10', amount_cents: -4253,
-    import_id: i.importId, source: 'import' as const,
+    import_id: i.importId, source: 'import' as const, cleared: 'cleared' as const,
   }))
   const second = planImport([row({ fitid: null }), row({ fitid: null })], existing)
   assert.equal(second.duplicates.length, 2)

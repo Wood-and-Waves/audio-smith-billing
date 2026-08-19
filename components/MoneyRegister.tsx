@@ -489,6 +489,36 @@ export default function MoneyRegister({
         </p>
       )}
 
+      {/* I4: a standalone notice above the list, keyed on the stored prompt
+          state rather than on the categorized row's own <li> — on
+          ?filter=uncategorized, router.refresh() after a successful
+          categorization removes that very row from `transactions` (it's no
+          longer uncategorized), which used to take the "apply to all" offer
+          down with it since it lived inside that row's own <li>. Living here
+          instead, it survives the row's disappearance; the payee name in the
+          copy is enough to identify what it's offering without the row still
+          being visible. Same dismiss (cleared at the top of setRowCategory)
+          and Apply-to-all (applyToAll) behavior as before. */}
+      {applyPrompt && (
+        <p className="mb-3 text-xs text-muted border-l-2 border-line pl-4 py-1.5">
+          Applied. {applyPrompt.count} more &ldquo;{applyPrompt.payee}&rdquo; row
+          {applyPrompt.count === 1 ? '' : 's'} —{' '}
+          <button
+            type="button"
+            disabled={pending}
+            onClick={applyToAll}
+            className="font-semibold text-accent hover:opacity-80 disabled:opacity-40"
+          >
+            Apply to all
+          </button>
+        </p>
+      )}
+      {appliedNotice && (
+        <p className="mb-3 text-xs text-good border-l-2 border-line pl-4 py-1.5">
+          Applied to {appliedNotice.count} more row{appliedNotice.count === 1 ? '' : 's'}.
+        </p>
+      )}
+
       {transactions.length === 0 ? (
         <p className="text-muted border-l-2 border-line pl-4 py-1">
           {uncategorizedOnly ? 'Nothing uncategorized.' : 'No transactions yet.'}
@@ -651,26 +681,6 @@ export default function MoneyRegister({
                     </button>
                   )}
                 </div>
-
-                {applyPrompt && applyPrompt.rowId === t.id && (
-                  <p className="mt-1.5 text-xs text-muted">
-                    Applied. {applyPrompt.count} more &ldquo;{applyPrompt.payee}&rdquo; row
-                    {applyPrompt.count === 1 ? '' : 's'} —{' '}
-                    <button
-                      type="button"
-                      disabled={pending}
-                      onClick={applyToAll}
-                      className="font-semibold text-accent hover:opacity-80 disabled:opacity-40"
-                    >
-                      Apply to all
-                    </button>
-                  </p>
-                )}
-                {appliedNotice && appliedNotice.rowId === t.id && (
-                  <p className="mt-1.5 text-xs text-good">
-                    Applied to {appliedNotice.count} more row{appliedNotice.count === 1 ? '' : 's'}.
-                  </p>
-                )}
               </li>
             )
           })}

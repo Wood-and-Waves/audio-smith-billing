@@ -8,7 +8,7 @@ import { DEFAULT_CATEGORIES } from '@/lib/ledgerCategories'
 import { clearedBalance, type BalanceLike } from '@/lib/ledgerBalance'
 import { parseOfx, type ParsedOfx } from '@/lib/ofx'
 import { planImport, type ExistingTxn } from '@/lib/ledgerImport'
-import { normalizePayee, rememberedCategories } from '@/lib/payeeMemory'
+import { normalizePayee, rememberedCategories, memoryKey } from '@/lib/payeeMemory'
 
 type Fail = { error: string }
 
@@ -130,6 +130,7 @@ export async function saveCategory(input: {
   grp: string
   hidden: boolean
   isEquipment: boolean
+  deductible: boolean
 }): Promise<Fail | { ok: true }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -159,14 +160,25 @@ export async function saveCategory(input: {
       sort: nextSort,
       hidden: input.hidden,
       is_equipment: input.isEquipment,
+      deductible: input.deductible,
     })
-    if (error) return { error: error.message }
+    if (error) {
+      // Migration 0028's unique index (owner_id, name) — same race
+      // ensureDefaultCategories already guards against, but here it's a
+      // genuine duplicate name Dan typed by hand, not a seeding race, so it
+      // gets a message he can read instead of Postgres's raw constraint text.
+      if (error.code === '23505') return { error: `You already have a category named "${name}".` }
+      return { error: error.message }
+    }
   } else {
     const { error } = await supabase
       .from('ledger_categories')
-      .update({ name, grp, hidden: input.hidden, is_equipment: input.isEquipment })
+      .update({ name, grp, hidden: input.hidden, is_equipment: input.isEquipment, deductible: input.deductible })
       .eq('id', input.id)
-    if (error) return { error: error.message }
+    if (error) {
+      if (error.code === '23505') return { error: `You already have a category named "${name}".` }
+      return { error: error.message }
+    }
   }
 
   revalidatePath('/money')
@@ -431,20 +443,24 @@ export async function setTransactionCleared(
 }
 
 /**
- * Every OTHER income/expense row on `accountId`, still uncategorized, id and
- * payee only — the paged fetchAllLedgerTransactions pattern narrowed to what
- * applyToSamePayee actually needs. category_id IS NULL and kind IN
- * (income, expense) run as real SQL filters (cheap, exact); cleared state is
- * deliberately NOT filtered — categorizing a reconciled row changes no
- * money and is allowed by design, same as the un-gated update below. The
- * payee match itself can't be a SQL filter: normalizePayee's case-folding
- * and whitespace-collapsing has no equivalent here, so every candidate has
- * to come back and get compared in JS.
+ * Every OTHER row on `accountId` of the SAME kind as the source row, still
+ * uncategorized, id and payee only — the paged fetchAllLedgerTransactions
+ * pattern narrowed to what applyToSamePayee actually needs. category_id IS
+ * NULL and kind = the source row's own kind run as real SQL filters (cheap,
+ * exact) — narrowed to one kind, not `IN (income, expense)`, so a sweep from
+ * an expense row can never reach into that payee's income rows (or the
+ * reverse), matching payeeMemory's own kind-aware keying (lib/payeeMemory.ts,
+ * memoryKey). Cleared state is deliberately NOT filtered — categorizing a
+ * reconciled row changes no money and is allowed by design, same as the
+ * un-gated update below. The payee match itself can't be a SQL filter:
+ * normalizePayee's case-folding and whitespace-collapsing has no equivalent
+ * here, so every candidate has to come back and get compared in JS.
  */
 async function fetchUncategorizedSamePayeeCandidates(
   supabase: Awaited<ReturnType<typeof createClient>>,
   accountId: string,
   excludeId: string,
+  kind: 'income' | 'expense',
 ): Promise<{ rows: { id: string; payee: string }[]; error: string | null }> {
   const rows: { id: string; payee: string }[] = []
   let from = 0
@@ -455,7 +471,7 @@ async function fetchUncategorizedSamePayeeCandidates(
       .eq('account_id', accountId)
       .neq('id', excludeId)
       .is('category_id', null)
-      .in('kind', ['income', 'expense'])
+      .eq('kind', kind)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
       .range(from, from + LEDGER_TXN_PAGE_SIZE - 1)
@@ -523,8 +539,13 @@ export async function setTransactionCategory(
   // no payee at all — the same rule rememberedCategories applies when it
   // refuses to learn from a blank payee.
   if (applyToSamePayee && categoryId !== null && normalizePayee(existing.payee) !== '') {
+    // existing.kind is narrowed to 'income' | 'expense' here — the
+    // owner_pay/transfer guard above already returned for either of the
+    // other two kinds. Passed through so the sweep can never cross from an
+    // expense row into that payee's income rows (or the reverse) — the same
+    // kind-aware rule payeeMemory's memoryKey enforces on the import side.
     const { rows: candidates, error: candidatesError } =
-      await fetchUncategorizedSamePayeeCandidates(supabase, existing.account_id, id)
+      await fetchUncategorizedSamePayeeCandidates(supabase, existing.account_id, id, existing.kind)
     if (candidatesError) return { error: candidatesError }
 
     const targetKey = normalizePayee(existing.payee)
@@ -602,21 +623,35 @@ export async function importOfx(
 
   // Payee memory (lib/payeeMemory): the existing rows this same fetch just
   // loaded already carry payee/category_id/kind, so the newest categorized
-  // income/expense row per payee teaches the category a brand-new insert of
-  // that payee arrives with — no separate query, just a second read of the
-  // page fetchAllLedgerTransactions already brought back.
+  // row per (kind, payee) teaches the category a brand-new insert of that
+  // payee arrives with — no separate query, just a second read of the page
+  // fetchAllLedgerTransactions already brought back.
   const remembered = rememberedCategories(existingRows)
+
+  // Looked up (rather than threaded through plan.matches, which is pure and
+  // doesn't carry it) so the match-application loop below can decide, per
+  // row, whether adopting a bank line is allowed to write 'cleared' or must
+  // preserve 'reconciled' — see the comment on that write.
+  const existingClearedById = new Map(existingRows.map((r) => [r.id, r.cleared]))
 
   let matched = 0
   let duplicates = plan.duplicates.length
 
   for (const m of plan.matches) {
+    // I2: adopting a match must never DOWNGRADE a row a prior reconciliation
+    // already locked. planImport is free to match a reconciled manual row
+    // (correct — it prevents the bank's later-arriving line from double-
+    // booking it, see lib/ledgerImport.ts's own "still matchable" test); the
+    // decision of what to WRITE afterward belongs here, not in that pure
+    // planner. A row that was merely 'uncleared' still becomes 'cleared', as
+    // before.
+    const nextCleared = existingClearedById.get(m.existingId) === 'reconciled' ? 'reconciled' : 'cleared'
     // Guarded on import_id still being null: if a concurrent import already
     // claimed this manual row (see the doc comment above), this update
     // touches zero rows instead of overwriting a match someone else made.
     const { data: updated, error } = await supabase
       .from('ledger_transactions')
-      .update({ import_id: m.importId, cleared: 'cleared' })
+      .update({ import_id: m.importId, cleared: nextCleared })
       .eq('id', m.existingId)
       .is('import_id', null)
       .select('id')
@@ -635,11 +670,13 @@ export async function importOfx(
   let imported = 0
   let autoCategorized = 0
   for (const ins of plan.inserts) {
-    // Remembered category or null — every plan.inserts row is already
-    // income/expense (planImport's only two insert kinds), so no kind check
-    // is needed before looking it up; a payee with no memory yet just gets
-    // null, same as before this feature existed.
-    const categoryId = remembered.get(normalizePayee(ins.row.name)) ?? null
+    // Remembered category or null — keyed on (kind, payee) so an expense
+    // teaching (e.g. "SQUARE INC" -> Bank Fees) can never pre-fill an
+    // income row of the same payee, or the reverse (I1). Every plan.inserts
+    // row is already income/expense (planImport's only two insert kinds),
+    // so ins.kind is exactly what memoryKey wants; a payee with no memory
+    // yet for that kind just gets null, same as before this feature existed.
+    const categoryId = remembered.get(memoryKey(ins.kind, ins.row.name)) ?? null
     const { error } = await supabase.from('ledger_transactions').insert({
       owner_id: user.id,
       account_id: accountId,
@@ -714,8 +751,21 @@ export async function reconcileAccount(input: {
     .maybeSingle()
   if (!account) return { error: 'That account does not belong to you.' }
 
-  const { rows, error: rowsError } = await fetchAllLedgerTransactions(supabase, input.accountId)
+  const { rows: allRows, error: rowsError } = await fetchAllLedgerTransactions(supabase, input.accountId)
   if (rowsError) return { error: rowsError }
+
+  // I5: both the cleared-balance math AND the lock pass below are scoped to
+  // rows dated on or before the statement date. A row Dan hand-cleared for a
+  // date AFTER `reconciledOn` (a scheduled payment ticked off early, say)
+  // hasn't been confirmed by THIS statement — the bank hasn't reported it
+  // yet. Counting it toward `cleared` would skew the diff against a balance
+  // the bank never actually stated, and locking it now would freeze it
+  // before its own statement even arrives. Filtered here in JS rather than a
+  // query-level range because fetchAllLedgerTransactions is the one already-
+  // paged loader every account-wide read in this file shares; a plain string
+  // compare is safe since `date` is always YYYY-MM-DD (isPlainDate, checked
+  // above), which sorts identically to a real date compare.
+  const rows = allRows.filter((r) => r.date <= input.reconciledOn)
 
   const cleared = clearedBalance(account.opening_balance_cents, rows as BalanceLike[])
   const diff = input.statementBalanceCents - cleared
@@ -735,27 +785,45 @@ export async function reconcileAccount(input: {
     }
   }
 
+  // The adjustment row's own id, once booked — kept OUT of the lock pass
+  // below on purpose (I5): it exists to make today's numbers balance, but if
+  // Dan mis-keyed the statement balance he needs to still be able to edit or
+  // delete it. It sits as an ordinary 'cleared' row until the NEXT
+  // reconcile, which locks it in like any other row confirmed by that later
+  // statement.
+  let adjustmentId: string | null = null
   if (diff !== 0 && input.createAdjustment) {
-    const { error } = await supabase.from('ledger_transactions').insert({
-      owner_id: user.id,
-      account_id: input.accountId,
-      date: input.reconciledOn,
-      amount_cents: diff,
-      kind: diff > 0 ? 'income' : 'expense',
-      category_id: null,
-      payee: 'Balance Adjustment',
-      cleared: 'cleared',
-    })
+    const { data: adjustment, error } = await supabase
+      .from('ledger_transactions')
+      .insert({
+        owner_id: user.id,
+        account_id: input.accountId,
+        date: input.reconciledOn,
+        amount_cents: diff,
+        kind: diff > 0 ? 'income' : 'expense',
+        category_id: null,
+        payee: 'Balance Adjustment',
+        cleared: 'cleared',
+      })
+      .select('id')
+      .single()
     if (error) return { error: error.message }
+    adjustmentId = adjustment.id
   }
 
-  // Every 'cleared' row at this point — the adjustment above included, if
-  // one was just booked — was just confirmed against this statement.
-  const { error: lockError } = await supabase
+  // Every 'cleared' row dated on/before the statement — the same date scope
+  // as the balance math above, and for the same reason (a later-dated
+  // hand-cleared row hasn't been confirmed by this statement) — is locked to
+  // 'reconciled' together, because they were all just confirmed against it.
+  // EXCLUDES the adjustment row just booked above, if any: see its own
+  // comment for why it has to stay editable one more cycle.
+  const lockQuery = supabase
     .from('ledger_transactions')
     .update({ cleared: 'reconciled' })
     .eq('account_id', input.accountId)
     .eq('cleared', 'cleared')
+    .lte('date', input.reconciledOn)
+  const { error: lockError } = await (adjustmentId ? lockQuery.neq('id', adjustmentId) : lockQuery)
   if (lockError) return { error: lockError.message }
 
   const { error: reconError } = await supabase.from('ledger_reconciliations').insert({

@@ -24,7 +24,7 @@ export default async function MoneyCategoriesPage() {
   // false)`) there is no filter here at all.
   const { data, error } = await supabase
     .from('ledger_categories')
-    .select('id, name, grp, sort, hidden, is_equipment')
+    .select('id, name, grp, sort, hidden, is_equipment, deductible')
     .order('grp', { ascending: true })
     .order('sort', { ascending: true })
   if (error) return <LoadError message={error.message} />
@@ -36,6 +36,7 @@ export default async function MoneyCategoriesPage() {
     sort: c.sort,
     hidden: c.hidden,
     isEquipment: c.is_equipment,
+    deductible: c.deductible,
   }))
 
   return (

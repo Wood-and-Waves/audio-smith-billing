@@ -12,6 +12,7 @@ export type CategoryRow = {
   sort: number
   hidden: boolean
   isEquipment: boolean
+  deductible: boolean
 }
 
 /**
@@ -60,6 +61,7 @@ export default function CategoryEditor({ categories }: { categories: CategoryRow
     start(async () => {
       const result = await saveCategory({
         id: row.id, name, grp: row.grp, hidden: row.hidden, isEquipment: row.isEquipment,
+        deductible: row.deductible,
       })
       if ('error' in result) { setError(result.error); return }
       setNames((prev) => { const next = { ...prev }; delete next[row.id]; return next })
@@ -67,7 +69,7 @@ export default function CategoryEditor({ categories }: { categories: CategoryRow
     })
   }
 
-  function toggle(row: CategoryRow, patch: { hidden?: boolean; isEquipment?: boolean }) {
+  function toggle(row: CategoryRow, patch: { hidden?: boolean; isEquipment?: boolean; deductible?: boolean }) {
     setError(null)
     start(async () => {
       const result = await saveCategory({
@@ -76,6 +78,7 @@ export default function CategoryEditor({ categories }: { categories: CategoryRow
         grp: row.grp,
         hidden: patch.hidden ?? row.hidden,
         isEquipment: patch.isEquipment ?? row.isEquipment,
+        deductible: patch.deductible ?? row.deductible,
       })
       if ('error' in result) { setError(result.error); return }
       router.refresh()
@@ -87,7 +90,10 @@ export default function CategoryEditor({ categories }: { categories: CategoryRow
     const name = (newNames[grp] ?? '').trim()
     if (!name) { setError('Give the category a name.'); return }
     start(async () => {
-      const result = await saveCategory({ id: null, name, grp, hidden: false, isEquipment: false })
+      // Deductible defaults on for a new category, income group included —
+      // Dan can untick it right away for an Income-group addition (income
+      // rows are never a deduction), same as he can with Hidden/Equipment.
+      const result = await saveCategory({ id: null, name, grp, hidden: false, isEquipment: false, deductible: true })
       if ('error' in result) { setError(result.error); return }
       setNewNames((prev) => ({ ...prev, [grp]: '' }))
       router.refresh()
@@ -121,6 +127,11 @@ export default function CategoryEditor({ categories }: { categories: CategoryRow
                   <input type="checkbox" className="h-4 w-4 accent-accent" checked={row.isEquipment}
                          disabled={pending} onChange={(e) => toggle(row, { isEquipment: e.target.checked })} />
                   Equipment
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-muted">
+                  <input type="checkbox" className="h-4 w-4 accent-accent" checked={row.deductible}
+                         disabled={pending} onChange={(e) => toggle(row, { deductible: e.target.checked })} />
+                  Deductible
                 </label>
               </li>
             ))}
