@@ -8,6 +8,7 @@ import { DEFAULT_CATEGORIES } from '@/lib/ledgerCategories'
 import { clearedBalance, type BalanceLike } from '@/lib/ledgerBalance'
 import { parseOfx, type ParsedOfx } from '@/lib/ofx'
 import { planImport, type ExistingTxn } from '@/lib/ledgerImport'
+import { normalizePayee, rememberedCategories } from '@/lib/payeeMemory'
 
 type Fail = { error: string }
 
@@ -231,6 +232,17 @@ type LedgerTxnRow = {
   cleared: 'uncleared' | 'cleared' | 'reconciled'
   import_id: string | null
   source: 'manual' | 'import'
+  // payee/category_id/kind ride along on every caller of this loader (not
+  // just importOfx, which is the one that actually needs them to build
+  // rememberedCategories) because they're cheap columns on an already-open
+  // row and the alternative — parameterizing the select per caller — would
+  // mean two near-identical paging loops to keep in sync instead of one.
+  // reconcileAccount's cast to BalanceLike[] and importOfx's cast to
+  // ExistingTxn[] both just ignore the extra fields; TS allows narrowing a
+  // wider row to either the way it already narrowed to the plain ones.
+  payee: string
+  category_id: string | null
+  kind: LedgerKind
 }
 
 const LEDGER_TXN_PAGE_SIZE = 1000
@@ -255,7 +267,7 @@ async function fetchAllLedgerTransactions(
   for (;;) {
     const { data, error } = await supabase
       .from('ledger_transactions')
-      .select('id, date, amount_cents, cleared, import_id, source')
+      .select('id, date, amount_cents, cleared, import_id, source, payee, category_id, kind')
       .eq('account_id', accountId)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
@@ -419,6 +431,43 @@ export async function setTransactionCleared(
 }
 
 /**
+ * Every OTHER income/expense row on `accountId`, still uncategorized, id and
+ * payee only — the paged fetchAllLedgerTransactions pattern narrowed to what
+ * applyToSamePayee actually needs. category_id IS NULL and kind IN
+ * (income, expense) run as real SQL filters (cheap, exact); cleared state is
+ * deliberately NOT filtered — categorizing a reconciled row changes no
+ * money and is allowed by design, same as the un-gated update below. The
+ * payee match itself can't be a SQL filter: normalizePayee's case-folding
+ * and whitespace-collapsing has no equivalent here, so every candidate has
+ * to come back and get compared in JS.
+ */
+async function fetchUncategorizedSamePayeeCandidates(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  accountId: string,
+  excludeId: string,
+): Promise<{ rows: { id: string; payee: string }[]; error: string | null }> {
+  const rows: { id: string; payee: string }[] = []
+  let from = 0
+  for (;;) {
+    const { data, error } = await supabase
+      .from('ledger_transactions')
+      .select('id, payee')
+      .eq('account_id', accountId)
+      .neq('id', excludeId)
+      .is('category_id', null)
+      .in('kind', ['income', 'expense'])
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + LEDGER_TXN_PAGE_SIZE - 1)
+    if (error) return { rows: [], error: error.message }
+    rows.push(...((data ?? []) as { id: string; payee: string }[]))
+    if (!data || data.length < LEDGER_TXN_PAGE_SIZE) break
+    from += LEDGER_TXN_PAGE_SIZE
+  }
+  return { rows, error: null }
+}
+
+/**
  * Sets (or clears) one transaction's category. Deliberately NOT gated on
  * `cleared === 'reconciled'` the way updateLedgerTransaction is — a category
  * assignment moves no money and touches nothing reconcileAccount's cleared-
@@ -427,17 +476,28 @@ export async function setTransactionCleared(
  * before anyone got to it. Amount, date, kind, and deletion stay locked
  * through updateLedgerTransaction/deleteLedgerTransaction; only this one
  * field is exempt.
+ *
+ * `applyToSamePayee` is the sweep half of payee memory: rememberedCategories
+ * (lib/payeeMemory) only pre-fills NEW imports, so the first time a payee is
+ * categorized by hand there can already be a pile of older uncategorized
+ * rows for it sitting in the register. Turning this on backfills exactly
+ * those — fetchUncategorizedSamePayeeCandidates above already limits the
+ * pool to uncategorized income/expense rows, so a row that already has a
+ * category, or an owner_pay/transfer row, is never touched. Off, or
+ * `categoryId` null (clearing a category isn't something to fan out), it's
+ * a no-op and `applied` reports 0.
  */
 export async function setTransactionCategory(
   id: string,
   categoryId: string | null,
-): Promise<Fail | { ok: true }> {
+  applyToSamePayee = false,
+): Promise<Fail | { ok: true; applied: number }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not signed in.' }
 
   const { data: existing } = await supabase
-    .from('ledger_transactions').select('kind').eq('id', id).maybeSingle()
+    .from('ledger_transactions').select('kind, account_id, payee').eq('id', id).maybeSingle()
   if (!existing) return { error: 'That transaction no longer exists.' }
   // Same rule updateLedgerTransaction's validateTxnShape enforces on write
   // (lt_nocat_for_owner_or_transfer, migration 0027): paying yourself is not
@@ -457,8 +517,29 @@ export async function setTransactionCategory(
     .eq('id', id)
   if (error) return { error: error.message }
 
+  let applied = 0
+  if (applyToSamePayee && categoryId !== null) {
+    const { rows: candidates, error: candidatesError } =
+      await fetchUncategorizedSamePayeeCandidates(supabase, existing.account_id, id)
+    if (candidatesError) return { error: candidatesError }
+
+    const targetKey = normalizePayee(existing.payee)
+    const ids = candidates
+      .filter((c) => normalizePayee(c.payee) === targetKey)
+      .map((c) => c.id)
+
+    if (ids.length > 0) {
+      const { error: applyError } = await supabase
+        .from('ledger_transactions')
+        .update({ category_id: categoryId })
+        .in('id', ids)
+      if (applyError) return { error: applyError.message }
+      applied = ids.length
+    }
+  }
+
   revalidatePath('/money')
-  return { ok: true }
+  return { ok: true, applied }
 }
 
 // A real statement is a few hundred KB at most; this is a fat-finger/DoS
@@ -480,7 +561,14 @@ const MAX_OFX_TEXT_LENGTH = 2 * 1024 * 1024
 export async function importOfx(
   accountId: string,
   fileText: string,
-): Promise<Fail | { imported: number; matched: number; duplicates: number; skipped: number }> {
+): Promise<Fail | {
+  imported: number
+  matched: number
+  duplicates: number
+  skipped: number
+  statementBalanceCents: number | null
+  autoCategorized: number
+}> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not signed in.' }
@@ -508,6 +596,13 @@ export async function importOfx(
 
   const plan = planImport(parsed.transactions, existingRows as ExistingTxn[])
 
+  // Payee memory (lib/payeeMemory): the existing rows this same fetch just
+  // loaded already carry payee/category_id/kind, so the newest categorized
+  // income/expense row per payee teaches the category a brand-new insert of
+  // that payee arrives with — no separate query, just a second read of the
+  // page fetchAllLedgerTransactions already brought back.
+  const remembered = rememberedCategories(existingRows)
+
   let matched = 0
   let duplicates = plan.duplicates.length
 
@@ -534,14 +629,20 @@ export async function importOfx(
   }
 
   let imported = 0
+  let autoCategorized = 0
   for (const ins of plan.inserts) {
+    // Remembered category or null — every plan.inserts row is already
+    // income/expense (planImport's only two insert kinds), so no kind check
+    // is needed before looking it up; a payee with no memory yet just gets
+    // null, same as before this feature existed.
+    const categoryId = remembered.get(normalizePayee(ins.row.name)) ?? null
     const { error } = await supabase.from('ledger_transactions').insert({
       owner_id: user.id,
       account_id: accountId,
       date: ins.row.date,
       amount_cents: ins.row.amountCents,
       kind: ins.kind,
-      category_id: null,
+      category_id: categoryId,
       payee: ins.row.name,
       memo: ins.row.memo,
       cleared: 'cleared',
@@ -553,10 +654,21 @@ export async function importOfx(
       return { error: error.message }
     }
     imported += 1
+    if (categoryId !== null) autoCategorized += 1
   }
 
   revalidatePath('/money')
-  return { imported, matched, duplicates, skipped: plan.skipped.length }
+  return {
+    imported,
+    matched,
+    duplicates,
+    skipped: plan.skipped.length,
+    // parseOfx's own doc comment: null when the statement's BALAMT/LEDGERBAL
+    // was absent or unparsable, which the caller treats as "no statement
+    // balance to reconcile against yet," not an error.
+    statementBalanceCents: parsed.ledgerBalanceCents,
+    autoCategorized,
+  }
 }
 
 /**
