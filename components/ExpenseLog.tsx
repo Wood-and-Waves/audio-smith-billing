@@ -1285,11 +1285,10 @@ export default function ExpenseLog({
                 )}
                 {/* Danger only reaches a billable row — that is the one kind
                     of missing receipt that actually blocks billing. A
-                    my-cost row without one is a non-issue, worded as one. */}
-                {!e.receipt_path && (
-                  e.billable !== false
-                    ? <span className="text-danger">needs a receipt</span>
-                    : <span>no receipt (optional)</span>
+                    non-reimbursable row without one is a non-issue and says
+                    nothing at all (Dan: "I understand what is happening"). */}
+                {!e.receipt_path && e.billable !== false && (
+                  <span className="text-danger">needs a receipt</span>
                 )}
                 <button
                   type="button"
@@ -1360,7 +1359,7 @@ export default function ExpenseLog({
                     aria-label={`Non-reimbursable for receipt ${i + 1}`}
                     className="h-4 w-4 accent-accent"
                   />
-                  Non-reimbursable — per-diem, not billed to the client
+                  Non-reimbursable
                 </label>
                 <p className="ml-6 mt-1 text-xs text-muted truncate">
                   {row.file.name}
@@ -1450,7 +1449,7 @@ export default function ExpenseLog({
               onChange={(e) => setMyCost(e.target.checked)}
               className="h-4 w-4 accent-accent"
             />
-            Non-reimbursable — per-diem, not billed to the client
+            Non-reimbursable
           </label>
 
           <label className="sm:col-span-5 text-xs text-muted">
@@ -1467,7 +1466,7 @@ export default function ExpenseLog({
             {capture
               ? ` ${capture.file.name}${ocrNote ? ` — ${ocrNote}` : ''}`
               : (ocrNote ?? (myCost
-                  ? ' Photo or PDF. A receipt is optional for non-reimbursable expenses — still worth keeping for tax records.'
+                  ? ' Photo or PDF.'
                   : ' Photo or PDF. A receipt is required before this show can be billed.'))}
           </label>
         </div>
