@@ -11,6 +11,7 @@
     "test:money": "TZ=America/Chicago node --test scripts/test/money.test.ts",
     "import:parse": "node scripts/import/parse-sheet.mjs",
     "import:load": "node --env-file=.env.local scripts/import/load.mjs",
+    "import:ynab": "node --env-file=.env.local scripts/import/ynab-backfill.mjs",
     "db:sql": "node --env-file=.env.local scripts/run-sql.mjs",
     "db:migrate": "node --env-file=.env.local scripts/db-migrate.mjs",
     "pdf:sample": "node scripts/pdf-sample.mjs"
