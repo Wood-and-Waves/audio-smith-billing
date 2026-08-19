@@ -1,13 +1,14 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { formatUSD, parseUSD } from '@/lib/money'
+import { formatAmount, formatUSD, parseUSD } from '@/lib/money'
 import { formatDateShort, todayInChicago } from '@/lib/dates'
+import { normalizePayee } from '@/lib/payeeMemory'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select from '@/components/ui/Select'
 import {
-  createLedgerAccount, addLedgerTransaction,
+  createLedgerAccount, addLedgerTransaction, updateLedgerTransaction,
   deleteLedgerTransaction, setTransactionCleared, setTransactionCategory,
 } from '@/app/money/actions'
 
@@ -179,6 +180,31 @@ export default function MoneyRegister({
   const [showId, setShowId] = useState('')
   const [memo, setMemo] = useState('')
 
+  // The inline edit form's own state — one row editable at a time (a single
+  // set of fields, not a per-row map), so opening Edit on a second row just
+  // replaces the first draft instead of tracking several at once. Same
+  // "declared unconditionally, above the first-run return" rule as the add
+  // row's state above.
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editDate, setEditDate] = useState('')
+  const [editPayee, setEditPayee] = useState('')
+  const [editAmount, setEditAmount] = useState('')
+  const [editKind, setEditKind] = useState<LedgerKind>('expense')
+  const [editCategoryId, setEditCategoryId] = useState('')
+  const [editShowId, setEditShowId] = useState('')
+  const [editMemo, setEditMemo] = useState('')
+
+  // Apply-to-more: the one-line offer under a row that was just categorized,
+  // to sweep every other loaded row sharing its payee, plus the briefly-shown
+  // confirmation after that sweep runs. A plain timeout (not a transition),
+  // same idiom as DeleteShowButton's own auto-clearing state.
+  const [applyPrompt, setApplyPrompt] = useState<
+    { rowId: string; payee: string; categoryId: string; count: number } | null
+  >(null)
+  const [appliedNotice, setAppliedNotice] = useState<{ rowId: string; count: number } | null>(null)
+  const appliedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (appliedTimeoutRef.current) clearTimeout(appliedTimeoutRef.current) }, [])
+
   if (!accountProp) return <CreateAccountCard />
   // A genuine `const`, not just an unreassigned parameter — TypeScript only
   // carries a null-check's narrowing into the nested functions below (add,
@@ -253,12 +279,105 @@ export default function MoneyRegister({
 
   /** The inline picker on an uncategorized row — setTransactionCategory
    *  touches only category_id, so it works even on a reconciled row (see
-   *  the action's own doc comment for why that's safe). */
+   *  the action's own doc comment for why that's safe). A successful PICK
+   *  (not a clear back to blank) also checks the rows already on screen for
+   *  the same normalized payee, still uncategorized income/expense — when
+   *  there are any, the row grows an "apply to all" offer instead of firing
+   *  the sweep unasked, so a bulk change is never a surprise. A blank payee
+   *  is skipped entirely, mirroring the server's own refusal to sweep from
+   *  one (see setTransactionCategory's doc comment).
+   */
   function setRowCategory(row: LedgerTxnRow, newCategoryId: string) {
     setError(null)
+    setApplyPrompt(null)
     start(async () => {
       const result = await setTransactionCategory(row.id, newCategoryId || null)
       if ('error' in result) { setError(result.error); return }
+      const key = normalizePayee(row.payee)
+      if (newCategoryId && key !== '') {
+        const count = transactions.filter((other) => (
+          other.id !== row.id &&
+          other.category_id === null &&
+          (other.kind === 'income' || other.kind === 'expense') &&
+          normalizePayee(other.payee) === key
+        )).length
+        if (count > 0) setApplyPrompt({ rowId: row.id, payee: row.payee, categoryId: newCategoryId, count })
+      }
+      router.refresh()
+    })
+  }
+
+  /** The "Apply to all" button under the prompt above — the actual sweep,
+   *  via the same action with its third argument on. */
+  function applyToAll() {
+    if (!applyPrompt) return
+    setError(null)
+    const { rowId, categoryId } = applyPrompt
+    start(async () => {
+      const result = await setTransactionCategory(rowId, categoryId, true)
+      if ('error' in result) { setError(result.error); return }
+      setApplyPrompt(null)
+      setAppliedNotice({ rowId, count: result.applied })
+      if (appliedTimeoutRef.current) clearTimeout(appliedTimeoutRef.current)
+      appliedTimeoutRef.current = setTimeout(() => setAppliedNotice(null), 4000)
+      router.refresh()
+    })
+  }
+
+  /** Opens a non-reconciled row into the inline edit form, prefilled from
+   *  the row (amount shown positive, same as the add row's own convention —
+   *  parseUSD/formatAmount round-trip it). */
+  function startEdit(row: LedgerTxnRow) {
+    setError(null)
+    setApplyPrompt(null)
+    setAppliedNotice(null)
+    setEditingId(row.id)
+    setEditDate(row.date)
+    setEditPayee(row.payee)
+    setEditAmount(formatAmount(Math.abs(row.amount_cents)))
+    // 'transfer' never actually reaches here yet — nothing in this UI writes
+    // one (see KIND_LABEL's own comment) — but the edit Select only offers
+    // the three kinds the add row does, so a row of that kind still needs a
+    // safe starting point if one ever shows up.
+    setEditKind(row.kind === 'income' || row.kind === 'expense' || row.kind === 'owner_pay' ? row.kind : 'expense')
+    setEditCategoryId(row.category_id ?? '')
+    setEditShowId(row.show_id ?? '')
+    setEditMemo(row.memo ?? '')
+  }
+
+  /** Cancel restores the row — nothing was ever sent to the server. */
+  function cancelEdit() {
+    setError(null)
+    setEditingId(null)
+  }
+
+  function saveEdit(row: LedgerTxnRow) {
+    setError(null)
+    if (!editPayee.trim()) { setError('Say who this was to or from.'); return }
+    const typed = parseUSD(editAmount)
+    if (typed === null || typed <= 0) { setError('Enter an amount.'); return }
+    if (!editDate) { setError('Pick a date.'); return }
+
+    // Same re-derivation rule as the add row: the field always holds a
+    // positive number; the sign that reaches the ledger comes from kind.
+    const amountCents = editKind === 'income' ? typed : -typed
+
+    start(async () => {
+      const result = await updateLedgerTransaction({
+        id: row.id,
+        date: editDate,
+        amountCents,
+        kind: editKind,
+        // Owner pay never carries a category (lt_nocat_for_owner_or_transfer)
+        // — send categoryId: null outright rather than trusting the picker
+        // to have already been cleared client-side.
+        categoryId: editKind === 'owner_pay' ? null : (editCategoryId || null),
+        showId: editShowId || null,
+        payee: editPayee,
+        memo: editMemo,
+      })
+      if ('error' in result) { setError(result.error); return }
+      setEditingId(null)
       router.refresh()
     })
   }
@@ -363,6 +482,71 @@ export default function MoneyRegister({
             // anyone got to it (an import, say) still has a working picker
             // instead of sitting stuck in the "uncategorized" count forever.
             const inlineCategory = t.category_id === null && (t.kind === 'income' || t.kind === 'expense')
+
+            if (editingId === t.id) {
+              // Mirrors the add row's own grid exactly (same columns, same
+              // phone pairing) so editing feels like the same form, just
+              // pre-filled — the only addition is the Save/Cancel pair
+              // filling the trailing "auto" column instead of one "+ Add".
+              return (
+                <li key={t.id} className="border-b border-line py-4 pl-3 -ml-3 pr-3">
+                  <div className="grid gap-2 grid-cols-2 sm:grid-cols-[9rem_8rem_1fr_7rem_9rem_9rem_1fr_auto] items-center">
+                    <input aria-label="Date" type="date" className={FIELD_FULL} value={editDate} disabled={pending}
+                           onChange={(e) => setEditDate(e.target.value)} />
+                    <Select
+                      ariaLabel="Kind"
+                      value={editKind}
+                      disabled={pending}
+                      onChange={(v) => setEditKind(v as LedgerKind)}
+                      options={KIND_OPTIONS}
+                    />
+                    <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={editPayee}
+                           disabled={pending} onChange={(e) => setEditPayee(e.target.value)} />
+                    <input aria-label="Amount" inputMode="decimal" placeholder="0.00"
+                           className={`${FIELD_FULL} tabular text-right`} value={editAmount} disabled={pending}
+                           onChange={(e) => setEditAmount(e.target.value)} />
+                    <Select
+                      ariaLabel="Category"
+                      className={editKind === 'owner_pay' ? 'invisible' : undefined}
+                      value={editCategoryId}
+                      disabled={pending || editKind === 'owner_pay'}
+                      onChange={setEditCategoryId}
+                      options={categoryOptions}
+                    />
+                    <Select
+                      ariaLabel="Show"
+                      value={editShowId}
+                      disabled={pending}
+                      onChange={setEditShowId}
+                      options={showOptions}
+                    />
+                    <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={editMemo}
+                           disabled={pending} onChange={(e) => setEditMemo(e.target.value)} />
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => saveEdit(t)}
+                        disabled={pending}
+                        className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
+                                   border border-line text-muted hover:text-ink disabled:opacity-40"
+                      >
+                        {pending ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={cancelEdit}
+                        disabled={pending}
+                        className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
+                                   border border-line text-muted hover:text-ink disabled:opacity-40"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              )
+            }
+
             return (
               <li key={t.id} className="border-b border-line py-4 pl-3 -ml-3 pr-3">
                 <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
@@ -415,6 +599,23 @@ export default function MoneyRegister({
                     </label>
                   )}
 
+                  {/* Reconciled rows keep only the category picker above —
+                      amount/date/kind/deletion stay locked through
+                      updateLedgerTransaction/deleteLedgerTransaction, so
+                      there is nothing here for a reconciled row to edit or
+                      delete. */}
+                  {!reconciled && (
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => startEdit(t)}
+                      className="text-xs font-semibold uppercase tracking-wider text-muted hover:text-ink
+                                 transition-colors disabled:opacity-40"
+                    >
+                      Edit
+                    </button>
+                  )}
+
                   {!reconciled && (
                     <button
                       type="button"
@@ -428,6 +629,26 @@ export default function MoneyRegister({
                     </button>
                   )}
                 </div>
+
+                {applyPrompt && applyPrompt.rowId === t.id && (
+                  <p className="mt-1.5 text-xs text-muted">
+                    Applied. {applyPrompt.count} more &ldquo;{applyPrompt.payee}&rdquo; row
+                    {applyPrompt.count === 1 ? '' : 's'} —{' '}
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={applyToAll}
+                      className="font-semibold text-accent hover:opacity-80 disabled:opacity-40"
+                    >
+                      Apply to all
+                    </button>
+                  </p>
+                )}
+                {appliedNotice && appliedNotice.rowId === t.id && (
+                  <p className="mt-1.5 text-xs text-good">
+                    Applied to {appliedNotice.count} more row{appliedNotice.count === 1 ? '' : 's'}.
+                  </p>
+                )}
               </li>
             )
           })}

@@ -2,6 +2,7 @@
 
 import { useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import { formatUSD } from '@/lib/money'
 import { importOfx } from '@/app/money/actions'
 
 // Mirrors MAX_OFX_TEXT_LENGTH in app/money/actions.ts. A real statement is a
@@ -10,7 +11,14 @@ import { importOfx } from '@/app/money/actions'
 // after the server rejects the request it was mailed.
 const MAX_OFX_TEXT_LENGTH = 2 * 1024 * 1024
 
-type ImportSummary = { imported: number; matched: number; duplicates: number; skipped: number }
+type ImportSummary = {
+  imported: number
+  matched: number
+  duplicates: number
+  skipped: number
+  statementBalanceCents: number | null
+  autoCategorized: number
+}
 
 /** "Imported N", plus whichever other counts are nonzero — a clean re-import
  *  of the same file reads "Imported 0 · duplicates 42", not four zeros. */
@@ -19,6 +27,7 @@ function summaryLine(s: ImportSummary): string {
   if (s.matched > 0) parts.push(`matched ${s.matched}`)
   if (s.duplicates > 0) parts.push(`duplicates ${s.duplicates}`)
   if (s.skipped > 0) parts.push(`skipped ${s.skipped}`)
+  if (s.autoCategorized > 0) parts.push(`${s.autoCategorized} auto-categorized`)
   return parts.join(' · ')
 }
 
@@ -29,7 +38,19 @@ function summaryLine(s: ImportSummary): string {
  * then hands it to importOfx. Styled after ExpenseLog's file-input row: the
  * same file: pseudo-element button, the same text-xs caption underneath.
  */
-export default function LedgerImport({ accountId }: { accountId: string }) {
+export default function LedgerImport({
+  accountId, onReconcileNow,
+}: {
+  accountId: string
+  /**
+   * "Reconcile now" — set by the shared coordinator (components/
+   * LedgerImportReconcile.tsx) so a statement's own ending balance can go
+   * straight to LedgerReconcile instead of Dan retyping a number the file
+   * already had. Optional: this component still works standalone (the
+   * button just doesn't render) if a caller doesn't wire it up.
+   */
+  onReconcileNow?: (balanceCents: number) => void
+}) {
   const router = useRouter()
   const inputRef = useRef<HTMLInputElement>(null)
   const [pending, start] = useTransition()
@@ -72,6 +93,8 @@ export default function LedgerImport({ accountId }: { accountId: string }) {
     })
   }
 
+  const statementBalanceCents = summary?.statementBalanceCents ?? null
+
   return (
     <div className="flex flex-col gap-1">
       <label className="text-xs text-muted">
@@ -88,7 +111,29 @@ export default function LedgerImport({ accountId }: { accountId: string }) {
         />
         {pending ? ' Importing…' : ' Import statement'}
       </label>
-      {summary && !error && <p className="text-xs text-good">{summaryLine(summary)}</p>}
+      {summary && !error && (
+        <>
+          <p className="text-xs text-good">{summaryLine(summary)}</p>
+          {/* A genuine const, not a re-read of summary.statementBalanceCents
+              inline below — the same reason MoneyRegister's `account` gets
+              its own const: narrowing a nullable property doesn't carry into
+              the onClick closure the way narrowing a plain local does. */}
+          {statementBalanceCents !== null && (
+            <p className="text-xs text-muted flex flex-wrap items-center gap-x-2">
+              Statement balance {formatUSD(statementBalanceCents)}
+              {onReconcileNow && (
+                <button
+                  type="button"
+                  onClick={() => onReconcileNow(statementBalanceCents)}
+                  className="font-semibold text-accent hover:opacity-80"
+                >
+                  Reconcile now
+                </button>
+              )}
+            </p>
+          )}
+        </>
+      )}
       {error && <p role="alert" className="text-xs text-danger">{error}</p>}
     </div>
   )

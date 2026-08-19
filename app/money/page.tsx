@@ -6,8 +6,7 @@ import AppShell from '@/components/AppShell'
 import MoneyRegister, {
   type CategoryOption, type LedgerAccountSummary, type LedgerTxnRow, type ShowOption,
 } from '@/components/MoneyRegister'
-import LedgerImport from '@/components/LedgerImport'
-import LedgerReconcile from '@/components/LedgerReconcile'
+import LedgerImportReconcile from '@/components/LedgerImportReconcile'
 import { ensureDefaultCategories } from '@/app/money/actions'
 
 export const dynamic = 'force-dynamic'
@@ -201,8 +200,7 @@ export default async function MoneyPage() {
         totalCount={totalCount}
         headerActions={
           <>
-            <LedgerImport accountId={account.id} />
-            <LedgerReconcile accountId={account.id} />
+            <LedgerImportReconcile accountId={account.id} />
             <Link
               href="/money/categories"
               className="text-xs text-muted hover:text-ink transition-colors"

@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { todayInChicago } from '@/lib/dates'
-import { parseUSD } from '@/lib/money'
+import { formatAmount, parseUSD } from '@/lib/money'
 import { FIELD_FULL } from '@/components/ui/field'
 import { reconcileAccount } from '@/app/money/actions'
 
@@ -18,7 +18,23 @@ import { reconcileAccount } from '@/app/money/actions'
  * true — without that button ever appearing for a real failure, or failing
  * to appear because someone reworded the message.
  */
-export default function LedgerReconcile({ accountId }: { accountId: string }) {
+export default function LedgerReconcile({
+  accountId, prefill, onPrefillUsed,
+}: {
+  accountId: string
+  /**
+   * "Reconcile now" from LedgerImport, via the shared coordinator — the
+   * statement's own ending balance, so Dan doesn't retype a number the file
+   * already had. A fresh object literal every click (see
+   * components/LedgerImportReconcile.tsx), which is what the effect below
+   * keys off of.
+   */
+  prefill?: { balanceCents: number } | null
+  /** Fired once the prefill above has been applied, so the coordinator can
+   *  null it back out — otherwise a second identical statement balance
+   *  wouldn't look like a new prefill at all. */
+  onPrefillUsed?: () => void
+}) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [pending, start] = useTransition()
@@ -27,6 +43,24 @@ export default function LedgerReconcile({ accountId }: { accountId: string }) {
   const [error, setError] = useState<string | null>(null)
   const [mismatch, setMismatch] = useState(false)
   const [done, setDone] = useState(false)
+
+  // Opens the panel and fills both fields the moment a new prefill arrives.
+  // Deliberately keyed on `prefill` alone (like DeleteShowButton's own
+  // confirm-timeout effect, which omits its `disarm` callback from deps
+  // too): onPrefillUsed is a fresh closure every render of the coordinator,
+  // and tracking it here would refire this effect — stomping whatever Dan
+  // had already typed — on any unrelated re-render, not just a genuine new
+  // "Reconcile now" click.
+  useEffect(() => {
+    if (!prefill) return
+    setOpen(true)
+    setBalance(formatAmount(prefill.balanceCents))
+    setReconciledOn(todayInChicago())
+    setError(null)
+    setMismatch(false)
+    setDone(false)
+    onPrefillUsed?.()
+  }, [prefill])
 
   function collapse() {
     setOpen(false)
