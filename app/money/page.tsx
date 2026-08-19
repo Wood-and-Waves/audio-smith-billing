@@ -79,7 +79,18 @@ function LoadError({ message }: { message: string }) {
   )
 }
 
-export default async function MoneyPage() {
+export default async function MoneyPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ filter?: string }>
+}) {
+  const params = await searchParams
+  // The RENDERED list is filtered to uncategorized income/expense rows when
+  // this is set — see the `filtered` slice below. Balances (working/cleared,
+  // computed from allTxns) never see this flag: they must stay right whether
+  // or not the register is currently narrowed to the review queue.
+  const uncategorizedOnly = params.filter === 'uncategorized'
+
   const supabase = await createClient()
 
   // The one open checking account this ledger runs from — "first" by when it
@@ -166,8 +177,16 @@ export default async function MoneyPage() {
   const sorted = [...allTxns].sort((a, b) => (
     a.date === b.date ? b.created_at.localeCompare(a.created_at) : b.date.localeCompare(a.date)
   ))
-  const totalCount = sorted.length
-  const transactions: LedgerTxnRow[] = sorted.slice(0, RENDER_CAP).map((t) => ({
+  // The RENDERED list only — filtered before the 200-cap below (not after),
+  // so ?filter=uncategorized shows the actual next 200 uncategorized rows
+  // rather than whatever uncategorized rows happened to survive an unrelated
+  // most-recent-200 cut. Same kind filter as uncategorizedCount above, so
+  // this list's length always agrees with that badge.
+  const filtered = uncategorizedOnly
+    ? sorted.filter((t) => t.category_id === null && (t.kind === 'income' || t.kind === 'expense'))
+    : sorted
+  const totalCount = filtered.length
+  const transactions: LedgerTxnRow[] = filtered.slice(0, RENDER_CAP).map((t) => ({
     id: t.id,
     date: t.date,
     amount_cents: t.amount_cents,
@@ -198,9 +217,16 @@ export default async function MoneyPage() {
         clearedBalanceCents={clearedBalanceCents}
         uncategorizedCount={uncategorizedCount}
         totalCount={totalCount}
+        uncategorizedOnly={uncategorizedOnly}
         headerActions={
           <>
             <LedgerImportReconcile accountId={account.id} />
+            <Link
+              href="/money/reports"
+              className="text-xs text-muted hover:text-ink transition-colors"
+            >
+              Reports
+            </Link>
             <Link
               href="/money/categories"
               className="text-xs text-muted hover:text-ink transition-colors"

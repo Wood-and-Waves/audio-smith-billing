@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useTransition } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { formatAmount, formatUSD, parseUSD } from '@/lib/money'
 import { formatDateShort, todayInChicago } from '@/lib/dates'
@@ -143,7 +144,7 @@ function CreateAccountCard() {
 
 export default function MoneyRegister({
   account: accountProp, categories, shows, transactions, workingBalanceCents, clearedBalanceCents,
-  uncategorizedCount, totalCount, headerActions,
+  uncategorizedCount, totalCount, uncategorizedOnly, headerActions,
 }: {
   /** Null in first-run mode — every other prop is meaningless then. */
   account: LedgerAccountSummary | null
@@ -154,7 +155,19 @@ export default function MoneyRegister({
   workingBalanceCents: number
   clearedBalanceCents: number
   uncategorizedCount: number
+  /**
+   * The size of whatever list `transactions` was capped from — the full
+   * account when `uncategorizedOnly` is off, or just its uncategorized
+   * income/expense rows when it's on (app/money/page.tsx filters before
+   * capping, not after, so this is a true count either way).
+   */
   totalCount: number
+  /**
+   * Set from `?filter=uncategorized` (app/money/page.tsx). Balances above
+   * are never touched by this — only which rows the list below shows, and
+   * which "showing N" message renders under the Add row.
+   */
+  uncategorizedOnly?: boolean
   /**
    * Import / Reconcile / "Edit categories" — built in app/money/page.tsx
    * (which is where account.id and the categories link both make sense to
@@ -463,14 +476,23 @@ export default function MoneyRegister({
         </button>
       </div>
 
-      {truncated && (
+      {uncategorizedOnly ? (
+        <p className="text-xs text-muted mb-2">
+          Showing {transactions.length}{truncated && ` of ${totalCount}`} uncategorized ·{' '}
+          <Link href="/money" className="font-semibold text-accent hover:opacity-80">
+            Show all
+          </Link>
+        </p>
+      ) : truncated && (
         <p className="text-xs text-muted mb-2">
           Showing the latest {transactions.length} of {totalCount}.
         </p>
       )}
 
       {transactions.length === 0 ? (
-        <p className="text-muted border-l-2 border-line pl-4 py-1">No transactions yet.</p>
+        <p className="text-muted border-l-2 border-line pl-4 py-1">
+          {uncategorizedOnly ? 'Nothing uncategorized.' : 'No transactions yet.'}
+        </p>
       ) : (
         <ul className="border-t border-line">
           {transactions.map((t) => {
