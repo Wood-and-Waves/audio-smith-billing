@@ -210,6 +210,50 @@ async function belongsToCaller(
   return data !== null
 }
 
+type LedgerTxnRow = {
+  id: string
+  date: string
+  amount_cents: number
+  cleared: 'uncleared' | 'cleared' | 'reconciled'
+  import_id: string | null
+  source: 'manual' | 'import'
+}
+
+const LEDGER_TXN_PAGE_SIZE = 1000
+
+/**
+ * Every ledger_transactions row for one account, paged past Supabase's
+ * default 1000-row select cap (PostgREST's max_rows) — a plain, unranged
+ * .select() silently truncates at row 1000 with no error, which would let
+ * reconcileAccount lock in a cleared balance computed from an incomplete
+ * row set, and let importOfx re-insert bank rows it can no longer see as
+ * already-imported once an account passes 1000 transactions. Ordered by
+ * (created_at, id) — a tiebreaker on id — so a page boundary can't skip or
+ * duplicate a row even when two transactions share a created_at timestamp,
+ * and paging stops as soon as a page comes back shorter than the page size.
+ */
+async function fetchAllLedgerTransactions(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  accountId: string,
+): Promise<{ rows: LedgerTxnRow[]; error: string | null }> {
+  const rows: LedgerTxnRow[] = []
+  let from = 0
+  for (;;) {
+    const { data, error } = await supabase
+      .from('ledger_transactions')
+      .select('id, date, amount_cents, cleared, import_id, source')
+      .eq('account_id', accountId)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + LEDGER_TXN_PAGE_SIZE - 1)
+    if (error) return { rows: [], error: error.message }
+    rows.push(...((data ?? []) as LedgerTxnRow[]))
+    if (!data || data.length < LEDGER_TXN_PAGE_SIZE) break
+    from += LEDGER_TXN_PAGE_SIZE
+  }
+  return { rows, error: null }
+}
+
 /** Records a hand-entered transaction. */
 export async function addLedgerTransaction(input: {
   accountId: string
@@ -388,6 +432,13 @@ export async function importOfx(
     return { error: 'That file is too large to import.' }
   }
 
+  // Ownership is a cheap indexed lookup; parsing is real work over text an
+  // attacker fully controls. Check the account belongs to this caller before
+  // spending any effort parsing what they uploaded.
+  if (!(await belongsToCaller(supabase, 'ledger_accounts', accountId))) {
+    return { error: 'That account does not belong to you.' }
+  }
+
   let parsed: ParsedOfx
   try {
     parsed = parseOfx(fileText)
@@ -395,17 +446,10 @@ export async function importOfx(
     return { error: err instanceof Error ? err.message : 'That file could not be read.' }
   }
 
-  if (!(await belongsToCaller(supabase, 'ledger_accounts', accountId))) {
-    return { error: 'That account does not belong to you.' }
-  }
+  const { rows: existingRows, error: existingError } = await fetchAllLedgerTransactions(supabase, accountId)
+  if (existingError) return { error: existingError }
 
-  const { data: existingRows, error: existingError } = await supabase
-    .from('ledger_transactions')
-    .select('id, date, amount_cents, import_id, source')
-    .eq('account_id', accountId)
-  if (existingError) return { error: existingError.message }
-
-  const plan = planImport(parsed.transactions, (existingRows ?? []) as ExistingTxn[])
+  const plan = planImport(parsed.transactions, existingRows as ExistingTxn[])
 
   let matched = 0
   let duplicates = plan.duplicates.length
@@ -483,13 +527,10 @@ export async function reconcileAccount(input: {
     .maybeSingle()
   if (!account) return { error: 'That account does not belong to you.' }
 
-  const { data: rows, error: rowsError } = await supabase
-    .from('ledger_transactions')
-    .select('amount_cents, cleared')
-    .eq('account_id', input.accountId)
-  if (rowsError) return { error: rowsError.message }
+  const { rows, error: rowsError } = await fetchAllLedgerTransactions(supabase, input.accountId)
+  if (rowsError) return { error: rowsError }
 
-  const cleared = clearedBalance(account.opening_balance_cents, (rows ?? []) as BalanceLike[])
+  const cleared = clearedBalance(account.opening_balance_cents, rows as BalanceLike[])
   const diff = input.statementBalanceCents - cleared
 
   if (diff !== 0 && !input.createAdjustment) {
