@@ -58,7 +58,7 @@ type BatchRow = {
   whereSpent: string
   amount: string
   spentOn: string
-  /** Mirrors Row's own field — true unless Dan ticks "My cost" on this row. */
+  /** Mirrors Row's own field — true unless Dan ticks "Non-reimbursable" on this row. */
   billable: boolean
   /** Ticked rows are inserted by Add all; unticked ones are skipped and their upload cleaned up. */
   included: boolean
@@ -1223,7 +1223,7 @@ export default function ExpenseLog({
                 my-cost row exists. A show with none (every show, before this
                 feature existed) reads exactly as before: just the total. */}
             {myCostTotal > 0
-              ? `Billable ${formatUSD(billableTotal)} · My costs ${formatUSD(myCostTotal)}`
+              ? `Billable ${formatUSD(billableTotal)} · Non-reimbursable ${formatUSD(myCostTotal)}`
               : formatUSD(billableTotal)}
             {missing > 0 && (
               <span className="text-danger">
@@ -1280,7 +1280,7 @@ export default function ExpenseLog({
                 {e.billable === false && (
                   <span className="text-[11px] font-bold uppercase tracking-wider text-muted
                                    bg-surface-2 rounded-field px-1.5 py-0.5">
-                    My cost
+                    Non-reimbursable
                   </span>
                 )}
                 {/* Danger only reaches a billable row — that is the one kind
@@ -1295,10 +1295,10 @@ export default function ExpenseLog({
                   type="button"
                   disabled={locked || pending}
                   onClick={() => toggleBillable(e.id, !e.billable)}
-                  aria-label={`${e.billable !== false ? 'Make my cost' : 'Make billable'}: ${e.where_spent}`}
+                  aria-label={`${e.billable !== false ? 'Make non-reimbursable' : 'Make billable'}: ${e.where_spent}`}
                   className="underline hover:text-ink disabled:opacity-40"
                 >
-                  {e.billable !== false ? 'Make my cost' : 'Make billable'}
+                  {e.billable !== false ? 'Make non-reimbursable' : 'Make billable'}
                 </button>
               </span>
             </li>
@@ -1357,10 +1357,10 @@ export default function ExpenseLog({
                     checked={!row.billable}
                     disabled={locked || pending}
                     onChange={() => toggleBatchBillable(row.id)}
-                    aria-label={`My cost for receipt ${i + 1}`}
+                    aria-label={`Non-reimbursable for receipt ${i + 1}`}
                     className="h-4 w-4 accent-accent"
                   />
-                  My cost — per-diem, not billed to the client
+                  Non-reimbursable — per-diem, not billed to the client
                 </label>
                 <p className="ml-6 mt-1 text-xs text-muted truncate">
                   {row.file.name}
@@ -1450,7 +1450,7 @@ export default function ExpenseLog({
               onChange={(e) => setMyCost(e.target.checked)}
               className="h-4 w-4 accent-accent"
             />
-            My cost — per-diem, not billed to the client
+            Non-reimbursable — per-diem, not billed to the client
           </label>
 
           <label className="sm:col-span-5 text-xs text-muted">
@@ -1467,7 +1467,7 @@ export default function ExpenseLog({
             {capture
               ? ` ${capture.file.name}${ocrNote ? ` — ${ocrNote}` : ''}`
               : (ocrNote ?? (myCost
-                  ? ' Photo or PDF. A receipt is optional for my-cost expenses — still worth keeping for tax records.'
+                  ? ' Photo or PDF. A receipt is optional for non-reimbursable expenses — still worth keeping for tax records.'
                   : ' Photo or PDF. A receipt is required before this show can be billed.'))}
           </label>
         </div>
