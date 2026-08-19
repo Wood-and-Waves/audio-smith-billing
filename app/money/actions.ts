@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { isPlainDate } from '@/lib/dates'
+import { isPlainDate, todayInChicago } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
 import { DEFAULT_CATEGORIES } from '@/lib/ledgerCategories'
 import { clearedBalance, type BalanceLike } from '@/lib/ledgerBalance'
@@ -97,6 +97,50 @@ export async function ensureDefaultCategories(): Promise<Fail | { ok: true; seed
   return { ok: true, seeded: DEFAULT_CATEGORIES.length }
 }
 
+// Dan's actual YNAB Savings funds, in the order he already thinks of them.
+const DEFAULT_ENVELOPES = ['Taxes', 'Tax Prep', 'Retained Earnings']
+
+/**
+ * Seeds the three savings-fund envelopes Dan already runs in YNAB the first
+ * time this owner opens the ledger, and never again — same idempotent-by-
+ * count shape as ensureDefaultCategories above, not name-matching, so an
+ * envelope he's since renamed isn't mistaken for "missing" and reseeded next
+ * to itself.
+ */
+export async function ensureDefaultEnvelopes(): Promise<Fail | { ok: true; seeded: number }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const { count, error: countError } = await supabase
+    .from('ledger_envelopes')
+    .select('id', { count: 'exact', head: true })
+  if (countError) return { error: countError.message }
+  if ((count ?? 0) > 0) return { ok: true, seeded: 0 }
+
+  const { error } = await supabase.from('ledger_envelopes').insert(
+    DEFAULT_ENVELOPES.map((name, sort) => ({ owner_id: user.id, name, sort })),
+  )
+  if (error) {
+    // Same race ensureDefaultCategories guards against, closed here by
+    // migration 0030's (owner_id, name) unique index instead of 0028's: two
+    // first loads can both read zero envelopes and both attempt to seed. The
+    // second writer's bulk insert now fails on that index instead of
+    // doubling every envelope — that's this call losing the race, not a real
+    // failure, so it reports the same "already seeded" outcome as the count
+    // check above.
+    if (error.code === '23505') return { ok: true, seeded: 0 }
+    return { error: error.message }
+  }
+
+  // No revalidatePath('/money') here — this runs during app/money/page.tsx's
+  // own render (Next 16 throws if a revalidation runs mid-render, since it's
+  // meant for the aftermath of a user-triggered Server Action, not a page's
+  // own data loading), and that same render is about to read the envelopes
+  // it just seeded fresh anyway, so there's nothing stale left to fix.
+  return { ok: true, seeded: DEFAULT_ENVELOPES.length }
+}
+
 /**
  * Creates or edits a category. A null id creates one, appended to the end of
  * its group (max sort in that group, plus one) so a new category never
@@ -164,6 +208,64 @@ export async function saveCategory(input: {
 }
 
 /**
+ * Creates or edits an envelope. A null id creates one, appended to the end
+ * (max sort across all envelopes, plus one) so a new envelope never jumps
+ * ahead of the ones Dan already ordered by hand — same shape as saveCategory
+ * above, minus the per-group scoping, since envelopes aren't grouped.
+ */
+export async function saveEnvelope(input: {
+  id: string | null
+  name: string
+  hidden: boolean
+}): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const name = input.name.trim()
+  if (!name) return { error: 'Give the envelope a name.' }
+
+  if (input.id === null) {
+    // RLS already scopes this to the caller's own rows, same as every other
+    // owner-scoped select in this file — no explicit owner_id filter needed.
+    const { data: top, error: sortError } = await supabase
+      .from('ledger_envelopes')
+      .select('sort')
+      .order('sort', { ascending: false })
+      .limit(1)
+    if (sortError) return { error: sortError.message }
+    const nextSort = (top?.[0]?.sort ?? -1) + 1
+
+    const { error } = await supabase.from('ledger_envelopes').insert({
+      owner_id: user.id,
+      name,
+      sort: nextSort,
+      hidden: input.hidden,
+    })
+    if (error) {
+      // Migration 0030's unique index (owner_id, name) — same race
+      // ensureDefaultEnvelopes already guards against, but here it's a
+      // genuine duplicate name Dan typed by hand, not a seeding race, so it
+      // gets a message he can read instead of Postgres's raw constraint text.
+      if (error.code === '23505') return { error: `You already have an envelope named "${name}".` }
+      return { error: error.message }
+    }
+  } else {
+    const { error } = await supabase
+      .from('ledger_envelopes')
+      .update({ name, hidden: input.hidden })
+      .eq('id', input.id)
+    if (error) {
+      if (error.code === '23505') return { error: `You already have an envelope named "${name}".` }
+      return { error: error.message }
+    }
+  }
+
+  revalidatePath('/money')
+  return { ok: true }
+}
+
+/**
  * Verifies a caller-supplied id actually belongs to this owner, the same way
  * createShow scopes a rate_card_id to its client and addExpense scopes a
  * receipt path to its show — a foreign key check inside Postgres runs with
@@ -173,11 +275,65 @@ export async function saveCategory(input: {
  */
 async function belongsToCaller(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  table: 'ledger_categories' | 'shows' | 'ledger_accounts',
+  table: 'ledger_categories' | 'shows' | 'ledger_accounts' | 'ledger_envelopes',
   id: string,
 ): Promise<boolean> {
   const { data } = await supabase.from(table).select('id').eq('id', id).maybeSingle()
   return data !== null
+}
+
+/**
+ * Records one move of money between the Available pool (a null envelope id)
+ * and/or two envelopes. Migration 0030's ledger_envelope_moves is IMMUTABLE
+ * by design — there is no updateEnvelopeMove or deleteEnvelopeMove anywhere
+ * in this file, and there never should be: a mistaken move is corrected by
+ * entering the opposite move as a new row, the same way a bank statement is
+ * never edited after the fact, so the move history stays honest all the way
+ * back instead of being rewritten to look like the mistake never happened.
+ */
+export async function moveEnvelopeMoney(input: {
+  fromEnvelopeId: string | null
+  toEnvelopeId: string | null
+  amountCents: number
+  note: string
+}): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) {
+    return { error: 'Enter an amount to move.' }
+  }
+  if (input.fromEnvelopeId === null && input.toEnvelopeId === null) {
+    return { error: 'Pick where the money moves.' }
+  }
+  // Mirrors migration 0030's lem_direction check constraint — Available ->
+  // Available (or envelope X -> envelope X) would be a no-op pretending to
+  // be a move, so it's refused here with a message Dan can read instead of
+  // letting the insert below fail on Postgres's constraint text.
+  if (input.fromEnvelopeId === input.toEnvelopeId) {
+    return { error: 'Pick two different envelopes.' }
+  }
+
+  if (input.fromEnvelopeId !== null && !(await belongsToCaller(supabase, 'ledger_envelopes', input.fromEnvelopeId))) {
+    return { error: 'That envelope does not belong to you.' }
+  }
+  if (input.toEnvelopeId !== null && !(await belongsToCaller(supabase, 'ledger_envelopes', input.toEnvelopeId))) {
+    return { error: 'That envelope does not belong to you.' }
+  }
+
+  const { error } = await supabase.from('ledger_envelope_moves').insert({
+    owner_id: user.id,
+    from_envelope_id: input.fromEnvelopeId,
+    to_envelope_id: input.toEnvelopeId,
+    amount_cents: input.amountCents,
+    moved_on: todayInChicago(),
+    note: input.note.trim() || null,
+  })
+  if (error) return { error: error.message }
+
+  revalidatePath('/money')
+  return { ok: true }
 }
 
 type LedgerTxnRow = {
