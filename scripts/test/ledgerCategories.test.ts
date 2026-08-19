@@ -24,9 +24,9 @@ test('income categories are never deductions', () => {
   }
 })
 
-test('exactly Equipment & Gear carries the equipment flag', () => {
+test('exactly Audio Tools carries the equipment flag', () => {
   const flagged = DEFAULT_CATEGORIES.filter((c) => c.is_equipment)
-  assert.deepEqual(flagged.map((c) => c.name), ['Equipment & Gear'])
+  assert.deepEqual(flagged.map((c) => c.name), ['Audio Tools'])
 })
 
 test('sort orders are unique so the editor renders deterministically', () => {

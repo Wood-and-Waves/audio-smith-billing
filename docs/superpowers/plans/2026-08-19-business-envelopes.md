@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Context (serves as spec — Dan approved the shape and manual funding):** the budgeting layer the vision promised, YNAB Rule 1 scoped to the business checking account. The account's WORKING balance divides into named envelopes (seeded: Taxes, Gear Replacement, Insurance & Annuals, Slow-Season Buffer — editable) plus **Available to allocate** (red when over-allocated). Every allocation is an immutable move (YNAB's money-movement pattern) between Available and envelopes, so history is never a mystery. The Taxes envelope IS the tax jar: the show Profit card's set-aside number guides the manual move in; IRS payments guide moves out. NO auto-funding, NO envelope-category linkage, NO targets in v1 — those grow later (auto-feed with the invoice bridge).
+**Context (serves as spec — Dan approved the shape and manual funding):** the budgeting layer the vision promised, YNAB Rule 1 scoped to the business checking account. The account's WORKING balance divides into named envelopes (seeded with Dan's own YNAB Savings funds: Taxes, Tax Prep, Retained Earnings — editable) plus **Available to allocate** (red when over-allocated). Every allocation is an immutable move (YNAB's money-movement pattern) between Available and envelopes, so history is never a mystery. The Taxes envelope IS the tax jar: the show Profit card's set-aside number guides the manual move in; IRS payments guide moves out. NO auto-funding, NO envelope-category linkage, NO targets in v1 — those grow later (auto-feed with the invoice bridge).
 
 **Goal:** `/money/budget` — allocate the business balance into envelopes with a logged move history.
 
@@ -126,7 +126,7 @@ test('no moves: everything is available and no envelope has a balance', () => {
 
 **Files:** Modify `app/money/actions.ts` only. Mirror the file's patterns exactly.
 
-- `ensureDefaultEnvelopes(): Promise<Fail | { ok: true; seeded: number }>` — seeds `['Taxes', 'Gear Replacement', 'Insurance & Annuals', 'Slow-Season Buffer']` (sort 0..3) when the owner has zero envelopes; 23505-tolerant; NO revalidatePath (called during render, same as ensureDefaultCategories — copy its comment rationale).
+- `ensureDefaultEnvelopes(): Promise<Fail | { ok: true; seeded: number }>` — seeds `['Taxes', 'Tax Prep', 'Retained Earnings']` (sort 0..2 — Dan's actual YNAB Savings funds) when the owner has zero envelopes; 23505-tolerant; NO revalidatePath (called during render, same as ensureDefaultCategories — copy its comment rationale).
 - `saveEnvelope(input: { id: string | null; name: string; hidden: boolean }): Promise<Fail | { ok: true }>` — create (sort = max+1) / rename+hide; 23505 → `You already have an envelope named "<name>".`
 - `moveEnvelopeMoney(input: { fromEnvelopeId: string | null; toEnvelopeId: string | null; amountCents: number; note: string }): Promise<Fail | { ok: true }>` — validation: integer amount > 0 (`'Enter an amount to move.'`); not both null (`'Pick where the money moves.'`); from ≠ to; FK-ownership check (belongsToCaller pattern) on each non-null envelope id; insert with `moved_on: todayInChicago()`; revalidatePath('/money'). Moves are immutable — no update/delete actions; comment that a mistake is corrected by a counter-move (the history stays honest).
 

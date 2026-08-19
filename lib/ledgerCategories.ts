@@ -20,24 +20,28 @@ const c = (
 ): CategorySeed => ({ name, grp, sort, deductible, is_equipment })
 
 export const DEFAULT_CATEGORIES: CategorySeed[] = [
+  // Dan's own chart, lifted from the business YNAB budget he ran before this
+  // module existed (ynab-reflect export, 2026-08-19) — his words, his groups.
+  // Income is tracked per client via the PAYEE field, so two income
+  // categories suffice here. "Taxes" defaults NON-deductible on purpose:
+  // federal estimates are not a business deduction, and overstating
+  // deductions is the one direction this tool must never fail — his CPA can
+  // flip it if his state taxes belong there.
   c('Show Income', 'Income', 0, false),
   c('Other Income', 'Income', 1, false),
-  c('Equipment & Gear', 'Operations', 10, true, true),
-  c('Supplies', 'Operations', 11),
-  c('Software & Subscriptions', 'Operations', 12),
-  c('Phone', 'Operations', 13),
-  c('Internet', 'Operations', 14),
-  c('Airfare', 'Travel', 20),
-  c('Lodging', 'Travel', 21),
-  c('Meals', 'Travel', 22),
-  c('Ground Transport', 'Travel', 23),
-  c('Baggage', 'Travel', 24),
-  c('Parking & Tolls', 'Travel', 25),
-  c('Insurance', 'Business', 30),
-  c('Professional Fees', 'Business', 31),
-  c('Bank Fees', 'Business', 32),
-  c('Licenses & Dues', 'Business', 33),
-  c('Advertising', 'Business', 34),
-  c('Education', 'Business', 35),
-  c('Home Office Reimbursement', 'Business', 36),
+  c('Insurance', 'Bills', 10),
+  c('Workers Comp', 'Bills', 11),
+  c('Software', 'Bills', 12),
+  c('Subscriptions', 'Bills', 13),
+  c('Bank Fees', 'Bills', 14),
+  c('Meals and Entertainment', 'Expenses', 20),
+  c('Gig Expenses', 'Expenses', 21),
+  c('Transportation', 'Expenses', 22),
+  c('Flights', 'Expenses', 23),
+  c('Lodging', 'Expenses', 24),
+  c('Mileage Reimbursement', 'Expenses', 25),
+  c('Audio Tools', 'Purchases', 30, true, true),
+  c('Misc Business Expenses', 'Purchases', 31),
+  c('Tax Prep', 'Taxes', 40),
+  c('Taxes', 'Taxes', 41, false),
 ]
