@@ -70,12 +70,13 @@ export default function BudgetPanel({
     })
   }
 
-  // The checkbox is disabled outright whenever the envelope carries a
-  // balance — not just for the hide direction — because a funded-and-hidden
-  // row only ever appears here in the first place when it's stuck that way
-  // (the page's own filter keeps a hidden envelope visible exactly while its
-  // balance is nonzero). Emptying it is what makes both directions safe
-  // again, so there's nothing this toggle could correctly do until then.
+  // Only the HIDE direction is ever blocked. Un-hiding is always allowed —
+  // it only makes an already-hidden row more visible, never strands
+  // anything — so a funded envelope can freely come back out of hiding even
+  // though it couldn't be hidden again in that state. saveEnvelope enforces
+  // the real rule server-side (a stale second tab must not be able to hide a
+  // funded envelope just because this disable hasn't re-rendered yet); this
+  // is only the hint that saves a round trip for the common case.
   function toggleHidden(row: EnvelopeRow) {
     setError(null)
     start(async () => {
@@ -97,13 +98,25 @@ export default function BudgetPanel({
     })
   }
 
-  // Available plus every envelope currently listed, balance in the label —
-  // the same set the envelope list above shows, so a hidden-but-funded
-  // envelope (still listed) can be picked as a source to empty it out, same
-  // as any other.
+  // The main list: every unhidden envelope, plus any hidden envelope that
+  // still carries a balance — an emptied hidden envelope drops out of here
+  // (nothing left to track inline), but a funded one has to stay visible or
+  // its balance would be stranded with no row anywhere to move it back out
+  // from. Everything hidden AND at zero goes to `hiddenRows` instead: still
+  // findable, just tucked out of the way, the same "always reachable, never
+  // one-way" rule the categories editor already applies to hidden categories.
+  const mainRows = envelopes.filter((e) => !e.hidden || e.balanceCents !== 0)
+  const hiddenRows = envelopes.filter((e) => e.hidden && e.balanceCents === 0)
+
+  // Available plus every envelope in the MAIN list — the same rows the
+  // envelope list below shows inline, so a hidden-but-funded envelope (still
+  // listed there) can be picked as a source to empty it out, same as any
+  // other. Envelopes that are hidden AND empty are never offered here: they
+  // live only in the "Hidden" disclosure below, and there's nothing to move
+  // out of an envelope that's already at zero.
   const moveOptions = [
     { value: '', label: `Available · ${formatUSD(availableCents)}` },
-    ...envelopes.map((e) => ({ value: e.id, label: `${e.name} · ${formatUSD(e.balanceCents)}` })),
+    ...mainRows.map((e) => ({ value: e.id, label: `${e.name} · ${formatUSD(e.balanceCents)}` })),
   ]
 
   // Only the obvious in-UI guard (from === to, caught by the submit button's
@@ -152,12 +165,16 @@ export default function BudgetPanel({
 
       <section className="mb-10">
         <h2 className="eyebrow mb-3">Envelopes</h2>
-        {envelopes.length === 0 ? (
+        {mainRows.length === 0 ? (
           <p className="text-muted border-l-2 border-line pl-4 py-1">No envelopes yet.</p>
         ) : (
           <ul className="border-t border-line">
-            {envelopes.map((row) => {
-              const locked = row.balanceCents !== 0
+            {mainRows.map((row) => {
+              // Only the HIDE direction is ever locked — un-hiding a row that
+              // somehow still carries a balance (a stale second tab, mostly)
+              // is always let through, since it only makes the money MORE
+              // reachable, never less.
+              const hideLocked = !row.hidden && row.balanceCents !== 0
               return (
                 <li key={row.id}
                     className="border-b border-line py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -175,13 +192,13 @@ export default function BudgetPanel({
                   </span>
                   <label
                     className="flex items-center gap-1.5 text-xs text-muted"
-                    title={locked ? 'Empty it before hiding' : undefined}
+                    title={hideLocked ? 'Empty it before hiding' : undefined}
                   >
                     <input
                       type="checkbox"
                       className="h-4 w-4 accent-accent"
                       checked={row.hidden}
-                      disabled={pending || locked}
+                      disabled={pending || hideLocked}
                       onChange={() => toggleHidden(row)}
                     />
                     Hidden
@@ -206,6 +223,33 @@ export default function BudgetPanel({
               </button>
             </li>
           </ul>
+        )}
+
+        {hiddenRows.length > 0 && (
+          // Same disclosure idiom as the archived-clients list (app/clients/page.tsx):
+          // collapsed and muted by default, but never gone — this is the one
+          // place a hidden-and-emptied envelope can still be found and
+          // brought back, so its name isn't squatted by migration 0030's
+          // unique index forever.
+          <details className="mt-6 group">
+            <summary className="eyebrow cursor-pointer select-none list-none flex items-center gap-2">
+              <span className="transition-transform group-open:rotate-90">›</span>
+              Hidden ({hiddenRows.length})
+            </summary>
+            <ul className="border-t border-line mt-4">
+              {hiddenRows.map((row) => (
+                <li key={row.id}
+                    className="border-b border-line py-2 flex items-center justify-between gap-3 text-sm text-muted">
+                  <span>{row.name}</span>
+                  <button type="button" onClick={() => toggleHidden(row)} disabled={pending}
+                          className="px-3 py-1 text-xs font-semibold uppercase tracking-wider rounded-field
+                                     border border-line text-muted hover:text-ink disabled:opacity-40">
+                    Unhide
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </details>
         )}
       </section>
 

@@ -165,13 +165,15 @@ export default async function MoneyBudgetPage() {
   const balances = envelopeBalances(moveRows as EnvelopeMoveLike[])
   const availableCents = availableToAllocate(workingBalanceCents, moveRows as EnvelopeMoveLike[])
 
-  // Unhidden envelopes in their own sort order, PLUS hidden ones that still
-  // carry a nonzero balance — an emptied hidden envelope drops off the list
-  // entirely (nothing left to track), but a funded one has to stay visible or
-  // its balance would be stranded with no row anywhere to move it back out
-  // from. Computed AFTER balances, never before, for exactly that reason.
+  // Every envelope, hidden ones included, in their own sort order — same
+  // reasoning as the categories precedent (app/money/categories/page.tsx):
+  // hiding an envelope must never be one-way, so nothing is dropped here or
+  // its name would stay squatted by migration 0030's unique index forever
+  // with no path back. BudgetPanel decides how a hidden row is shown (inline
+  // still, next to its balance, while funded; tucked into the "Hidden"
+  // disclosure once it's drained to zero) — this page just hands over every
+  // row with its balance attached, computed AFTER the moves are read.
   const envelopes: EnvelopeRow[] = (envelopeRows ?? [])
-    .filter((e) => !e.hidden || (balances.get(e.id) ?? 0) !== 0)
     .map((e) => ({ id: e.id, name: e.name, hidden: e.hidden, balanceCents: balances.get(e.id) ?? 0 }))
 
   // Every envelope name, not just the visible list above — a move made years

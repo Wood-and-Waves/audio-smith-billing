@@ -6,6 +6,7 @@ import { isPlainDate, todayInChicago } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
 import { DEFAULT_CATEGORIES } from '@/lib/ledgerCategories'
 import { clearedBalance, type BalanceLike } from '@/lib/ledgerBalance'
+import { envelopeBalances, type EnvelopeMoveLike } from '@/lib/envelopes'
 import { parseOfx, type ParsedOfx } from '@/lib/ofx'
 import { planImport, type ExistingTxn } from '@/lib/ledgerImport'
 import { normalizePayee, rememberedCategories, memoryKey } from '@/lib/payeeMemory'
@@ -207,6 +208,40 @@ export async function saveCategory(input: {
   return { ok: true }
 }
 
+const ENVELOPE_MOVE_PAGE_SIZE = 1000
+
+/**
+ * Every ledger_envelope_moves row that named this envelope on either side,
+ * paged past PostgREST's default 1000-row cap — same paged shape as
+ * fetchAllLedgerTransactions further down, narrowed to the three columns
+ * envelopeBalances (lib/envelopes) needs to add up. A move can only ever
+ * name this envelope as its from side, its to side, or both across
+ * different moves (never both at once on the SAME move — migration 0030's
+ * lem_direction check) — the OR below is exactly "this envelope was one
+ * side of the move."
+ */
+async function fetchEnvelopeMoves(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  envelopeId: string,
+): Promise<{ rows: EnvelopeMoveLike[]; error: string | null }> {
+  const rows: EnvelopeMoveLike[] = []
+  let from = 0
+  for (;;) {
+    const { data, error } = await supabase
+      .from('ledger_envelope_moves')
+      .select('from_envelope_id, to_envelope_id, amount_cents')
+      .or(`from_envelope_id.eq.${envelopeId},to_envelope_id.eq.${envelopeId}`)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + ENVELOPE_MOVE_PAGE_SIZE - 1)
+    if (error) return { rows: [], error: error.message }
+    rows.push(...((data ?? []) as EnvelopeMoveLike[]))
+    if (!data || data.length < ENVELOPE_MOVE_PAGE_SIZE) break
+    from += ENVELOPE_MOVE_PAGE_SIZE
+  }
+  return { rows, error: null }
+}
+
 /**
  * Creates or edits an envelope. A null id creates one, appended to the end
  * (max sort across all envelopes, plus one) so a new envelope never jumps
@@ -251,6 +286,19 @@ export async function saveEnvelope(input: {
       return { error: error.message }
     }
   } else {
+    // BudgetPanel's own checkbox disable is a hint, not the invariant — a
+    // stale second tab (still showing a balance that's since changed) or a
+    // request replayed by hand must not be able to strand money in a hidden
+    // envelope, since the Move Selects stop offering a hidden-and-empty row
+    // as a source the moment it's hidden. Un-hiding never hits this: making
+    // an envelope more visible again can't strand anything.
+    if (input.hidden) {
+      const { rows: moves, error: movesError } = await fetchEnvelopeMoves(supabase, input.id)
+      if (movesError) return { error: movesError }
+      const balanceCents = envelopeBalances(moves).get(input.id) ?? 0
+      if (balanceCents !== 0) return { error: 'Empty this envelope before hiding it.' }
+    }
+
     const { error } = await supabase
       .from('ledger_envelopes')
       .update({ name, hidden: input.hidden })
