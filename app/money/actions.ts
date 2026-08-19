@@ -9,11 +9,11 @@ import { clearedBalance, type BalanceLike } from '@/lib/ledgerBalance'
 import { parseOfx, type ParsedOfx } from '@/lib/ofx'
 import { planImport, type ExistingTxn } from '@/lib/ledgerImport'
 import { normalizePayee, rememberedCategories, memoryKey } from '@/lib/payeeMemory'
+import { validateTxnShape, isSaneLedgerDate, type LedgerKind } from '@/lib/ledgerRules'
 
 type Fail = { error: string }
 
-type LedgerKind = 'income' | 'expense' | 'owner_pay' | 'transfer'
-const VALID_KINDS: readonly LedgerKind[] = ['income', 'expense', 'owner_pay', 'transfer']
+const SANE_DATE_ERROR = "That date is outside the ledger's range (1990–2100)."
 
 /** Creates the one checking account a ledger starts from. */
 export async function createLedgerAccount(input: {
@@ -31,6 +31,7 @@ export async function createLedgerAccount(input: {
     return { error: 'Opening balance must be a whole number of cents.' }
   }
   if (!isPlainDate(input.openingDate)) return { error: 'Pick an opening date.' }
+  if (!isSaneLedgerDate(input.openingDate)) return { error: SANE_DATE_ERROR }
 
   const { data, error } = await supabase
     .from('ledger_accounts')
@@ -46,29 +47,6 @@ export async function createLedgerAccount(input: {
 
   revalidatePath('/money')
   return { ok: true, id: data.id }
-}
-
-/** Renames an account or opens/closes it. Opening balance and date are frozen at creation. */
-export async function updateLedgerAccount(input: {
-  id: string
-  name: string
-  closed: boolean
-}): Promise<Fail | { ok: true }> {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not signed in.' }
-
-  const name = input.name.trim()
-  if (!name) return { error: 'Give the account a name.' }
-
-  const { error } = await supabase
-    .from('ledger_accounts')
-    .update({ name, closed: input.closed })
-    .eq('id', input.id)
-  if (error) return { error: error.message }
-
-  revalidatePath('/money')
-  return { ok: true }
 }
 
 /**
@@ -186,41 +164,6 @@ export async function saveCategory(input: {
 }
 
 /**
- * Mirrors the DB's own check constraints (lt_income_positive,
- * lt_outflow_negative, lt_nocat_for_owner_or_transfer — migration 0027) so a
- * bad row is refused with a message a human can read, before it ever reaches
- * Postgres's raw constraint-violation text.
- */
-function validateTxnShape(input: {
-  amountCents: number
-  kind: string
-  categoryId: string | null
-}): Fail | null {
-  if (!VALID_KINDS.includes(input.kind as LedgerKind)) {
-    return { error: `"${input.kind}" is not a transaction kind.` }
-  }
-  if (!Number.isInteger(input.amountCents) || input.amountCents === 0) {
-    return { error: 'Enter a nonzero amount.' }
-  }
-  if (input.kind === 'income' && input.amountCents <= 0) {
-    return { error: 'Income must be a positive amount.' }
-  }
-  if (input.kind === 'expense' && input.amountCents >= 0) {
-    return { error: 'Expenses must be a negative amount.' }
-  }
-  if (input.kind === 'owner_pay' && input.amountCents >= 0) {
-    return { error: 'Owner pay must be a negative amount.' }
-  }
-  // Paying yourself is not a deduction, and a transfer moves money between
-  // your own accounts — neither ever carries a category (the DB agrees: see
-  // lt_nocat_for_owner_or_transfer).
-  if ((input.kind === 'owner_pay' || input.kind === 'transfer') && input.categoryId !== null) {
-    return { error: 'Owner pay and transfers do not use a category.' }
-  }
-  return null
-}
-
-/**
  * Verifies a caller-supplied id actually belongs to this owner, the same way
  * createShow scopes a rate_card_id to its client and addExpense scopes a
  * receipt path to its show — a foreign key check inside Postgres runs with
@@ -308,6 +251,7 @@ export async function addLedgerTransaction(input: {
   if (!user) return { error: 'Not signed in.' }
 
   if (!isPlainDate(input.date)) return { error: 'Pick a date.' }
+  if (!isSaneLedgerDate(input.date)) return { error: SANE_DATE_ERROR }
   const shapeError = validateTxnShape(input)
   if (shapeError) return shapeError
 
@@ -370,6 +314,7 @@ export async function updateLedgerTransaction(input: {
   if (existing.cleared === 'reconciled') return { error: 'Reconciled transactions are locked.' }
 
   if (!isPlainDate(input.date)) return { error: 'Pick a date.' }
+  if (!isSaneLedgerDate(input.date)) return { error: SANE_DATE_ERROR }
   const shapeError = validateTxnShape(input)
   if (shapeError) return shapeError
 
@@ -616,6 +561,17 @@ export async function importOfx(
     return { error: err instanceof Error ? err.message : 'That file could not be read.' }
   }
 
+  // Same clean-abort shape as the parse failure above: a statement with even
+  // one date outside the sane range refuses the WHOLE batch before any row is
+  // written, rather than importing the good rows and silently skipping the
+  // bad one — a partial import from a file that's actually corrupt (a
+  // misread DTPOSTED, most likely) would be harder to notice and harder to
+  // undo than just refusing the file.
+  const badRow = parsed.transactions.find((t) => !isSaneLedgerDate(t.date))
+  if (badRow) {
+    return { error: `That statement has a transaction dated ${badRow.date}, outside the ledger's range (1990–2100).` }
+  }
+
   const { rows: existingRows, error: existingError } = await fetchAllLedgerTransactions(supabase, accountId)
   if (existingError) return { error: existingError }
 
@@ -785,60 +741,30 @@ export async function reconcileAccount(input: {
     }
   }
 
-  // The adjustment row's own id, once booked — kept OUT of the lock pass
-  // below on purpose (I5): it exists to make today's numbers balance, but if
-  // Dan mis-keyed the statement balance he needs to still be able to edit or
-  // delete it. It sits as an ordinary 'cleared' row until the NEXT
-  // reconcile, which locks it in like any other row confirmed by that later
-  // statement.
-  let adjustmentId: string | null = null
-  if (diff !== 0 && input.createAdjustment) {
-    const { data: adjustment, error } = await supabase
-      .from('ledger_transactions')
-      .insert({
-        owner_id: user.id,
-        account_id: input.accountId,
-        date: input.reconciledOn,
-        amount_cents: diff,
-        kind: diff > 0 ? 'income' : 'expense',
-        category_id: null,
-        payee: 'Balance Adjustment',
-        cleared: 'cleared',
-      })
-      .select('id')
-      .single()
-    if (error) return { error: error.message }
-    adjustmentId = adjustment.id
-  }
-
-  // Every 'cleared' row dated on/before the statement — the same date scope
-  // as the balance math above, and for the same reason (a later-dated
-  // hand-cleared row hasn't been confirmed by this statement) — is locked to
-  // 'reconciled' together, because they were all just confirmed against it.
-  // EXCLUDES the adjustment row just booked above, if any: see its own
-  // comment for why it has to stay editable one more cycle.
-  const lockQuery = supabase
-    .from('ledger_transactions')
-    .update({ cleared: 'reconciled' })
-    .eq('account_id', input.accountId)
-    .eq('cleared', 'cleared')
-    .lte('date', input.reconciledOn)
-  const { error: lockError } = await (adjustmentId ? lockQuery.neq('id', adjustmentId) : lockQuery)
-  if (lockError) return { error: lockError.message }
-
-  const { error: reconError } = await supabase.from('ledger_reconciliations').insert({
-    owner_id: user.id,
-    account_id: input.accountId,
-    statement_balance_cents: input.statementBalanceCents,
-    reconciled_on: input.reconciledOn,
+  // From here down, this action only DECIDES — the diff above, and whether
+  // it should be booked as an adjustment. Migration 0029's
+  // reconcile_ledger_account APPLIES that decision: lock the cleared rows,
+  // book the adjustment (if any) as merely 'cleared' — never straight to
+  // 'reconciled', so a mis-keyed statement balance is still correctable up
+  // until the NEXT reconcile locks it in — write the reconciliation record,
+  // and stamp last_reconciled_at, all as one transaction. The four separate
+  // writes this action used to make by hand (adjustment insert, lock update,
+  // reconciliation insert, account update) are gone; a failure partway
+  // through used to leave rows locked with no reconciliation record and no
+  // way back, which a single atomic function can't do. p_adjustment_cents is
+  // 0 unless this is the createAdjustment path — a plain reconcile that
+  // already matches the statement books nothing. The function's own CASE
+  // (p_adjustment_cents > 0 -> income, else expense) is exactly the sign
+  // validateTxnShape/the DB's check constraints would require of a manual
+  // row with this amount, so nothing bypasses lt_income_positive /
+  // lt_outflow_negative by going through the RPC instead of a normal insert.
+  const { error: rpcError } = await supabase.rpc('reconcile_ledger_account', {
+    p_account: input.accountId,
+    p_statement_cents: input.statementBalanceCents,
+    p_reconciled_on: input.reconciledOn,
+    p_adjustment_cents: diff !== 0 && input.createAdjustment ? diff : 0,
   })
-  if (reconError) return { error: reconError.message }
-
-  const { error: acctError } = await supabase
-    .from('ledger_accounts')
-    .update({ last_reconciled_at: new Date().toISOString() })
-    .eq('id', input.accountId)
-  if (acctError) return { error: acctError.message }
+  if (rpcError) return { error: rpcError.message }
 
   revalidatePath('/money')
   return { ok: true, adjustedCents: diff }
