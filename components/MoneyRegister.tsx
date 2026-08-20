@@ -645,6 +645,13 @@ export default function MoneyRegister({
                   <span className="tabular font-semibold shrink-0">{formatUSD(t.amount_cents)}</span>
                 </div>
 
+                {/* The note, right on the row — 172 of the backfilled rows
+                    carry one ("PwC - Assurance July") and hiding them behind
+                    Edit made the register look like they'd been dropped. */}
+                {t.memo && (
+                  <p className="mt-0.5 text-xs text-muted truncate">{t.memo}</p>
+                )}
+
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
                   {inlineCategory ? (
                     <Select
