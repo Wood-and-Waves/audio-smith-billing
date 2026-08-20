@@ -58,14 +58,23 @@ export default function InvoiceRow({
             {invoice.number}
           </span>
 
-          {/* work_for inline, not a second line: the row is already two lines
-              tall on a phone (client name, then status/date below), and this
-              keeps that. It truncates together with the name inside the same
-              min-w-0/truncate span — the two invoices this exists to tell
-              apart (#385 "PwC Tax Start", #388 "GLS 2026") are both short
-              enough that truncation here is the exception, not the norm. */}
-          <span className={`min-w-0 truncate sm:flex-1 ${emphasis ? 'font-semibold' : ''}`}>
-            {name}{invoice.work_for ? <span className="text-muted font-normal"> · {invoice.work_for}</span> : null}
+          {/* The show title matters as much as the client (Dan). On a phone
+              the two share one truncating line only when both are short —
+              a long client name would swallow the title entirely — so the
+              title takes its own line there. Desktop has the width for the
+              inline " · " form. */}
+          <span className={`min-w-0 sm:flex-1 ${emphasis ? 'font-semibold' : ''}`}>
+            <span className="block truncate">
+              {name}
+              {invoice.work_for
+                ? <span className="hidden sm:inline text-muted font-normal"> · {invoice.work_for}</span>
+                : null}
+            </span>
+            {invoice.work_for && (
+              <span className="block truncate text-muted font-normal sm:hidden">
+                {invoice.work_for}
+              </span>
+            )}
           </span>
 
           <span className="tabular font-semibold row-span-2 self-center text-right
