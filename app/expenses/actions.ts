@@ -169,6 +169,72 @@ export async function setExpenseBillable(
 }
 
 /**
+ * Swaps an expense's enhanced receipt for a freshly re-cropped one — the
+ * fix-later flow, after Dan re-adjusts a saved receipt's corners. The new
+ * file is already uploaded by the time this runs, same reasoning as
+ * addExpense's own files-before-row comment.
+ */
+export async function replaceExpenseReceipt(
+  expenseId: string,
+  newEnhancedPath: string,
+): Promise<Fail | { ok: true; warning?: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const { data: expense } = await supabase
+    .from('expenses')
+    .select('show_id, receipt_path, receipt_original, shows(status)')
+    .eq('id', expenseId).maybeSingle()
+  if (!expense) return { error: 'That expense no longer exists.' }
+
+  const row = expense as unknown as {
+    show_id: string
+    receipt_path: string | null
+    receipt_original: string | null
+    shows: { status: string } | null
+  }
+  // A billed show's invoice PDF already embeds today's receipt_path as a
+  // frozen artifact — swapping the file out from under it would desync
+  // what the client was actually sent.
+  if (row.shows?.status === 'billed') {
+    return { error: 'This show is billed. Unlink it before editing.' }
+  }
+
+  // This re-flattens an EXISTING original — never a back door for
+  // attaching a first receipt to a row that never had one.
+  if (!row.receipt_original) {
+    return { error: 'This expense has no original photo to re-crop.' }
+  }
+
+  // Same folder-ownership check as addExpense's, for the same reason:
+  // Storage RLS constrains writes to the caller's own folder[1] but says
+  // nothing about which show's key the path names.
+  const prefix = `${user.id}/${row.show_id}/`
+  if (!newEnhancedPath.startsWith(prefix)) {
+    return { error: 'That receipt was not uploaded to this show.' }
+  }
+
+  const { error } = await supabase
+    .from('expenses').update({ receipt_path: newEnhancedPath }).eq('id', expenseId)
+  if (error) return { error: error.message }
+
+  // The row already points at the new file, so a failure to remove the old
+  // one is only a leftover object in storage, not a broken expense — same
+  // warning-not-failure policy as deleteExpense above.
+  let warning: string | undefined
+  if (row.receipt_path && row.receipt_path !== newEnhancedPath) {
+    const { error: storageError } = await supabase.storage.from('receipts').remove([row.receipt_path])
+    if (storageError) {
+      warning = `The receipt was swapped, but the old file could not be removed from storage: ${storageError.message}`
+    }
+  }
+
+  revalidatePath(`/shows/${row.show_id}`)
+  return warning ? { ok: true, warning } : { ok: true }
+}
+
+/**
  * Short-lived read URLs, keyed by storage path.
  *
  * `storageError` is true only for a genuine top-level failure from Storage

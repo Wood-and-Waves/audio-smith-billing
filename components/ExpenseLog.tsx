@@ -8,7 +8,8 @@ import { formatDateShort, todayInChicago } from '@/lib/dates'
 import { CATEGORY_LABEL, CATEGORY_ORDER, expensesMissingReceipts, type ExpenseCategory } from '@/lib/expenses'
 import { scaleToFit, contrastBounds, buildLut, applyContrastStretch, JPEG_QUALITY } from '@/lib/receiptImage'
 import {
-  addExpense, deleteExpense, extractReceipt, listShowOriginals, setExpenseBillable,
+  addExpense, deleteExpense, extractReceipt, listShowOriginals, replaceExpenseReceipt,
+  setExpenseBillable, signedReceiptUrls,
 } from '@/app/expenses/actions'
 import {
   dropExactRepeats, duplicateOf, markDuplicates, type NamedCandidate,
@@ -547,6 +548,21 @@ export default function ExpenseLog({
   useEffect(() => { pendingAdjustRef.current = pendingAdjust }, [pendingAdjust])
   useEffect(() => () => {
     if (pendingAdjustRef.current) URL.revokeObjectURL(pendingAdjustRef.current.url)
+  }, [])
+
+  // Fix-later: re-adjusting a SAVED expense's corners from its untouched
+  // original. `file` is the original re-fetched from Storage (as a File, for
+  // `enhance`); `url` is its object URL for the adjuster's <img>; `busy` is
+  // true only while enhance+upload+replaceExpenseReceipt are in flight, so
+  // Cancel/handles disable and the dialog stays open on a failure instead of
+  // losing the pick. Same unmount-only leak guard as pendingAdjust above.
+  const [fixLater, setFixLater] = useState<{
+    expenseId: string; file: File; url: string; quad: Quad; busy: boolean
+  } | null>(null)
+  const fixLaterRef = useRef(fixLater)
+  useEffect(() => { fixLaterRef.current = fixLater }, [fixLater])
+  useEffect(() => () => {
+    if (fixLaterRef.current) URL.revokeObjectURL(fixLaterRef.current.url)
   }, [])
 
   // Minted fresh on every file pick; an async result is applied only if it
@@ -1335,6 +1351,102 @@ export default function ExpenseLog({
   }
 
   /**
+   * Re-fetches a saved expense's untouched original, re-detects its
+   * corners, and opens the shared adjuster on it. Wrapped in `start` (same
+   * `pending` the row buttons already disable on) purely so a second click
+   * on this or any other row button can't fire while the fetch is still in
+   * flight — nothing here updates a `pending`-gated row until `setFixLater`
+   * at the very end.
+   */
+  function openFixLater(row: Row) {
+    setError(null)
+    start(async () => {
+      const original = row.receipt_original
+      if (!original) return // belt-and-suspenders: the button itself is gated on this
+
+      const { urls, storageError } = await signedReceiptUrls([original])
+      if (storageError) {
+        setError("That receipt's original is no longer in storage.")
+        return
+      }
+      const signedUrl = urls[original]
+      if (!signedUrl) {
+        setError("That receipt's original is no longer in storage.")
+        return
+      }
+
+      let response: Response
+      try {
+        response = await fetch(signedUrl)
+      } catch {
+        setError("That receipt's original is no longer in storage.")
+        return
+      }
+      if (!response.ok) {
+        setError("That receipt's original is no longer in storage.")
+        return
+      }
+
+      const blob = await response.blob()
+      const file = new File([blob], 'original.jpg', { type: blob.type || 'image/jpeg' })
+      const detected = await detectCorners(file).catch(() => null)
+      setFixLater({
+        expenseId: row.id, file, url: URL.createObjectURL(blob), quad: detected ?? INSET_QUAD, busy: false,
+      })
+    })
+  }
+
+  /**
+   * The adjuster's confirm for fix-later: re-flatten the untouched original
+   * with the (possibly hand-adjusted) quad, upload it under a NEW stamped
+   * path — never upsert in place, so a half-failed swap can never leave the
+   * row pointing at a half-written object — then swap it onto the row via
+   * `replaceExpenseReceipt`. `busy` is local state, not `pending`/`start`:
+   * the dialog must stay open and re-enable on a failure, which a shared
+   * transition flag can't express per-dialog.
+   */
+  async function confirmFixLater(quad: Quad | null) {
+    if (!fixLater) return
+    const { expenseId, file, url } = fixLater
+    setError(null)
+    setFixLater((prev) => (prev ? { ...prev, busy: true } : prev))
+
+    const supabase = createClient()
+    let newPath: string
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('Not signed in.')
+      const enhanced = await enhance(file, quad)
+      newPath = `${user.id}/${showId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-adjusted-enhanced.jpg`
+      const { error: uploadError } = await supabase.storage.from('receipts')
+        .upload(newPath, enhanced, { contentType: 'image/jpeg' })
+      if (uploadError) throw new Error(uploadError.message)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not process that photo.')
+      setFixLater((prev) => (prev ? { ...prev, busy: false } : prev))
+      return
+    }
+
+    const result = await replaceExpenseReceipt(expenseId, newPath)
+    if ('error' in result) {
+      // The row was never touched -- the freshly uploaded file is now an
+      // orphan nobody will ever attach, same policy as removeSuperseded's
+      // other callers.
+      removeSuperseded([newPath])
+      setError(result.error)
+      setFixLater((prev) => (prev ? { ...prev, busy: false } : prev))
+      return
+    }
+
+    URL.revokeObjectURL(url)
+    setFixLater(null)
+    router.refresh()
+    // The expense is swapped either way -- a storage warning here is not a
+    // rollback, same as remove()'s own handling of deleteExpense's warning.
+    if (result.warning) setError(result.warning)
+  }
+
+  /**
    * Saves every original for this show as one zip.
    *
    * Deliberately a desktop action. The archive is tens of megabytes and the
@@ -1453,6 +1565,23 @@ export default function ExpenseLog({
         />
       )}
 
+      {/* Fix-later: re-adjusting a saved expense's corners. Cancel is
+          disabled by CornerAdjuster itself while busy, so this only ever
+          runs between attempts -- never while a save is in flight. */}
+      {fixLater && (
+        <CornerAdjuster
+          src={fixLater.url}
+          initialQuad={fixLater.quad}
+          confirmLabel="Save"
+          busy={fixLater.busy}
+          onConfirm={(quad) => void confirmFixLater(quad)}
+          onCancel={() => {
+            URL.revokeObjectURL(fixLater.url)
+            setFixLater(null)
+          }}
+        />
+      )}
+
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-4">
         <h2 className="eyebrow">Expenses</h2>
         {expenses.length > 0 && (
@@ -1537,6 +1666,19 @@ export default function ExpenseLog({
                 >
                   {e.billable !== false ? 'Make non-reimbursable' : 'Make billable'}
                 </button>
+                {/* PDFs skip detection entirely (see detectCorners), so this
+                    only ever shows for a photo receipt still attached. */}
+                {e.receipt_original && !e.receipt_original.endsWith('.pdf') && e.receipt_path && (
+                  <button
+                    type="button"
+                    disabled={locked || pending}
+                    onClick={() => openFixLater(e)}
+                    aria-label={`Adjust corners: ${e.where_spent}`}
+                    className="underline hover:text-ink disabled:opacity-40"
+                  >
+                    Adjust corners
+                  </button>
+                )}
               </span>
             </li>
           ))}
