@@ -23,6 +23,7 @@ import { DETECT_MAX_EDGE, detectReceiptQuad } from '@/lib/receiptCorners'
 import { warpOutputSize, warpGray } from '@/lib/receiptWarp'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select from '@/components/ui/Select'
+import CornerAdjuster from '@/components/CornerAdjuster'
 
 type Row = {
   id: string
@@ -249,6 +250,19 @@ async function detectCorners(file: File): Promise<Quad | null> {
   } finally {
     bitmap.close()
   }
+}
+
+/**
+ * The adjuster's starting quad when detection finds nothing. Detection
+ * failing means "not found with confidence", not "nothing to mark" -- a
+ * generous 12% inset still lets Dan hand-drag the four handles onto a real
+ * receipt, and "Use full photo" is one tap away if that's not worth doing.
+ */
+const INSET_QUAD: Quad = {
+  tl: { x: 0.12, y: 0.12 },
+  tr: { x: 0.88, y: 0.12 },
+  br: { x: 0.88, y: 0.88 },
+  bl: { x: 0.12, y: 0.88 },
 }
 
 /**
@@ -511,6 +525,30 @@ export default function ExpenseLog({
   // may borrow it.
   const [ocrNote, setOcrNote] = useState<string | null>(null)
 
+  // A just-picked photo waiting on Dan to confirm/adjust its corners before
+  // anything uploads. `url` is an object URL for the adjuster's <img> --
+  // revoked on every exit (confirm, cancel, or superseded by a new pick; see
+  // onPickFile). `token` mirrors this pick's tokenRef value at pick time, so
+  // the render below can refuse to show a stale adjuster even if some future
+  // change stopped clearing it eagerly on supersession. Null means either
+  // nothing is pending or the file was a PDF, which skips this entirely.
+  const [pendingAdjust, setPendingAdjust] = useState<{
+    file: File; url: string; quad: Quad; token: number
+  } | null>(null)
+  // Confirm, cancel and a superseding pick (all in onPickFile/the adjuster's
+  // own callbacks below) already revoke pendingAdjust's object URL on their
+  // own. The one exit none of them can reach is ExpenseLog itself unmounting
+  // — a client-side navigation away from this show while a photo sits
+  // unconfirmed in the adjuster — so this ref+effect pair exists solely to
+  // catch THAT case at actual unmount, via a ref because an effect keyed on
+  // pendingAdjust would also fire (harmlessly, but needlessly) on every
+  // ordinary confirm/cancel transition alongside the explicit revoke calls.
+  const pendingAdjustRef = useRef(pendingAdjust)
+  useEffect(() => { pendingAdjustRef.current = pendingAdjust }, [pendingAdjust])
+  useEffect(() => () => {
+    if (pendingAdjustRef.current) URL.revokeObjectURL(pendingAdjustRef.current.url)
+  }, [])
+
   // Minted fresh on every file pick; an async result is applied only if it
   // still matches. This one mechanism covers three otherwise-separate races:
   // a pick superseded by a later pick, a save that landed while OCR was
@@ -550,24 +588,29 @@ export default function ExpenseLog({
   const savingRef = useRef(false)
 
   /**
-   * Reads a just-picked file: enhance, upload both copies, then OCR.
+   * Reads a just-picked file. PDFs go straight to `beginUpload` -- the
+   * adjuster only understands photos, and detection never runs on one (see
+   * `detectCorners`'s own doc comment). A photo runs corner detection first
+   * and stops at `pendingAdjust`: nothing uploads until Dan confirms,
+   * adjusts, or explicitly skips via "Use full photo" -- see the render
+   * below and `beginUpload`, which is the entire upload body this function
+   * used to run inline before the adjuster existed.
    *
    * The ONLY caller is the file input's onChange, below. No useEffect may
    * ever key this off form state (category, whereSpent, amount, spentOn) —
    * that is the plausible-looking future edit that turns one photo pick into
    * a paid API call per keystroke.
-   *
-   * The OCR call deliberately runs outside useTransition, in its own state
-   * (`ocrNote`), so it never contributes to `pending` and never gates the
-   * Add button — a receipt that fails to read must never block recording
-   * the expense. Uploads finish first, so Add is already usable (once
-   * `capture` is set) while OCR is still going in the background.
    */
   async function onPickFile(f: File | null) {
-    // Whatever was previously picked (uploaded or still in flight) is
-    // superseded now, whether or not a new file follows it.
+    // Whatever was previously picked (uploaded, still uploading, or still
+    // waiting on the adjuster) is superseded now, whether or not a new file
+    // follows it. The adjuster's object URL is revoked HERE rather than in a
+    // useEffect cleanup -- this is the one place a pick is superseded, so
+    // there is nothing a separate effect would catch that this doesn't.
     if (capture) removeSuperseded([capture.enhancedPath, capture.originalPath])
     setCapture(null)
+    if (pendingAdjust) URL.revokeObjectURL(pendingAdjust.url)
+    setPendingAdjust(null)
     setOcrNote(null)
     // A stale error from a previous failed save (or a previous failed
     // upload) must not sit in the alert paragraph forever once the user has
@@ -579,13 +622,34 @@ export default function ExpenseLog({
     const myToken = tokenRef.current
     if (!f) return
 
+    if (isPdf(f)) {
+      // PDFs never see the adjuster -- detectCorners assumes a photo.
+      void beginUpload(f, null, myToken)
+      return
+    }
+
+    const detected = await detectCorners(f).catch(() => null)
+    if (myToken !== tokenRef.current) return // superseded while detecting
+    setPendingAdjust({ file: f, url: URL.createObjectURL(f), quad: detected ?? INSET_QUAD, token: myToken })
+  }
+
+  /**
+   * Enhances and uploads both receipt copies, then kicks off OCR -- the
+   * entire body `onPickFile` used to run inline, unchanged apart from
+   * `quadNorm` threading through to `uploadReceiptPair` and the token being
+   * a parameter rather than a freshly-minted local. Callers: `onPickFile`
+   * for a PDF (quadNorm always null, no adjuster involved) and the adjuster's
+   * `onConfirm` below (quadNorm is whatever Dan confirmed, or null for "use
+   * full photo").
+   */
+  async function beginUpload(f: File, quadNorm: Quad | null, myToken: number) {
     const supabase = createClient()
     setUploading(true)
     let uploaded: { error: string } | { enhancedPath: string; originalPath: string }
     try {
       uploaded = await uploadReceiptPair(supabase, showId, f, (s) => {
         if (myToken === tokenRef.current) setOcrNote(s)
-      })
+      }, quadNorm)
     } catch (e) {
       uploaded = { error: e instanceof Error ? e.message : 'Could not process that file.' }
     } finally {
@@ -1363,6 +1427,32 @@ export default function ExpenseLog({
 
   return (
     <section className="mb-10">
+      {/* Single-photo confirm screen. Guarded on the token too, not just
+          on pendingAdjust being non-null: onPickFile already clears
+          pendingAdjust (and revokes its object URL) the instant a new pick
+          supersedes it, but this is the belt to that suspenders in case a
+          future code path sets pendingAdjust without going through there. */}
+      {pendingAdjust && pendingAdjust.token === tokenRef.current && (
+        <CornerAdjuster
+          src={pendingAdjust.url}
+          initialQuad={pendingAdjust.quad}
+          confirmLabel="Use these corners"
+          onConfirm={(quad) => {
+            const { file, url, token } = pendingAdjust
+            URL.revokeObjectURL(url)
+            setPendingAdjust(null)
+            void beginUpload(file, quad, token)
+          }}
+          onCancel={() => {
+            // Nothing uploaded yet, so this is revoke-and-clear only — never
+            // setError, which means "your expense was not saved" and there
+            // was no save attempt here to fail.
+            URL.revokeObjectURL(pendingAdjust.url)
+            setPendingAdjust(null)
+          }}
+        />
+      )}
+
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-4">
         <h2 className="eyebrow">Expenses</h2>
         {expenses.length > 0 && (
