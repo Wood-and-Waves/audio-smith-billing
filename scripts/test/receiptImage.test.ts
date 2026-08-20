@@ -3,7 +3,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { scaleToFit, contrastBounds, buildLut, MAX_EDGE } from '../../lib/receiptImage.ts'
+import { scaleToFit, contrastBounds, buildLut, MAX_EDGE, applyContrastStretch } from '../../lib/receiptImage.ts'
 
 test('a large photo is scaled to the long edge, aspect ratio intact', () => {
   const landscape = scaleToFit(4032, 3024)
@@ -129,4 +129,29 @@ test('the lut never produces a pure black-and-white image', () => {
   const lut = buildLut(50, 200)
   const distinct = new Set(Array.from(lut))
   assert.ok(distinct.size > 100, `expected a gradient, got ${distinct.size} distinct values`)
+})
+
+test('applyContrastStretch: flat plane passes through unchanged (MIN_SPAN guard)', () => {
+  const data = new Uint8ClampedArray(400).fill(128)
+  const gray = { data, width: 20, height: 20 }
+  applyContrastStretch(gray)
+  for (let i = 0; i < data.length; i++) assert.equal(data[i], 128)
+})
+
+test('applyContrastStretch: a 90..170 ramp stretches toward 0..255', () => {
+  // 20x20 plane whose values sweep 90..170 uniformly - after the stretch the
+  // range should reach near both ends, and ordering must be preserved.
+  const data = new Uint8ClampedArray(400)
+  for (let i = 0; i < 400; i++) data[i] = 90 + Math.floor((i / 399) * 80)
+  const gray = { data, width: 20, height: 20 }
+  applyContrastStretch(gray)
+  let min = 255
+  let max = 0
+  for (let i = 0; i < 400; i++) {
+    if (data[i] < min) min = data[i]
+    if (data[i] > max) max = data[i]
+    if (i > 0) assert.ok(data[i] >= data[i - 1], 'stretch must preserve ordering')
+  }
+  assert.ok(min <= 12, `min should approach 0, got ${min}`)
+  assert.ok(max >= 243, `max should approach 255, got ${max}`)
 })

@@ -8,6 +8,8 @@
 // receipts fade, and a hard cutoff erases a faint total — the single number a
 // client is most likely to query. The original is kept regardless.
 
+import type { GrayImage } from './receiptQuad.ts'
+
 /** Long edge, in pixels. Twelve of these must fit in one emailable PDF. */
 export const MAX_EDGE = 1600
 
@@ -86,4 +88,19 @@ export function buildLut(lo: number, hi: number): Uint8ClampedArray {
     lut[v] = Math.round(((v - lo) / span) * 255)
   }
   return lut
+}
+
+/**
+ * Histogram -> bounds -> LUT, applied in place. The warp path hands us a bare
+ * gray plane (the RGBA loop in the component covers the no-warp path), and
+ * because the plane was cropped to the receipt first, the histogram no longer
+ * includes the table -- the stretch improves alongside the geometry.
+ */
+export function applyContrastStretch(gray: GrayImage): void {
+  const histogram = new Array(256).fill(0)
+  const px = gray.data
+  for (let i = 0; i < px.length; i++) histogram[px[i]]++
+  const { lo, hi } = contrastBounds(histogram)
+  const lut = buildLut(lo, hi)
+  for (let i = 0; i < px.length; i++) px[i] = lut[px[i]]
 }
