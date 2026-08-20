@@ -1,6 +1,11 @@
 import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
+  // Dev-only: lets a phone on the home network load the dev server's JS.
+  // Without this, Next 16 blocks /_next/* cross-origin, the login page's
+  // script never loads, and signing in silently reloads the form. Ignored
+  // entirely in production builds.
+  allowedDevOrigins: ['192.168.68.72'],
   // The invoice PDF is rendered server-side when an invoice is emailed, which
   // reads the font and the logo off the filesystem. public/ is a CDN concern
   // to Vercel and is not bundled into a function unless it is traced here.
