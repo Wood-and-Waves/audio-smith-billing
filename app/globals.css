@@ -190,8 +190,9 @@ body {
    text box never lines up on a phone. Flattened HERE, once, so all twelve
    date inputs across the app obey the shared FIELD metrics; the native
    picker still opens on tap. (A flattened EMPTY date input shows no
-   mm/dd/yyyy hint on iOS — fine in this app, every date field initializes
-   to a real value.) */
+   mm/dd/yyyy hint on iOS — the New Show From/To fields start blank and can
+   stay blank; their labels carry the meaning, and Dan reviewed and accepted
+   the missing hint there.) */
 input[type='date'],
 input[type='time'] {
   -webkit-appearance: none;

@@ -1630,10 +1630,12 @@ export default function ExpenseLog({
           role="dialog"
           aria-modal="true"
           aria-label={`Receipt: ${viewer.label}`}
-          // Focus lands here on open (callback ref) so Escape works without
-          // a click first — same lesson as CornerAdjuster's panel.
+          // Focus lands here on open so Escape works without a click first —
+          // same lesson as CornerAdjuster's panel. The contains-guard keeps
+          // re-renders while open from yanking focus off the Close button
+          // (an inline callback ref re-runs on every render).
           tabIndex={-1}
-          ref={(el) => el?.focus()}
+          ref={(el) => { if (el && !el.contains(document.activeElement)) el.focus() }}
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4
                      outline-none cursor-zoom-out"
           onClick={() => setViewer(null)}

@@ -3,22 +3,6 @@
 The canonical list of deferred work. Each item carries just enough design that a
 future session can build it without re-discovery. Dated when added.
 
-## Receipt photo: corner-finding + flattening (2026-08-19, Dan)
-
-The batch/single receipt capture already downscales, grayscales and
-contrast-stretches in the browser (`lib/receiptImage.ts` math +
-`components/ExpenseLog.tsx`'s `enhance()` canvas wiring). Missing: detect the
-receipt's four corners in the photo and perspective-flatten it, so an
-angled-on-the-diner-table shot becomes a straight document.
-- Lives in the same browser pipeline (photos are 3–5MB; server round-trips are
-  out, same reason as the existing enhancement).
-- Approach to evaluate at build time: hand-rolled edge-scan + largest-quad
-  heuristic + a small homography/perspective remap on ImageData (pure,
-  testable math in `lib/receiptImage.ts`), vs. pulling in OpenCV.js/jscanify
-  (heavy — the pdf.js lazy-load precedent shows how to isolate it if chosen).
-- Must degrade gracefully: corners not found → current behavior, never a
-  mangled crop. OCR quality is the payoff to measure.
-
 ## W-9 on file + attach-to-invoice checkbox + annual refresh reminder (2026-08-19, Dan)
 
 New clients ask for a W-9. Wanted: upload one to the app; a checkbox on the
