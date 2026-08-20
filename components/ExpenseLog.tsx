@@ -1794,8 +1794,8 @@ export default function ExpenseLog({
               onClick={addAllBatch}
               disabled={locked || pending
                         || !batchRows.every((r) => r.status !== 'queued' && r.status !== 'reading')}
-              className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
-                         border border-line text-muted hover:text-ink disabled:opacity-40"
+              className="px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-field
+                         bg-accent-surface text-accent-ink disabled:opacity-50"
             >
               {pending ? (step ?? 'Saving…') : 'Add all'}
             </button>
