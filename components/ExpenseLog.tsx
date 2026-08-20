@@ -1839,11 +1839,11 @@ export default function ExpenseLog({
           {/* Date and Add share a private two-column row on phones (sm:contents
               dissolves it back into the outer grid). iOS paints type=date at
               its own intrinsic width regardless of the track it sits in —
-              appearance-none makes it obey like a normal field, and the auto
-              column keeps the button clear of it no matter what. */}
+              globals.css flattens all date inputs to behave like normal
+              fields, and the auto column keeps the button clear regardless. */}
           <div className="col-span-2 grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-center sm:contents">
             <input aria-label="Date" type="date" value={spentOn}
-                   className={`${FIELD_FULL} min-w-0 appearance-none`}
+                   className={`${FIELD_FULL} min-w-0`}
                    disabled={locked || pending} onChange={(e) => {
                      touchedRef.current.add('date')
                      setSpentOn(e.target.value)

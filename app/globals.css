@@ -185,6 +185,19 @@ body {
   font-feature-settings: "tnum";
 }
 
+/* iOS draws date and time inputs with its own chrome — taller than every
+   other field no matter what padding they share — so a date box beside a
+   text box never lines up on a phone. Flattened HERE, once, so all twelve
+   date inputs across the app obey the shared FIELD metrics; the native
+   picker still opens on tap. (A flattened EMPTY date input shows no
+   mm/dd/yyyy hint on iOS — fine in this app, every date field initializes
+   to a real value.) */
+input[type='date'],
+input[type='time'] {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 /* Keyboard focus stays visible everywhere. */
 :focus-visible {
   outline: 2px solid var(--accent);
