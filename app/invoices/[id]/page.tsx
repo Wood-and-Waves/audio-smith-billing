@@ -219,7 +219,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           the wrong thing to put inside that shrink-to-fit, non-wrapping button
           row: on a phone the card's w-full resolved against a circular width
           and rendered as a squeezed mess. Here it has the width it asks for. */}
-      <div className="mb-8 flex justify-end">
+      <div className="mb-8 flex justify-start sm:justify-end">
         <SendInvoicePanel
           invoiceId={inv.id}
           data={docData}
