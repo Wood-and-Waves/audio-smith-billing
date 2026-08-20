@@ -58,6 +58,10 @@ Wanted: import MileIQ data to track reimbursable miles instead of retyping them.
 
 ## Small / cosmetic
 
+- Register row memo could be more prominent (2026-08-20, Dan: "It isn't very
+  obvious. But that is OK for now" — muted line under the payee today; a
+  broader register-row UX pass is welcome when Money settles).
+
 - Recent-moves line field order differs from the original sketch (info
   complete; cosmetic).
 - Delete remains available on transfer-kind ledger rows (legitimate but
