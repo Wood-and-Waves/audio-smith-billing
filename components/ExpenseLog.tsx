@@ -565,6 +565,12 @@ export default function ExpenseLog({
     if (fixLaterRef.current) URL.revokeObjectURL(fixLaterRef.current.url)
   }, [])
 
+  // Tapping a vendor name opens the ENHANCED receipt (the flattened,
+  // contrast-stretched one — what OCR read and the invoice will embed) in a
+  // lightbox. The signed URL goes straight into the <img>; nothing is
+  // downloaded or revoked.
+  const [viewer, setViewer] = useState<{ url: string; label: string } | null>(null)
+
   // Minted fresh on every file pick; an async result is applied only if it
   // still matches. This one mechanism covers three otherwise-separate races:
   // a pick superseded by a later pick, a save that landed while OCR was
@@ -1362,6 +1368,21 @@ export default function ExpenseLog({
    * flight — nothing here updates a `pending`-gated row until `setFixLater`
    * at the very end.
    */
+  function openReceipt(row: Row) {
+    const path = row.receipt_path
+    if (!path) return
+    setError(null)
+    start(async () => {
+      const { urls, storageError } = await signedReceiptUrls([path])
+      const url = urls[path]
+      if (storageError || !url) {
+        setError('That receipt is no longer in storage.')
+        return
+      }
+      setViewer({ url, label: row.where_spent })
+    })
+  }
+
   function openFixLater(row: Row) {
     setError(null)
     start(async () => {
@@ -1604,6 +1625,28 @@ export default function ExpenseLog({
         />
       )}
 
+      {viewer && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Receipt: ${viewer.label}`}
+          // Focus lands here on open (callback ref) so Escape works without
+          // a click first — same lesson as CornerAdjuster's panel.
+          tabIndex={-1}
+          ref={(el) => el?.focus()}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4
+                     outline-none cursor-zoom-out"
+          onClick={() => setViewer(null)}
+          onKeyDown={(e) => { if (e.key === 'Escape') setViewer(null) }}
+        >
+          <img
+            src={viewer.url}
+            alt={`Receipt from ${viewer.label}`}
+            className="max-h-[90vh] max-w-full object-contain rounded-field"
+          />
+        </div>
+      )}
+
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-4">
         <h2 className="eyebrow">Expenses</h2>
         {expenses.length > 0 && (
@@ -1652,7 +1695,22 @@ export default function ExpenseLog({
             // at every width instead of leaving the break to chance.
             <li key={e.id}
                 className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-line py-2 text-sm">
-              <span className="flex-1 min-w-0 truncate">{e.where_spent}</span>
+              {/* The dotted underline is the whole affordance: this vendor
+                  has a receipt behind it, and tapping shows the flattened
+                  one. Receipt-less rows stay plain text. */}
+              {e.receipt_path ? (
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => openReceipt(e)}
+                  className="flex-1 min-w-0 truncate text-left underline decoration-dotted
+                             underline-offset-4 hover:text-ink disabled:opacity-40"
+                >
+                  {e.where_spent}
+                </button>
+              ) : (
+                <span className="flex-1 min-w-0 truncate">{e.where_spent}</span>
+              )}
               <span className="tabular shrink-0">{formatUSD(e.amount_cents)}</span>
               <button
                 type="button"
