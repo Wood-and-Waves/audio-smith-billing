@@ -137,7 +137,10 @@ const CLEARED_VALUES = new Set(['Cleared', 'Uncleared', 'Reconciled'])
  * file should stop the import cold, not load partial or wrong data.
  */
 export function parseYnabRegister(csv: string): YnabRow[] {
-  const rows = parseCsvRows(csv)
+  // YNAB's export opens with a UTF-8 byte-order mark; left in place it glues
+  // itself to the first header cell and fails the exact-header check below
+  // with two visually identical strings. Discovered on Dan's real export.
+  const rows = parseCsvRows(csv.replace(/^\uFEFF/, ''))
   if (rows.length === 0) throw new Error('YNAB Register CSV is empty.')
 
   const header = rows[0]

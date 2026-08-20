@@ -35,6 +35,15 @@ test('parses a plain row: account/date/payee/category/memo/amounts/cleared', () 
   })
 })
 
+test('tolerates the UTF-8 BOM YNAB writes before the header', () => {
+  // The real export opens with \uFEFF; without stripping it the header
+  // check fails with two visually identical strings.
+  const rows = parseYnabRegister('\uFEFF' + HEADER + '\n'
+    + '"Chase Checking","","01/15/2026","Coffee","","","","",$4.50,$0.00,"Cleared"\n')
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].account, 'Chase Checking')
+})
+
 test('a quoted field can contain a comma', () => {
   const csv = [
     HEADER,
