@@ -50,6 +50,9 @@ export default function CornerAdjuster({
   const [box, setBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { panelRef.current?.focus() }, [])
 
   function computeBox() {
     const wrapper = wrapperRef.current
@@ -134,7 +137,11 @@ export default function CornerAdjuster({
       onClick={(e) => { if (e.target === e.currentTarget && !busy) onCancel() }}
     >
       <div
-        className="w-full max-w-sm bg-bg border border-line rounded-field p-5"
+        ref={panelRef}
+        // Focus moves here on open so Escape reaches the handler below —
+        // without it, focus stays on the file input outside the dialog.
+        tabIndex={-1}
+        className="w-full max-w-sm bg-bg border border-line rounded-field p-5 outline-none"
         onKeyDown={(e) => { if (e.key === 'Escape' && !busy) onCancel() }}
       >
         <div ref={wrapperRef} className="relative">
