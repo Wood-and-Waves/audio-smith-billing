@@ -8,6 +8,10 @@ const CORNER_KEYS: (keyof Quad)[] = ['tl', 'tr', 'br', 'bl']
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v))
 
+/** Loupe diameter in CSS px, and how much the photo is blown up inside it. */
+const LOUPE = 112
+const ZOOM = 3
+
 /**
  * Shared corner-marking dialog: a photo, a draggable quad over it, and
  * confirm / "use full photo" / cancel. Used both for the single-photo
@@ -48,6 +52,10 @@ export default function CornerAdjuster({
 }) {
   const [quad, setQuad] = useState<Quad>(initialQuad)
   const [box, setBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
+  // Which corner a finger is currently on. Drives the loupe: the finger
+  // covers exactly the pixels being aligned, so while it's down a zoomed
+  // window shows them, pinned to whichever top corner the finger is not near.
+  const [dragging, setDragging] = useState<keyof Quad | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -87,6 +95,7 @@ export default function CornerAdjuster({
         if (busy) return
         e.preventDefault()
         e.currentTarget.setPointerCapture(e.pointerId)
+        setDragging(corner)
       },
       onPointerMove: (e: React.PointerEvent<SVGCircleElement>) => {
         // Only react while THIS pointer is actually captured by THIS handle
@@ -101,6 +110,7 @@ export default function CornerAdjuster({
       },
       onPointerUp: (e: React.PointerEvent<SVGCircleElement>) => {
         if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+        setDragging((d) => (d === corner ? null : d))
       },
       // Mobile Safari fires pointercancel, not pointerup, when a drag turns
       // into a page scroll or the system takes the gesture over. Without
@@ -108,6 +118,7 @@ export default function CornerAdjuster({
       // another move or up -- effectively dead until the dialog reopens.
       onPointerCancel: (e: React.PointerEvent<SVGCircleElement>) => {
         if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+        setDragging((d) => (d === corner ? null : d))
       },
     }
   }
@@ -211,6 +222,45 @@ export default function CornerAdjuster({
               })}
             </svg>
           )}
+          {dragging && box && (() => {
+            // The zoomed copy is positioned so the dragged corner sits at the
+            // loupe's center; the svg overlay repeats the quad at the same
+            // scale so an edge can be laid along the receipt's real border.
+            const p = quad[dragging]
+            const zw = box.width * ZOOM
+            const zh = box.height * ZOOM
+            const offsetLeft = LOUPE / 2 - p.x * zw
+            const offsetTop = LOUPE / 2 - p.y * zh
+            return (
+              <div
+                aria-hidden="true"
+                className={`absolute top-2 ${p.x < 0.5 ? 'right-2' : 'left-2'}
+                            rounded-full overflow-hidden border-2 border-accent bg-bg
+                            pointer-events-none`}
+                style={{ width: LOUPE, height: LOUPE }}
+              >
+                <img
+                  src={src}
+                  alt=""
+                  className="absolute select-none"
+                  style={{ width: zw, height: zh, maxWidth: 'none', left: offsetLeft, top: offsetTop }}
+                />
+                <svg
+                  className="absolute"
+                  style={{ width: zw, height: zh, left: offsetLeft, top: offsetTop }}
+                >
+                  <polygon
+                    points={CORNER_KEYS.map((c) => `${quad[c].x * zw},${quad[c].y * zh}`).join(' ')}
+                    fill="none"
+                    strokeWidth={2}
+                    className={usable ? 'stroke-accent' : 'stroke-danger'}
+                  />
+                </svg>
+                <div className="absolute left-0 right-0 bg-accent/70" style={{ top: LOUPE / 2, height: 1 }} />
+                <div className="absolute top-0 bottom-0 bg-accent/70" style={{ left: LOUPE / 2, width: 1 }} />
+              </div>
+            )
+          })()}
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
