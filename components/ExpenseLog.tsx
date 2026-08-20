@@ -1822,20 +1822,24 @@ export default function ExpenseLog({
                    touchedRef.current.add('amount')
                    setAmount(e.target.value)
                  }} />
-          {/* min-w-0 on the date input: iOS renders type=date at an intrinsic
-              width the grid cannot shrink without it, which shoved the Add
-              button out of its column on a phone. */}
-          <input aria-label="Date" type="date" className={`${FIELD_FULL} min-w-0`} value={spentOn}
-                 disabled={locked || pending} onChange={(e) => {
-                   touchedRef.current.add('date')
-                   setSpentOn(e.target.value)
-                 }} />
-          <button type="button" onClick={add} disabled={locked || pending || uploading}
-                  className="min-w-0 w-full sm:w-auto px-4 py-2 text-xs font-bold uppercase
-                             tracking-wider rounded-field bg-accent-surface text-accent-ink
-                             disabled:opacity-50">
-            {pending ? (step ?? 'Saving…') : uploading ? 'Uploading…' : '+ Add'}
-          </button>
+          {/* Date and Add share a private two-column row on phones (sm:contents
+              dissolves it back into the outer grid). iOS paints type=date at
+              its own intrinsic width regardless of the track it sits in —
+              appearance-none makes it obey like a normal field, and the auto
+              column keeps the button clear of it no matter what. */}
+          <div className="col-span-2 grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-center sm:contents">
+            <input aria-label="Date" type="date" value={spentOn}
+                   className={`${FIELD_FULL} min-w-0 appearance-none`}
+                   disabled={locked || pending} onChange={(e) => {
+                     touchedRef.current.add('date')
+                     setSpentOn(e.target.value)
+                   }} />
+            <button type="button" onClick={add} disabled={locked || pending || uploading}
+                    className="shrink-0 px-4 py-2 text-xs font-bold uppercase tracking-wider
+                               rounded-field bg-accent-surface text-accent-ink disabled:opacity-50">
+              {pending ? (step ?? 'Saving…') : uploading ? 'Uploading…' : '+ Add'}
+            </button>
+          </div>
 
           {/* One line, not two: the receipt picker and the non-reimbursable
               flag are both metadata of the same entry, and a lone checkbox row
