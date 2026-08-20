@@ -646,6 +646,10 @@ export default function ExpenseLog({
 
     const detected = await detectCorners(f).catch(() => null)
     if (myToken !== tokenRef.current) return // superseded while detecting
+    // The fix-later adjuster opened while this detection ran: two overlaid
+    // dialogs would fight for the screen, so the pick loses. Re-picking
+    // after the other dialog closes recovers it.
+    if (fixLaterRef.current) return
     setPendingAdjust({ file: f, url: URL.createObjectURL(f), quad: detected ?? INSET_QUAD, token: myToken })
   }
 
@@ -1390,6 +1394,10 @@ export default function ExpenseLog({
       const blob = await response.blob()
       const file = new File([blob], 'original.jpg', { type: blob.type || 'image/jpeg' })
       const detected = await detectCorners(file).catch(() => null)
+      // Mirror of onPickFile's guard: if the single-add adjuster mounted
+      // while this fetch/detect ran, this tap loses rather than stacking a
+      // second dialog on top of it.
+      if (pendingAdjustRef.current) return
       setFixLater({
         expenseId: row.id, file, url: URL.createObjectURL(blob), quad: detected ?? INSET_QUAD, busy: false,
       })

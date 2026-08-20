@@ -56,7 +56,7 @@ export const MIN_CORNER_GAP = 0.08
  * expected to place them close to each other on a small receipt; this only
  * catches two handles dropped on top of one another, not a tight crop.
  */
-export const MIN_USABLE_CORNER_GAP = 0.02
+const MIN_USABLE_CORNER_GAP = 0.02
 
 const CORNERS: Array<keyof Quad> = ['tl', 'tr', 'br', 'bl']
 
