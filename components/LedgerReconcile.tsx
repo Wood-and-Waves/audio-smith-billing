@@ -110,8 +110,8 @@ export default function LedgerReconcile({
         <button
           type="button"
           onClick={() => { setOpen(true); setDone(false) }}
-          className="text-xs font-semibold uppercase tracking-wider text-muted
-                     hover:text-ink transition-colors"
+          className="px-3 py-1.5 rounded-field border border-line text-xs font-semibold
+                     uppercase tracking-wider text-muted hover:text-ink transition-colors"
         >
           Reconcile
         </button>

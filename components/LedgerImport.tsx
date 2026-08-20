@@ -97,19 +97,25 @@ export default function LedgerImport({
 
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-xs text-muted">
+      {/* One filled button whose text IS the action. The native control was
+          three fragments ("Choose file", the browser's own "no file
+          selected", a caption) that read as none-of-this-is-a-button (Dan).
+          Same sr-only-input-inside-a-label trick as ExpenseLog's picker. */}
+      <label className={pending ? undefined : 'cursor-pointer'}>
         <input
           ref={inputRef}
           type="file"
           accept=".ofx,.qfx,application/x-ofx"
           disabled={pending}
           onChange={(e) => onPick(e.target.files)}
-          className="text-xs text-muted file:mr-3 file:px-3 file:py-1.5 file:rounded-field
-                     file:border file:border-line file:bg-transparent file:text-muted
-                     file:text-xs file:font-semibold file:uppercase file:tracking-wider
-                     disabled:opacity-40"
+          className="sr-only peer"
         />
-        {pending ? ' Importing…' : ' Import statement'}
+        <span className="inline-block px-3 py-1.5 rounded-field bg-accent-surface text-accent-ink
+                         text-xs font-bold uppercase tracking-wider
+                         peer-disabled:opacity-50 peer-focus-visible:outline-2
+                         peer-focus-visible:outline-accent">
+          {pending ? 'Importing…' : 'Import statement'}
+        </span>
       </label>
       {summary && !error && (
         <>
