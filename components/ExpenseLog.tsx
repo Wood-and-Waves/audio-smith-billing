@@ -1822,14 +1822,18 @@ export default function ExpenseLog({
                    touchedRef.current.add('amount')
                    setAmount(e.target.value)
                  }} />
-          <input aria-label="Date" type="date" className={FIELD_FULL} value={spentOn}
+          {/* min-w-0 on the date input: iOS renders type=date at an intrinsic
+              width the grid cannot shrink without it, which shoved the Add
+              button out of its column on a phone. */}
+          <input aria-label="Date" type="date" className={`${FIELD_FULL} min-w-0`} value={spentOn}
                  disabled={locked || pending} onChange={(e) => {
                    touchedRef.current.add('date')
                    setSpentOn(e.target.value)
                  }} />
           <button type="button" onClick={add} disabled={locked || pending || uploading}
-                  className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
-                             border border-line text-muted hover:text-ink disabled:opacity-40">
+                  className="min-w-0 w-full sm:w-auto px-4 py-2 text-xs font-bold uppercase
+                             tracking-wider rounded-field bg-accent-surface text-accent-ink
+                             disabled:opacity-50">
             {pending ? (step ?? 'Saving…') : uploading ? 'Uploading…' : '+ Add'}
           </button>
 
@@ -1843,12 +1847,20 @@ export default function ExpenseLog({
                 is where a receipt actually gets photographed. `multiple` is what
                 lets a dozen receipts from a trip be picked in one go — picking
                 just one still lands in onPickFile below, untouched. */}
+            {/* The input is visually hidden and the button is our own span:
+                the native control insists on printing "no files selected"
+                next to its button, and that text can be hidden but never
+                restyled or removed. The wrapping label keeps the whole thing
+                clickable and the sr-only input keeps it keyboard-reachable. */}
             <input type="file" accept="image/*,application/pdf" multiple disabled={locked || pending || uploading}
                    onChange={(e) => { void onPickFiles(e.target.files) }}
-                   className="text-xs text-muted file:mr-3 file:px-3 file:py-1.5 file:rounded-field
-                              file:border file:border-line file:bg-transparent file:text-muted
-                              file:text-xs file:font-semibold file:uppercase file:tracking-wider
-                              disabled:opacity-40" />
+                   className="sr-only peer" />
+            <span className="inline-block mr-3 px-3 py-1.5 rounded-field border border-line
+                             text-muted text-xs font-semibold uppercase tracking-wider cursor-pointer
+                             peer-focus-visible:border-accent peer-disabled:opacity-40
+                             peer-disabled:cursor-default">
+              Choose files
+            </span>
             {/* Just the format. The receipt REQUIREMENT is enforced by the
                 red row hint and the billing gate at the moment it matters —
                 repeating it here was one instruction too many (Dan). */}
