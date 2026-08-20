@@ -111,9 +111,14 @@ status.
 - Reviews of money code are adversarial and worth it. Fix waves are ONE
   subagent with the complete findings list; tiny fixes are controller-direct.
 
-## Current state (2026-08-19) & where things are written
+## Current state (2026-08-20) & where things are written
 
-- Everything through the Money module + envelopes is LIVE in prod. YNAB
+- Everything through the Money module + envelopes is LIVE in prod, plus the
+  receipt corner-flattening branch (2026-08-20, no migrations): detection/warp
+  pure libs (`lib/receiptQuad|receiptCorners|receiptWarp.ts`, fail-to-null →
+  old pipeline, never a mangled crop), `CornerAdjuster` (handles + loupe),
+  fix-later via `replaceExpenseReceipt` (billed-locked, never re-runs OCR),
+  receipt lightbox, punch tile grid, invoice-row show titles (work_for). YNAB
   Register backfill tooling ready: `lib/ynabRegister.ts` +
   `scripts/import/ynab-backfill.mjs` (`npm run import:ynab -- [--prod]
   [--commit] <csv>`; dry-run default; refuses non-empty accounts; ending-
