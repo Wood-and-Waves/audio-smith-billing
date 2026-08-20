@@ -1639,6 +1639,18 @@ export default function ExpenseLog({
           onClick={() => setViewer(null)}
           onKeyDown={(e) => { if (e.key === 'Escape') setViewer(null) }}
         >
+          {/* A tall receipt fills the screen, leaving no backdrop to tap —
+              this is the always-reachable way out. */}
+          <button
+            type="button"
+            onClick={() => setViewer(null)}
+            aria-label="Close receipt"
+            className="absolute top-4 left-4 h-10 w-10 rounded-full border-2 border-white/80
+                       text-white/90 text-xl leading-none flex items-center justify-center
+                       bg-black/40 hover:bg-black/60"
+          >
+            ×
+          </button>
           <img
             src={viewer.url}
             alt={`Receipt from ${viewer.label}`}

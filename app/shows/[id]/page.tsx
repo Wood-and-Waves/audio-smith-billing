@@ -311,6 +311,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
                     timezone={s.timezone}
                     punches={d.punches}
                     locked={locked}
+                    highlighted={d.date === todayHere}
                   />
                   <span className="flex flex-wrap items-center gap-3">
                     <TravelLegToggle showDayId={d.id} leg="in" checked={d.travel_in} locked={locked} />

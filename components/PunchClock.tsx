@@ -19,7 +19,7 @@ import { FIELD_FULL } from '@/components/ui/field'
 
 
 export default function PunchClock({
-  showId, showDayId, date, timezone, punches, locked,
+  showId, showDayId, date, timezone, punches, locked, highlighted = false,
 }: {
   showId: string
   showDayId: string
@@ -28,6 +28,9 @@ export default function PunchClock({
   timezone: string
   punches: { id: string; punch_type: string; punched_at: string }[]
   locked: boolean
+  /** True on the TODAY card: its amber wash swallows border-line, so the
+      empty slots step up to border-muted there or they read as bare text. */
+  highlighted?: boolean
 }) {
   const router = useRouter()
   const [pending, start] = useTransition()
@@ -130,7 +133,7 @@ export default function PunchClock({
               className={
                 isNext
                   ? 'min-h-[3.4rem] px-2 py-1.5 text-xs font-bold uppercase tracking-wider rounded-field bg-accent-surface text-accent-ink disabled:opacity-50'
-                  : 'min-h-[3.4rem] px-2 py-1.5 text-xs font-semibold uppercase tracking-wider rounded-field border border-line text-muted hover:text-ink disabled:opacity-40'
+                  : `min-h-[3.4rem] px-2 py-1.5 text-xs font-semibold uppercase tracking-wider rounded-field border ${highlighted ? 'border-muted text-ink' : 'border-line text-muted'} hover:text-ink disabled:opacity-40`
               }
             >
               {PUNCH_LABELS[type]}
