@@ -56,11 +56,6 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
 
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
-  // Off by default, both of them: Dan was explicit that travel legs are a
-  // choice, never automatic. They only do anything once a date range exists
-  // for setTravelLeg to apply them to (see the disabled state below).
-  const [travelIn, setTravelIn] = useState(false)
-  const [travelOut, setTravelOut] = useState(false)
 
   const [dayRate, setDayRate] = useState('')
   const [travelRate, setTravelRate] = useState('')
@@ -222,8 +217,6 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
         // Both or neither: a single date with nothing to pair it with is not
         // a range, so it is simply not sent rather than guessed at.
         ...(hasRange ? { start_date: fromDate, end_date: toDate } : {}),
-        ...(hasRange && travelIn ? { travel_in: true } : {}),
-        ...(hasRange && travelOut ? { travel_out: true } : {}),
         day_rate: dayRate,
         travel_rate: travelRate,
         pm_rate: pmRate,
@@ -372,22 +365,6 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
           <p className="text-xs text-muted mt-1.5 border-l-2 border-line pl-3 py-1">
             Give both dates, or neither.
           </p>
-        )}
-      </div>
-
-      <div className="mb-8">
-        <label className="flex items-center gap-2 text-sm text-muted mb-2">
-          <input type="checkbox" className="h-4 w-4 accent-accent" checked={travelIn}
-                 disabled={!hasRange} onChange={(e) => setTravelIn(e.target.checked)} />
-          Mark the first day as a travel-in leg
-        </label>
-        <label className="flex items-center gap-2 text-sm text-muted">
-          <input type="checkbox" className="h-4 w-4 accent-accent" checked={travelOut}
-                 disabled={!hasRange} onChange={(e) => setTravelOut(e.target.checked)} />
-          Mark the last day as a travel-out leg
-        </label>
-        {!hasRange && (
-          <p className="text-xs text-muted mt-1.5">Give both dates above to use these.</p>
         )}
       </div>
 
