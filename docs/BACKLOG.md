@@ -38,6 +38,22 @@ nudge to upload a fresh one.
   pattern) gains a line when `year(w9_uploaded_at) < current year`: "Upload a
   fresh W-9 for <year>."
 
+## MileIQ import: reimbursable miles (2026-08-19, Dan)
+
+Dan already classifies every drive in MileIQ; the "Mileage Reimbursement"
+category exists in his chart, and the CPA-export sketch reserves a MileIQ slot.
+Wanted: import MileIQ data to track reimbursable miles instead of retyping them.
+- MileIQ exports drives as CSV/XLSX (date, start/end location, miles, purpose,
+  computed value at the IRS rate). Import path can mirror the YNAB backfill
+  pattern: pure parser lib + dry-run-default script or an upload UI.
+- Open design questions for the brainstorm: do imported drives attach to SHOWS
+  (feeding a mileage invoice line at the IRS rate, like per-diem) or to the
+  LEDGER (a Mileage Reimbursement expense row), or both via the auto-bridge?
+  How does Dan mark which drives belong to which show — by date match against
+  show dates, or manual assignment from an imported queue?
+- Rate: use MileIQ's own computed value column rather than hardcoding the IRS
+  rate (it changes yearly and MileIQ already applies the right one per drive).
+
 ## Money module — remaining phases
 
 - **Invoice/expense auto-bridge** (phase 3 of the bookkeeping design): paid
