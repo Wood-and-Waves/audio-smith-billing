@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { formatAmount, formatUSD, parseUSD } from '@/lib/money'
 import { formatDateShort, todayInChicago } from '@/lib/dates'
 import { CATEGORY_LABEL, CATEGORY_ORDER, expensesMissingReceipts, type ExpenseCategory } from '@/lib/expenses'
-import { scaleToFit, contrastBounds, buildLut, JPEG_QUALITY } from '@/lib/receiptImage'
+import { scaleToFit, contrastBounds, buildLut, applyContrastStretch, JPEG_QUALITY } from '@/lib/receiptImage'
 import {
   addExpense, deleteExpense, extractReceipt, listShowOriginals, setExpenseBillable,
 } from '@/app/expenses/actions'
@@ -16,6 +16,11 @@ import {
 import { archiveNames, sanitizeSegment } from '@/lib/receiptArchiveName'
 import { buildZipParts, type ZipEntry } from '@/lib/zipStore'
 import type { ReceiptFields } from '@/lib/receiptExtraction'
+import {
+  type Quad, type GrayImage, scaleQuad, clampQuad, quadUsable,
+} from '@/lib/receiptQuad'
+import { DETECT_MAX_EDGE, detectReceiptQuad } from '@/lib/receiptCorners'
+import { warpOutputSize, warpGray } from '@/lib/receiptWarp'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select from '@/components/ui/Select'
 
@@ -155,6 +160,98 @@ async function pdfFirstPageToCanvas(file: File): Promise<HTMLCanvasElement> {
 }
 
 /**
+ * The warp resamples one grayscale plane from the source photo at this cap on
+ * its long edge -- 1.5x lib/receiptImage.ts's 1600 output cap, high enough
+ * that flattening down to the output size still has real detail to resample
+ * from, bounded so a 48MP phone photo can't blow phone memory with
+ * BATCH_CONCURRENCY 3 of these in flight at once.
+ */
+const WARP_SOURCE_MAX_EDGE = 2400
+
+/**
+ * Draws `bitmap` onto a canvas capped to `maxEdge` on the long side and
+ * converts it to a `GrayImage` via the same Rec. 601 luma expression -- and
+ * the same Uint8ClampedArray-does-the-rounding treatment -- as the no-quad
+ * path in `enhance` below; see the long comment there for why the array
+ * store, not a separate Math.round, is what has to do the rounding.
+ *
+ * Sizing is `scaleToFit`'s never-enlarge math, just parameterized by
+ * `maxEdge` instead of the fixed MAX_EDGE constant: detection wants a small
+ * plane and the warp wants a much bigger one, and both need the same shape
+ * of cap.
+ */
+function grayFromBitmap(bitmap: ImageBitmap, maxEdge: number): GrayImage {
+  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height))
+  const width = Math.max(1, Math.round(bitmap.width * scale))
+  const height = Math.max(1, Math.round(bitmap.height * scale))
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('This browser cannot process images.')
+  ctx.drawImage(bitmap, 0, 0, width, height)
+
+  const px = ctx.getImageData(0, 0, width, height).data
+  const data = new Uint8ClampedArray(px.length / 4)
+  for (let i = 0, g = 0; i < px.length; i += 4, g++) {
+    data[g] = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000
+  }
+  return { data, width, height }
+}
+
+/**
+ * Encodes a `GrayImage` back to a JPEG blob -- the warp path's counterpart to
+ * the RGBA canvas the no-quad path already has lying around. Same
+ * Promise-wrapped toBlob and null-blob rejection as `enhance` uses below.
+ */
+function grayToJpeg(gray: GrayImage): Promise<Blob> {
+  const canvas = document.createElement('canvas')
+  canvas.width = gray.width
+  canvas.height = gray.height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('This browser cannot process images.')
+
+  const image = ctx.createImageData(gray.width, gray.height)
+  const px = image.data
+  for (let i = 0, g = 0; g < gray.data.length; i += 4, g++) {
+    const v = gray.data[g]
+    px[i] = v
+    px[i + 1] = v
+    px[i + 2] = v
+    px[i + 3] = 255
+  }
+  ctx.putImageData(image, 0, 0)
+
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error('Could not process that photo.'))),
+      'image/jpeg',
+      JPEG_QUALITY,
+    )
+  })
+}
+
+/**
+ * Detects a receipt's four corners in `file`, normalized to 0..1 so the
+ * result means the same thing regardless of which differently-sized gray
+ * plane detection or the warp each end up working on -- see the quad path in
+ * `enhance` below for the denormalize side of that trip. Photos only:
+ * callers guarantee `file` isn't a PDF. Any thrown error (a browser declining
+ * to decode the file) propagates for the caller to catch.
+ */
+async function detectCorners(file: File): Promise<Quad | null> {
+  const bitmap = await createImageBitmap(file)
+  try {
+    const gray = grayFromBitmap(bitmap, DETECT_MAX_EDGE)
+    const quad = detectReceiptQuad(gray)
+    return quad ? scaleQuad(quad, 1 / gray.width, 1 / gray.height) : null
+  } finally {
+    bitmap.close()
+  }
+}
+
+/**
  * Downscale, grayscale and contrast-stretch, entirely in the browser.
  *
  * Done here rather than on the server for two reasons: a phone photo is 3-5MB
@@ -165,8 +262,18 @@ async function pdfFirstPageToCanvas(file: File): Promise<HTMLCanvasElement> {
  * A born-digital PDF already spans the full range from white paper to black
  * text, so the contrast stretch computes to roughly the identity and leaves it
  * alone. The same path serves both without a special case.
+ *
+ * `quadNorm` is the corner tri-state: `undefined` auto-detects (the batch
+ * path, which never confirms with Dan first and never passes an argument
+ * here at all); `null` skips the warp outright (Dan picked "Use full photo",
+ * or detection found nothing); a `Quad` is used only if `quadUsable`, else
+ * treated as `null`. PDFs never see any of this -- the PDF branch below is
+ * untouched -- and a warp that fails for its own reasons (degenerate quad,
+ * output too small) falls through to the same no-quad path, so "corners not
+ * confidently found" can never produce anything worse than today's plain
+ * downscale.
  */
-async function enhance(file: File): Promise<Blob> {
+async function enhance(file: File, quadNorm?: Quad | null): Promise<Blob> {
   let canvas: HTMLCanvasElement
   let width: number
   let height: number
@@ -177,14 +284,41 @@ async function enhance(file: File): Promise<Blob> {
     height = canvas.height
   } else {
     const bitmap = await createImageBitmap(file)
-    ;({ width, height } = scaleToFit(bitmap.width, bitmap.height))
-    canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
-    const c = canvas.getContext('2d')
-    if (!c) throw new Error('This browser cannot process images.')
-    c.drawImage(bitmap, 0, 0, width, height)
-    bitmap.close()
+    try {
+      let quad: Quad | null
+      if (quadNorm === undefined) {
+        // Auto-detect (the batch path): run detection on THIS bitmap's own
+        // downscale rather than calling detectCorners(file), which would
+        // decode the file a second time for no reason.
+        const detectGray = grayFromBitmap(bitmap, DETECT_MAX_EDGE)
+        const detected = detectReceiptQuad(detectGray)
+        quad = detected ? scaleQuad(detected, 1 / detectGray.width, 1 / detectGray.height) : null
+      } else {
+        quad = quadNorm && quadUsable(quadNorm) ? quadNorm : null
+      }
+
+      if (quad) {
+        const gray = grayFromBitmap(bitmap, WARP_SOURCE_MAX_EDGE)
+        const pixelQuad = clampQuad(scaleQuad(quad, gray.width, gray.height), gray.width, gray.height)
+        const warped = warpGray(gray, pixelQuad, warpOutputSize(pixelQuad))
+        if (warped) {
+          applyContrastStretch(warped)
+          return grayToJpeg(warped)
+        }
+        // Degenerate quad or too-small output -- fall through to the
+        // no-quad path below exactly as if nothing had been detected.
+      }
+
+      ;({ width, height } = scaleToFit(bitmap.width, bitmap.height))
+      canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const c = canvas.getContext('2d')
+      if (!c) throw new Error('This browser cannot process images.')
+      c.drawImage(bitmap, 0, 0, width, height)
+    } finally {
+      bitmap.close()
+    }
   }
 
   const ctx = canvas.getContext('2d')
@@ -277,12 +411,16 @@ function rowAmountCents(amount: string): number | null {
  * capture and the enhanced copy a few hundred KB; uploaded in sequence the
  * wait is their sum, which on hotel wifi is long enough to look like the
  * page has hung.
+ *
+ * `quadNorm` passes straight through to `enhance` -- see its doc comment for
+ * the tri-state. Batch callers pass nothing, which auto-detects.
  */
 async function uploadReceiptPair(
   supabase: ReturnType<typeof createClient>,
   showId: string,
   file: File,
   onStep: (s: string) => void,
+  quadNorm?: Quad | null,
 ): Promise<{ error: string } | { enhancedPath: string; originalPath: string }> {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not signed in.' }
@@ -291,7 +429,7 @@ async function uploadReceiptPair(
   const base = `${user.id}/${showId}/${stamp}`
 
   onStep(isPdf(file) ? 'Reading the PDF…' : 'Processing the photo…')
-  const enhanced = await enhance(file)
+  const enhanced = await enhance(file, quadNorm)
 
   // The original keeps its own type. A PDF stored as .jpg downloads
   // with an extension that lies about its contents.
