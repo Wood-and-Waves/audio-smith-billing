@@ -165,12 +165,16 @@ export function warpGray(
 
   const data = new Uint8ClampedArray(out.width * out.height)
 
+  // mapPoint is inlined here: an {x, y} allocation per pixel is ~2M objects
+  // on a full-size warp, and this loop is the one hot path in the module.
   for (let v = 0; v < out.height; v++) {
     const t = (v + 0.5) / out.height
     for (let u = 0; u < out.width; u++) {
       const s = (u + 0.5) / out.width
-      const p = mapPoint(hom, s, t)
-      data[v * out.width + u] = Math.round(bilinearSample(src, p.x, p.y))
+      const w = hom.g * s + hom.h * t + 1
+      const x = (hom.a * s + hom.b * t + hom.c) / w
+      const y = (hom.d * s + hom.e * t + hom.f) / w
+      data[v * out.width + u] = Math.round(bilinearSample(src, x, y))
     }
   }
 
