@@ -6,9 +6,10 @@ import { createClient } from '@/lib/supabase/client'
 import { formatAmount, formatUSD, parseUSD } from '@/lib/money'
 import { formatDateShort, todayInChicago } from '@/lib/dates'
 import { CATEGORY_LABEL, CATEGORY_ORDER, expensesMissingReceipts, type ExpenseCategory } from '@/lib/expenses'
-import { scaleToFit, contrastBounds, buildLut, JPEG_QUALITY } from '@/lib/receiptImage'
+import { scaleToFit, contrastBounds, buildLut, applyContrastStretch, JPEG_QUALITY } from '@/lib/receiptImage'
 import {
-  addExpense, deleteExpense, extractReceipt, listShowOriginals, setExpenseBillable,
+  addExpense, deleteExpense, extractReceipt, listShowOriginals, replaceExpenseReceipt,
+  setExpenseBillable, signedReceiptUrls,
 } from '@/app/expenses/actions'
 import {
   dropExactRepeats, duplicateOf, markDuplicates, type NamedCandidate,
@@ -16,8 +17,14 @@ import {
 import { archiveNames, sanitizeSegment } from '@/lib/receiptArchiveName'
 import { buildZipParts, type ZipEntry } from '@/lib/zipStore'
 import type { ReceiptFields } from '@/lib/receiptExtraction'
+import {
+  type Quad, type GrayImage, scaleQuad, clampQuad, quadUsable,
+} from '@/lib/receiptQuad'
+import { DETECT_MAX_EDGE, detectReceiptQuad } from '@/lib/receiptCorners'
+import { warpOutputSize, warpGray } from '@/lib/receiptWarp'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select from '@/components/ui/Select'
+import CornerAdjuster from '@/components/CornerAdjuster'
 
 type Row = {
   id: string
@@ -155,6 +162,111 @@ async function pdfFirstPageToCanvas(file: File): Promise<HTMLCanvasElement> {
 }
 
 /**
+ * The warp resamples one grayscale plane from the source photo at this cap on
+ * its long edge -- 1.5x lib/receiptImage.ts's 1600 output cap, high enough
+ * that flattening down to the output size still has real detail to resample
+ * from, bounded so a 48MP phone photo can't blow phone memory with
+ * BATCH_CONCURRENCY 3 of these in flight at once.
+ */
+const WARP_SOURCE_MAX_EDGE = 2400
+
+/**
+ * Draws `bitmap` onto a canvas capped to `maxEdge` on the long side and
+ * converts it to a `GrayImage` via the same Rec. 601 luma expression -- and
+ * the same Uint8ClampedArray-does-the-rounding treatment -- as the no-quad
+ * path in `enhance` below; see the long comment there for why the array
+ * store, not a separate Math.round, is what has to do the rounding.
+ *
+ * Sizing is `scaleToFit`'s never-enlarge math, just parameterized by
+ * `maxEdge` instead of the fixed MAX_EDGE constant: detection wants a small
+ * plane and the warp wants a much bigger one, and both need the same shape
+ * of cap.
+ */
+function grayFromBitmap(bitmap: ImageBitmap, maxEdge: number): GrayImage {
+  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height))
+  const width = Math.max(1, Math.round(bitmap.width * scale))
+  const height = Math.max(1, Math.round(bitmap.height * scale))
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('This browser cannot process images.')
+  ctx.drawImage(bitmap, 0, 0, width, height)
+
+  const px = ctx.getImageData(0, 0, width, height).data
+  const data = new Uint8ClampedArray(px.length / 4)
+  for (let i = 0, g = 0; i < px.length; i += 4, g++) {
+    data[g] = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000
+  }
+  return { data, width, height }
+}
+
+/**
+ * Encodes a `GrayImage` back to a JPEG blob -- the warp path's counterpart to
+ * the RGBA canvas the no-quad path already has lying around. Same
+ * Promise-wrapped toBlob and null-blob rejection as `enhance` uses below.
+ */
+function grayToJpeg(gray: GrayImage): Promise<Blob> {
+  const canvas = document.createElement('canvas')
+  canvas.width = gray.width
+  canvas.height = gray.height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('This browser cannot process images.')
+
+  const image = ctx.createImageData(gray.width, gray.height)
+  const px = image.data
+  for (let i = 0, g = 0; g < gray.data.length; i += 4, g++) {
+    const v = gray.data[g]
+    px[i] = v
+    px[i + 1] = v
+    px[i + 2] = v
+    px[i + 3] = 255
+  }
+  ctx.putImageData(image, 0, 0)
+
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error('Could not process that photo.'))),
+      'image/jpeg',
+      JPEG_QUALITY,
+    )
+  })
+}
+
+/**
+ * Detects a receipt's four corners in `file`, normalized to 0..1 so the
+ * result means the same thing regardless of which differently-sized gray
+ * plane detection or the warp each end up working on -- see the quad path in
+ * `enhance` below for the denormalize side of that trip. Photos only:
+ * callers guarantee `file` isn't a PDF. Any thrown error (a browser declining
+ * to decode the file) propagates for the caller to catch.
+ */
+async function detectCorners(file: File): Promise<Quad | null> {
+  const bitmap = await createImageBitmap(file)
+  try {
+    const gray = grayFromBitmap(bitmap, DETECT_MAX_EDGE)
+    const quad = detectReceiptQuad(gray)
+    return quad ? scaleQuad(quad, 1 / gray.width, 1 / gray.height) : null
+  } finally {
+    bitmap.close()
+  }
+}
+
+/**
+ * The adjuster's starting quad when detection finds nothing. Detection
+ * failing means "not found with confidence", not "nothing to mark" -- a
+ * generous 12% inset still lets Dan hand-drag the four handles onto a real
+ * receipt, and "Use full photo" is one tap away if that's not worth doing.
+ */
+const INSET_QUAD: Quad = {
+  tl: { x: 0.12, y: 0.12 },
+  tr: { x: 0.88, y: 0.12 },
+  br: { x: 0.88, y: 0.88 },
+  bl: { x: 0.12, y: 0.88 },
+}
+
+/**
  * Downscale, grayscale and contrast-stretch, entirely in the browser.
  *
  * Done here rather than on the server for two reasons: a phone photo is 3-5MB
@@ -165,8 +277,18 @@ async function pdfFirstPageToCanvas(file: File): Promise<HTMLCanvasElement> {
  * A born-digital PDF already spans the full range from white paper to black
  * text, so the contrast stretch computes to roughly the identity and leaves it
  * alone. The same path serves both without a special case.
+ *
+ * `quadNorm` is the corner tri-state: `undefined` auto-detects (the batch
+ * path, which never confirms with Dan first and never passes an argument
+ * here at all); `null` skips the warp outright (Dan picked "Use full photo",
+ * or detection found nothing); a `Quad` is used only if `quadUsable`, else
+ * treated as `null`. PDFs never see any of this -- the PDF branch below is
+ * untouched -- and a warp that fails for its own reasons (degenerate quad,
+ * output too small) falls through to the same no-quad path, so "corners not
+ * confidently found" can never produce anything worse than today's plain
+ * downscale.
  */
-async function enhance(file: File): Promise<Blob> {
+async function enhance(file: File, quadNorm?: Quad | null): Promise<Blob> {
   let canvas: HTMLCanvasElement
   let width: number
   let height: number
@@ -177,14 +299,41 @@ async function enhance(file: File): Promise<Blob> {
     height = canvas.height
   } else {
     const bitmap = await createImageBitmap(file)
-    ;({ width, height } = scaleToFit(bitmap.width, bitmap.height))
-    canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
-    const c = canvas.getContext('2d')
-    if (!c) throw new Error('This browser cannot process images.')
-    c.drawImage(bitmap, 0, 0, width, height)
-    bitmap.close()
+    try {
+      let quad: Quad | null
+      if (quadNorm === undefined) {
+        // Auto-detect (the batch path): run detection on THIS bitmap's own
+        // downscale rather than calling detectCorners(file), which would
+        // decode the file a second time for no reason.
+        const detectGray = grayFromBitmap(bitmap, DETECT_MAX_EDGE)
+        const detected = detectReceiptQuad(detectGray)
+        quad = detected ? scaleQuad(detected, 1 / detectGray.width, 1 / detectGray.height) : null
+      } else {
+        quad = quadNorm && quadUsable(quadNorm) ? quadNorm : null
+      }
+
+      if (quad) {
+        const gray = grayFromBitmap(bitmap, WARP_SOURCE_MAX_EDGE)
+        const pixelQuad = clampQuad(scaleQuad(quad, gray.width, gray.height), gray.width, gray.height)
+        const warped = warpGray(gray, pixelQuad, warpOutputSize(pixelQuad))
+        if (warped) {
+          applyContrastStretch(warped)
+          return grayToJpeg(warped)
+        }
+        // Degenerate quad or too-small output -- fall through to the
+        // no-quad path below exactly as if nothing had been detected.
+      }
+
+      ;({ width, height } = scaleToFit(bitmap.width, bitmap.height))
+      canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const c = canvas.getContext('2d')
+      if (!c) throw new Error('This browser cannot process images.')
+      c.drawImage(bitmap, 0, 0, width, height)
+    } finally {
+      bitmap.close()
+    }
   }
 
   const ctx = canvas.getContext('2d')
@@ -277,12 +426,16 @@ function rowAmountCents(amount: string): number | null {
  * capture and the enhanced copy a few hundred KB; uploaded in sequence the
  * wait is their sum, which on hotel wifi is long enough to look like the
  * page has hung.
+ *
+ * `quadNorm` passes straight through to `enhance` -- see its doc comment for
+ * the tri-state. Batch callers pass nothing, which auto-detects.
  */
 async function uploadReceiptPair(
   supabase: ReturnType<typeof createClient>,
   showId: string,
   file: File,
   onStep: (s: string) => void,
+  quadNorm?: Quad | null,
 ): Promise<{ error: string } | { enhancedPath: string; originalPath: string }> {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not signed in.' }
@@ -291,7 +444,7 @@ async function uploadReceiptPair(
   const base = `${user.id}/${showId}/${stamp}`
 
   onStep(isPdf(file) ? 'Reading the PDF…' : 'Processing the photo…')
-  const enhanced = await enhance(file)
+  const enhanced = await enhance(file, quadNorm)
 
   // The original keeps its own type. A PDF stored as .jpg downloads
   // with an extension that lies about its contents.
@@ -373,6 +526,51 @@ export default function ExpenseLog({
   // may borrow it.
   const [ocrNote, setOcrNote] = useState<string | null>(null)
 
+  // A just-picked photo waiting on Dan to confirm/adjust its corners before
+  // anything uploads. `url` is an object URL for the adjuster's <img> --
+  // revoked on every exit (confirm, cancel, or superseded by a new pick; see
+  // onPickFile). `token` mirrors this pick's tokenRef value at pick time, so
+  // the render below can refuse to show a stale adjuster even if some future
+  // change stopped clearing it eagerly on supersession. Null means either
+  // nothing is pending or the file was a PDF, which skips this entirely.
+  const [pendingAdjust, setPendingAdjust] = useState<{
+    file: File; url: string; quad: Quad; token: number
+  } | null>(null)
+  // Confirm, cancel and a superseding pick (all in onPickFile/the adjuster's
+  // own callbacks below) already revoke pendingAdjust's object URL on their
+  // own. The one exit none of them can reach is ExpenseLog itself unmounting
+  // — a client-side navigation away from this show while a photo sits
+  // unconfirmed in the adjuster — so this ref+effect pair exists solely to
+  // catch THAT case at actual unmount, via a ref because an effect keyed on
+  // pendingAdjust would also fire (harmlessly, but needlessly) on every
+  // ordinary confirm/cancel transition alongside the explicit revoke calls.
+  const pendingAdjustRef = useRef(pendingAdjust)
+  useEffect(() => { pendingAdjustRef.current = pendingAdjust }, [pendingAdjust])
+  useEffect(() => () => {
+    if (pendingAdjustRef.current) URL.revokeObjectURL(pendingAdjustRef.current.url)
+  }, [])
+
+  // Fix-later: re-adjusting a SAVED expense's corners from its untouched
+  // original. `file` is the original re-fetched from Storage (as a File, for
+  // `enhance`); `url` is its object URL for the adjuster's <img>; `busy` is
+  // true only while enhance+upload+replaceExpenseReceipt are in flight, so
+  // Cancel/handles disable and the dialog stays open on a failure instead of
+  // losing the pick. Same unmount-only leak guard as pendingAdjust above.
+  const [fixLater, setFixLater] = useState<{
+    expenseId: string; file: File; url: string; quad: Quad; busy: boolean
+  } | null>(null)
+  const fixLaterRef = useRef(fixLater)
+  useEffect(() => { fixLaterRef.current = fixLater }, [fixLater])
+  useEffect(() => () => {
+    if (fixLaterRef.current) URL.revokeObjectURL(fixLaterRef.current.url)
+  }, [])
+
+  // Tapping a vendor name opens the ENHANCED receipt (the flattened,
+  // contrast-stretched one — what OCR read and the invoice will embed) in a
+  // lightbox. The signed URL goes straight into the <img>; nothing is
+  // downloaded or revoked.
+  const [viewer, setViewer] = useState<{ url: string; label: string } | null>(null)
+
   // Minted fresh on every file pick; an async result is applied only if it
   // still matches. This one mechanism covers three otherwise-separate races:
   // a pick superseded by a later pick, a save that landed while OCR was
@@ -412,24 +610,29 @@ export default function ExpenseLog({
   const savingRef = useRef(false)
 
   /**
-   * Reads a just-picked file: enhance, upload both copies, then OCR.
+   * Reads a just-picked file. PDFs go straight to `beginUpload` -- the
+   * adjuster only understands photos, and detection never runs on one (see
+   * `detectCorners`'s own doc comment). A photo runs corner detection first
+   * and stops at `pendingAdjust`: nothing uploads until Dan confirms,
+   * adjusts, or explicitly skips via "Use full photo" -- see the render
+   * below and `beginUpload`, which is the entire upload body this function
+   * used to run inline before the adjuster existed.
    *
    * The ONLY caller is the file input's onChange, below. No useEffect may
    * ever key this off form state (category, whereSpent, amount, spentOn) —
    * that is the plausible-looking future edit that turns one photo pick into
    * a paid API call per keystroke.
-   *
-   * The OCR call deliberately runs outside useTransition, in its own state
-   * (`ocrNote`), so it never contributes to `pending` and never gates the
-   * Add button — a receipt that fails to read must never block recording
-   * the expense. Uploads finish first, so Add is already usable (once
-   * `capture` is set) while OCR is still going in the background.
    */
   async function onPickFile(f: File | null) {
-    // Whatever was previously picked (uploaded or still in flight) is
-    // superseded now, whether or not a new file follows it.
+    // Whatever was previously picked (uploaded, still uploading, or still
+    // waiting on the adjuster) is superseded now, whether or not a new file
+    // follows it. The adjuster's object URL is revoked HERE rather than in a
+    // useEffect cleanup -- this is the one place a pick is superseded, so
+    // there is nothing a separate effect would catch that this doesn't.
     if (capture) removeSuperseded([capture.enhancedPath, capture.originalPath])
     setCapture(null)
+    if (pendingAdjust) URL.revokeObjectURL(pendingAdjust.url)
+    setPendingAdjust(null)
     setOcrNote(null)
     // A stale error from a previous failed save (or a previous failed
     // upload) must not sit in the alert paragraph forever once the user has
@@ -441,13 +644,38 @@ export default function ExpenseLog({
     const myToken = tokenRef.current
     if (!f) return
 
+    if (isPdf(f)) {
+      // PDFs never see the adjuster -- detectCorners assumes a photo.
+      void beginUpload(f, null, myToken)
+      return
+    }
+
+    const detected = await detectCorners(f).catch(() => null)
+    if (myToken !== tokenRef.current) return // superseded while detecting
+    // The fix-later adjuster opened while this detection ran: two overlaid
+    // dialogs would fight for the screen, so the pick loses. Re-picking
+    // after the other dialog closes recovers it.
+    if (fixLaterRef.current) return
+    setPendingAdjust({ file: f, url: URL.createObjectURL(f), quad: detected ?? INSET_QUAD, token: myToken })
+  }
+
+  /**
+   * Enhances and uploads both receipt copies, then kicks off OCR -- the
+   * entire body `onPickFile` used to run inline, unchanged apart from
+   * `quadNorm` threading through to `uploadReceiptPair` and the token being
+   * a parameter rather than a freshly-minted local. Callers: `onPickFile`
+   * for a PDF (quadNorm always null, no adjuster involved) and the adjuster's
+   * `onConfirm` below (quadNorm is whatever Dan confirmed, or null for "use
+   * full photo").
+   */
+  async function beginUpload(f: File, quadNorm: Quad | null, myToken: number) {
     const supabase = createClient()
     setUploading(true)
     let uploaded: { error: string } | { enhancedPath: string; originalPath: string }
     try {
       uploaded = await uploadReceiptPair(supabase, showId, f, (s) => {
         if (myToken === tokenRef.current) setOcrNote(s)
-      })
+      }, quadNorm)
     } catch (e) {
       uploaded = { error: e instanceof Error ? e.message : 'Could not process that file.' }
     } finally {
@@ -549,9 +777,9 @@ export default function ExpenseLog({
   const expensesRef = useRef(expenses)
   useEffect(() => { expensesRef.current = expenses }, [expenses])
 
-  /** What a batch row can be a repeat OF, from the show's side. */
-  function existingCandidates(): NamedCandidate[] {
-    return expensesRef.current.map((e) => ({
+  /** What a new receipt can be a repeat OF, from the show's side. */
+  function existingCandidates(list = expensesRef.current): NamedCandidate[] {
+    return list.map((e) => ({
       vendor: e.where_spent,
       amountCents: e.amount_cents,
       spentOn: e.spent_on,
@@ -1133,6 +1361,121 @@ export default function ExpenseLog({
   }
 
   /**
+   * Re-fetches a saved expense's untouched original, re-detects its
+   * corners, and opens the shared adjuster on it. Wrapped in `start` (same
+   * `pending` the row buttons already disable on) purely so a second click
+   * on this or any other row button can't fire while the fetch is still in
+   * flight — nothing here updates a `pending`-gated row until `setFixLater`
+   * at the very end.
+   */
+  function openReceipt(row: Row) {
+    const path = row.receipt_path
+    if (!path) return
+    setError(null)
+    start(async () => {
+      const { urls, storageError } = await signedReceiptUrls([path])
+      const url = urls[path]
+      if (storageError || !url) {
+        setError('That receipt is no longer in storage.')
+        return
+      }
+      setViewer({ url, label: row.where_spent })
+    })
+  }
+
+  function openFixLater(row: Row) {
+    setError(null)
+    start(async () => {
+      const original = row.receipt_original
+      if (!original) return // belt-and-suspenders: the button itself is gated on this
+
+      const { urls, storageError } = await signedReceiptUrls([original])
+      if (storageError) {
+        setError("That receipt's original is no longer in storage.")
+        return
+      }
+      const signedUrl = urls[original]
+      if (!signedUrl) {
+        setError("That receipt's original is no longer in storage.")
+        return
+      }
+
+      let response: Response
+      try {
+        response = await fetch(signedUrl)
+      } catch {
+        setError("That receipt's original is no longer in storage.")
+        return
+      }
+      if (!response.ok) {
+        setError("That receipt's original is no longer in storage.")
+        return
+      }
+
+      const blob = await response.blob()
+      const file = new File([blob], 'original.jpg', { type: blob.type || 'image/jpeg' })
+      const detected = await detectCorners(file).catch(() => null)
+      // Mirror of onPickFile's guard: if the single-add adjuster mounted
+      // while this fetch/detect ran, this tap loses rather than stacking a
+      // second dialog on top of it.
+      if (pendingAdjustRef.current) return
+      setFixLater({
+        expenseId: row.id, file, url: URL.createObjectURL(blob), quad: detected ?? INSET_QUAD, busy: false,
+      })
+    })
+  }
+
+  /**
+   * The adjuster's confirm for fix-later: re-flatten the untouched original
+   * with the (possibly hand-adjusted) quad, upload it under a NEW stamped
+   * path — never upsert in place, so a half-failed swap can never leave the
+   * row pointing at a half-written object — then swap it onto the row via
+   * `replaceExpenseReceipt`. `busy` is local state, not `pending`/`start`:
+   * the dialog must stay open and re-enable on a failure, which a shared
+   * transition flag can't express per-dialog.
+   */
+  async function confirmFixLater(quad: Quad | null) {
+    if (!fixLater) return
+    const { expenseId, file, url } = fixLater
+    setError(null)
+    setFixLater((prev) => (prev ? { ...prev, busy: true } : prev))
+
+    const supabase = createClient()
+    let newPath: string
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('Not signed in.')
+      const enhanced = await enhance(file, quad)
+      newPath = `${user.id}/${showId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-adjusted-enhanced.jpg`
+      const { error: uploadError } = await supabase.storage.from('receipts')
+        .upload(newPath, enhanced, { contentType: 'image/jpeg' })
+      if (uploadError) throw new Error(uploadError.message)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not process that photo.')
+      setFixLater((prev) => (prev ? { ...prev, busy: false } : prev))
+      return
+    }
+
+    const result = await replaceExpenseReceipt(expenseId, newPath)
+    if ('error' in result) {
+      // The row was never touched -- the freshly uploaded file is now an
+      // orphan nobody will ever attach, same policy as removeSuperseded's
+      // other callers.
+      removeSuperseded([newPath])
+      setError(result.error)
+      setFixLater((prev) => (prev ? { ...prev, busy: false } : prev))
+      return
+    }
+
+    URL.revokeObjectURL(url)
+    setFixLater(null)
+    router.refresh()
+    // The expense is swapped either way -- a storage warning here is not a
+    // rollback, same as remove()'s own handling of deleteExpense's warning.
+    if (result.warning) setError(result.warning)
+  }
+
+  /**
    * Saves every original for this show as one zip.
    *
    * Deliberately a desktop action. The archive is tens of megabytes and the
@@ -1223,8 +1566,101 @@ export default function ExpenseLog({
     }
   }
 
+  // The single-add form's repeat check, against the show's saved expenses —
+  // the batch rows get the same treatment in markDuplicates. Over `expenses`
+  // directly, not expensesRef: refs sync in an effect and would be one render
+  // stale here. Warns and never blocks, same policy as the batch: matching
+  // vendor, amount and date is strong evidence, not proof.
+  const singleRepeat = duplicateOf(
+    {
+      vendor: whereSpent.trim() ? whereSpent : null,
+      amountCents: rowAmountCents(amount),
+      spentOn: spentOn || null,
+    },
+    existingCandidates(expenses),
+  )
+
   return (
     <section className="mb-10">
+      {/* Single-photo confirm screen. Guarded on the token too, not just
+          on pendingAdjust being non-null: onPickFile already clears
+          pendingAdjust (and revokes its object URL) the instant a new pick
+          supersedes it, but this is the belt to that suspenders in case a
+          future code path sets pendingAdjust without going through there. */}
+      {pendingAdjust && pendingAdjust.token === tokenRef.current && (
+        <CornerAdjuster
+          src={pendingAdjust.url}
+          initialQuad={pendingAdjust.quad}
+          confirmLabel="Use these corners"
+          onConfirm={(quad) => {
+            const { file, url, token } = pendingAdjust
+            URL.revokeObjectURL(url)
+            setPendingAdjust(null)
+            void beginUpload(file, quad, token)
+          }}
+          onCancel={() => {
+            // Nothing uploaded yet, so this is revoke-and-clear only — never
+            // setError, which means "your expense was not saved" and there
+            // was no save attempt here to fail.
+            URL.revokeObjectURL(pendingAdjust.url)
+            setPendingAdjust(null)
+          }}
+        />
+      )}
+
+      {/* Fix-later: re-adjusting a saved expense's corners. Cancel is
+          disabled by CornerAdjuster itself while busy, so this only ever
+          runs between attempts -- never while a save is in flight. */}
+      {fixLater && (
+        <CornerAdjuster
+          src={fixLater.url}
+          initialQuad={fixLater.quad}
+          confirmLabel="Save"
+          busy={fixLater.busy}
+          onConfirm={(quad) => void confirmFixLater(quad)}
+          onCancel={() => {
+            URL.revokeObjectURL(fixLater.url)
+            setFixLater(null)
+          }}
+        />
+      )}
+
+      {viewer && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Receipt: ${viewer.label}`}
+          // Focus lands here on open so Escape works without a click first —
+          // same lesson as CornerAdjuster's panel. The contains-guard keeps
+          // re-renders while open from yanking focus off the Close button
+          // (an inline callback ref re-runs on every render).
+          tabIndex={-1}
+          ref={(el) => { if (el && !el.contains(document.activeElement)) el.focus() }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4
+                     outline-none cursor-zoom-out"
+          onClick={() => setViewer(null)}
+          onKeyDown={(e) => { if (e.key === 'Escape') setViewer(null) }}
+        >
+          {/* A tall receipt fills the screen, leaving no backdrop to tap —
+              this is the always-reachable way out. */}
+          <button
+            type="button"
+            onClick={() => setViewer(null)}
+            aria-label="Close receipt"
+            className="absolute top-4 left-4 h-10 w-10 rounded-full border-2 border-white/80
+                       text-white/90 text-xl leading-none flex items-center justify-center
+                       bg-black/40 hover:bg-black/60"
+          >
+            ×
+          </button>
+          <img
+            src={viewer.url}
+            alt={`Receipt from ${viewer.label}`}
+            className="max-h-[90vh] max-w-full object-contain rounded-field"
+          />
+        </div>
+      )}
+
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-4">
         <h2 className="eyebrow">Expenses</h2>
         {expenses.length > 0 && (
@@ -1273,7 +1709,22 @@ export default function ExpenseLog({
             // at every width instead of leaving the break to chance.
             <li key={e.id}
                 className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-line py-2 text-sm">
-              <span className="flex-1 min-w-0 truncate">{e.where_spent}</span>
+              {/* The dotted underline is the whole affordance: this vendor
+                  has a receipt behind it, and tapping shows the flattened
+                  one. Receipt-less rows stay plain text. */}
+              {e.receipt_path ? (
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => openReceipt(e)}
+                  className="flex-1 min-w-0 truncate text-left underline decoration-dotted
+                             underline-offset-4 hover:text-ink disabled:opacity-40"
+                >
+                  {e.where_spent}
+                </button>
+              ) : (
+                <span className="flex-1 min-w-0 truncate">{e.where_spent}</span>
+              )}
               <span className="tabular shrink-0">{formatUSD(e.amount_cents)}</span>
               <button
                 type="button"
@@ -1309,6 +1760,19 @@ export default function ExpenseLog({
                 >
                   {e.billable !== false ? 'Make non-reimbursable' : 'Make billable'}
                 </button>
+                {/* PDFs skip detection entirely (see detectCorners), so this
+                    only ever shows for a photo receipt still attached. */}
+                {e.receipt_original && !e.receipt_original.endsWith('.pdf') && e.receipt_path && (
+                  <button
+                    type="button"
+                    disabled={locked || pending}
+                    onClick={() => openFixLater(e)}
+                    aria-label={`Adjust corners: ${e.where_spent}`}
+                    className="underline hover:text-ink disabled:opacity-40"
+                  >
+                    Adjust corners
+                  </button>
+                )}
               </span>
             </li>
           ))}
@@ -1402,8 +1866,8 @@ export default function ExpenseLog({
               onClick={addAllBatch}
               disabled={locked || pending
                         || !batchRows.every((r) => r.status !== 'queued' && r.status !== 'reading')}
-              className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
-                         border border-line text-muted hover:text-ink disabled:opacity-40"
+              className="px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-field
+                         bg-accent-surface text-accent-ink disabled:opacity-50"
             >
               {pending ? (step ?? 'Saving…') : 'Add all'}
             </button>
@@ -1444,16 +1908,30 @@ export default function ExpenseLog({
                    touchedRef.current.add('amount')
                    setAmount(e.target.value)
                  }} />
-          <input aria-label="Date" type="date" className={FIELD_FULL} value={spentOn}
-                 disabled={locked || pending} onChange={(e) => {
-                   touchedRef.current.add('date')
-                   setSpentOn(e.target.value)
-                 }} />
-          <button type="button" onClick={add} disabled={locked || pending || uploading}
-                  className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
-                             border border-line text-muted hover:text-ink disabled:opacity-40">
-            {pending ? (step ?? 'Saving…') : uploading ? 'Uploading…' : '+ Add'}
-          </button>
+          {/* Date and Add share a private two-column row on phones (sm:contents
+              dissolves it back into the outer grid). iOS paints type=date at
+              its own intrinsic width regardless of the track it sits in —
+              globals.css flattens all date inputs to behave like normal
+              fields, and the auto column keeps the button clear regardless. */}
+          <div className="col-span-2 grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-center sm:contents">
+            <input aria-label="Date" type="date" value={spentOn}
+                   className={`${FIELD_FULL} min-w-0`}
+                   disabled={locked || pending} onChange={(e) => {
+                     touchedRef.current.add('date')
+                     setSpentOn(e.target.value)
+                   }} />
+            <button type="button" onClick={add} disabled={locked || pending || uploading}
+                    className="shrink-0 px-4 py-2 text-xs font-bold uppercase tracking-wider
+                               rounded-field bg-accent-surface text-accent-ink disabled:opacity-50">
+              {pending ? (step ?? 'Saving…') : uploading ? 'Uploading…' : '+ Add'}
+            </button>
+          </div>
+
+          {singleRepeat && (
+            <p className="col-span-2 sm:col-span-5 text-xs text-danger">
+              Possibly a repeat of {singleRepeat}.
+            </p>
+          )}
 
           {/* One line, not two: the receipt picker and the non-reimbursable
               flag are both metadata of the same entry, and a lone checkbox row
@@ -1465,12 +1943,20 @@ export default function ExpenseLog({
                 is where a receipt actually gets photographed. `multiple` is what
                 lets a dozen receipts from a trip be picked in one go — picking
                 just one still lands in onPickFile below, untouched. */}
+            {/* The input is visually hidden and the button is our own span:
+                the native control insists on printing "no files selected"
+                next to its button, and that text can be hidden but never
+                restyled or removed. The wrapping label keeps the whole thing
+                clickable and the sr-only input keeps it keyboard-reachable. */}
             <input type="file" accept="image/*,application/pdf" multiple disabled={locked || pending || uploading}
                    onChange={(e) => { void onPickFiles(e.target.files) }}
-                   className="text-xs text-muted file:mr-3 file:px-3 file:py-1.5 file:rounded-field
-                              file:border file:border-line file:bg-transparent file:text-muted
-                              file:text-xs file:font-semibold file:uppercase file:tracking-wider
-                              disabled:opacity-40" />
+                   className="sr-only peer" />
+            <span className="inline-block mr-3 px-3 py-1.5 rounded-field border border-line
+                             text-muted text-xs font-semibold uppercase tracking-wider cursor-pointer
+                             peer-focus-visible:border-accent peer-disabled:opacity-40
+                             peer-disabled:cursor-default">
+              Choose files
+            </span>
             {/* Just the format. The receipt REQUIREMENT is enforced by the
                 red row hint and the billing gate at the moment it matters —
                 repeating it here was one instruction too many (Dan). */}

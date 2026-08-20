@@ -19,7 +19,7 @@ import { FIELD_FULL } from '@/components/ui/field'
 
 
 export default function PunchClock({
-  showId, showDayId, date, timezone, punches, locked,
+  showId, showDayId, date, timezone, punches, locked, highlighted = false,
 }: {
   showId: string
   showDayId: string
@@ -28,6 +28,9 @@ export default function PunchClock({
   timezone: string
   punches: { id: string; punch_type: string; punched_at: string }[]
   locked: boolean
+  /** True on the TODAY card: its amber wash swallows border-line, so the
+      empty slots step up to border-muted there or they read as bare text. */
+  highlighted?: boolean
 }) {
   const router = useRouter()
   const [pending, start] = useTransition()
@@ -91,23 +94,35 @@ export default function PunchClock({
 
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-2">
+      {/* A uniform 3-column grid, every cell the same size — six punch slots
+          read as one clock face instead of a ragged chip row. A recorded
+          punch becomes a tile (label over time, × to remove); an empty slot
+          stays a button; the next expected punch is the filled one. */}
+      <div className="grid grid-cols-3 gap-2 max-w-md">
         {PUNCH_ORDER.map((type) => {
           const hit = punches.find((p) => p.punch_type === type)
           if (hit) {
             return (
-              <span key={type} className="inline-flex items-center gap-1 tabular text-sm text-muted">
-                {PUNCH_LABELS[type]} {fmt(hit.punched_at)}
+              <div
+                key={type}
+                className="relative min-h-[3.4rem] flex flex-col items-center justify-center
+                           rounded-field border border-line bg-surface px-2 py-1.5"
+              >
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted leading-tight">
+                  {PUNCH_LABELS[type]}
+                </span>
+                <span className="tabular text-sm font-semibold leading-tight">{fmt(hit.punched_at)}</span>
                 <button
                   type="button"
                   disabled={locked || pending}
                   onClick={() => remove(hit.id)}
                   aria-label={`Remove ${PUNCH_LABELS[type]}`}
-                  className="text-muted hover:text-danger transition-colors text-sm leading-none disabled:opacity-40"
+                  className="absolute top-0 right-0 px-2 py-0.5 text-muted hover:text-danger
+                             transition-colors text-sm leading-none disabled:opacity-40"
                 >
                   ×
                 </button>
-              </span>
+              </div>
             )
           }
           const isNext = type === next
@@ -117,8 +132,8 @@ export default function PunchClock({
               onClick={() => open(type)}
               className={
                 isNext
-                  ? 'px-3 py-1.5 text-xs font-bold uppercase tracking-wider rounded-field bg-accent-surface text-accent-ink disabled:opacity-50'
-                  : 'px-3 py-1.5 text-xs font-semibold uppercase tracking-wider rounded-field border border-line text-muted hover:text-ink disabled:opacity-40'
+                  ? 'min-h-[3.4rem] px-2 py-1.5 text-xs font-bold uppercase tracking-wider rounded-field bg-accent-surface text-accent-ink disabled:opacity-50'
+                  : `min-h-[3.4rem] px-2 py-1.5 text-xs font-semibold uppercase tracking-wider rounded-field border ${highlighted ? 'border-muted text-ink' : 'border-line text-muted'} hover:text-ink disabled:opacity-40`
               }
             >
               {PUNCH_LABELS[type]}

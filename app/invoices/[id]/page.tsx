@@ -178,7 +178,10 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
 
   return (
     <AppShell current="invoices">
-      <div className="flex items-center justify-between mb-8">
+      {/* Phones stack: the back link, then the actions flowing left in
+          neat rows — four right-aligned links of unequal width wrapped into
+          a ragged pile beside a two-line back link. Desktop keeps one row. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-8">
         <Link
           href="/invoices"
           className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider
@@ -186,7 +189,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
         >
           ← All invoices
         </Link>
-        <div className="flex flex-wrap items-center justify-end gap-x-5 gap-y-2">
+        <div className="flex flex-wrap items-center justify-start sm:justify-end gap-x-5 gap-y-2">
           <MarkPaidButton invoiceId={inv.id} status={inv.status} wasSent={inv.sent_at != null} />
           {/* `sent` covers overdue too — overdue is derived from a sent
               invoice being past due, never a separate stored status. */}
@@ -216,7 +219,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           the wrong thing to put inside that shrink-to-fit, non-wrapping button
           row: on a phone the card's w-full resolved against a circular width
           and rendered as a squeezed mess. Here it has the width it asks for. */}
-      <div className="mb-8 flex justify-end">
+      <div className="mb-8 flex justify-start sm:justify-end">
         <SendInvoicePanel
           invoiceId={inv.id}
           data={docData}

@@ -3,22 +3,6 @@
 The canonical list of deferred work. Each item carries just enough design that a
 future session can build it without re-discovery. Dated when added.
 
-## Receipt photo: corner-finding + flattening (2026-08-19, Dan)
-
-The batch/single receipt capture already downscales, grayscales and
-contrast-stretches in the browser (`lib/receiptImage.ts` math +
-`components/ExpenseLog.tsx`'s `enhance()` canvas wiring). Missing: detect the
-receipt's four corners in the photo and perspective-flatten it, so an
-angled-on-the-diner-table shot becomes a straight document.
-- Lives in the same browser pipeline (photos are 3–5MB; server round-trips are
-  out, same reason as the existing enhancement).
-- Approach to evaluate at build time: hand-rolled edge-scan + largest-quad
-  heuristic + a small homography/perspective remap on ImageData (pure,
-  testable math in `lib/receiptImage.ts`), vs. pulling in OpenCV.js/jscanify
-  (heavy — the pdf.js lazy-load precedent shows how to isolate it if chosen).
-- Must degrade gracefully: corners not found → current behavior, never a
-  mangled crop. OCR quality is the payoff to measure.
-
 ## W-9 on file + attach-to-invoice checkbox + annual refresh reminder (2026-08-19, Dan)
 
 New clients ask for a W-9. Wanted: upload one to the app; a checkbox on the
@@ -37,6 +21,22 @@ nudge to upload a fresh one.
   (`app/api/cron/reminders/route.ts` + `reminder_log` once-per-day dedupe
   pattern) gains a line when `year(w9_uploaded_at) < current year`: "Upload a
   fresh W-9 for <year>."
+
+## MileIQ import: reimbursable miles (2026-08-19, Dan)
+
+Dan already classifies every drive in MileIQ; the "Mileage Reimbursement"
+category exists in his chart, and the CPA-export sketch reserves a MileIQ slot.
+Wanted: import MileIQ data to track reimbursable miles instead of retyping them.
+- MileIQ exports drives as CSV/XLSX (date, start/end location, miles, purpose,
+  computed value at the IRS rate). Import path can mirror the YNAB backfill
+  pattern: pure parser lib + dry-run-default script or an upload UI.
+- Open design questions for the brainstorm: do imported drives attach to SHOWS
+  (feeding a mileage invoice line at the IRS rate, like per-diem) or to the
+  LEDGER (a Mileage Reimbursement expense row), or both via the auto-bridge?
+  How does Dan mark which drives belong to which show — by date match against
+  show dates, or manual assignment from an imported queue?
+- Rate: use MileIQ's own computed value column rather than hardcoding the IRS
+  rate (it changes yearly and MileIQ already applies the right one per drive).
 
 ## Money module — remaining phases
 

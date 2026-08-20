@@ -132,8 +132,8 @@ function CreateAccountCard() {
         type="button"
         onClick={create}
         disabled={pending}
-        className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
-                   border border-line text-muted hover:text-ink disabled:opacity-40"
+        className="px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-field
+                   bg-accent-surface text-accent-ink disabled:opacity-50"
       >
         {pending ? 'Creating…' : 'Create account'}
       </button>
