@@ -771,9 +771,9 @@ export default function ExpenseLog({
   const expensesRef = useRef(expenses)
   useEffect(() => { expensesRef.current = expenses }, [expenses])
 
-  /** What a batch row can be a repeat OF, from the show's side. */
-  function existingCandidates(): NamedCandidate[] {
-    return expensesRef.current.map((e) => ({
+  /** What a new receipt can be a repeat OF, from the show's side. */
+  function existingCandidates(list = expensesRef.current): NamedCandidate[] {
+    return list.map((e) => ({
       vendor: e.where_spent,
       amountCents: e.amount_cents,
       spentOn: e.spent_on,
@@ -1545,6 +1545,20 @@ export default function ExpenseLog({
     }
   }
 
+  // The single-add form's repeat check, against the show's saved expenses —
+  // the batch rows get the same treatment in markDuplicates. Over `expenses`
+  // directly, not expensesRef: refs sync in an effect and would be one render
+  // stale here. Warns and never blocks, same policy as the batch: matching
+  // vendor, amount and date is strong evidence, not proof.
+  const singleRepeat = duplicateOf(
+    {
+      vendor: whereSpent.trim() ? whereSpent : null,
+      amountCents: rowAmountCents(amount),
+      spentOn: spentOn || null,
+    },
+    existingCandidates(expenses),
+  )
+
   return (
     <section className="mb-10">
       {/* Single-photo confirm screen. Guarded on the token too, not just
@@ -1840,6 +1854,12 @@ export default function ExpenseLog({
               {pending ? (step ?? 'Saving…') : uploading ? 'Uploading…' : '+ Add'}
             </button>
           </div>
+
+          {singleRepeat && (
+            <p className="col-span-2 sm:col-span-5 text-xs text-danger">
+              Possibly a repeat of {singleRepeat}.
+            </p>
+          )}
 
           {/* One line, not two: the receipt picker and the non-reimbursable
               flag are both metadata of the same entry, and a lone checkbox row
