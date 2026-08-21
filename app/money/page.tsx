@@ -125,7 +125,10 @@ export default async function MoneyPage({
     .order('sort', { ascending: true })
   if (categoryError) return <LoadError message={categoryError.message} />
 
-  const categories: CategoryOption[] = (categoryRows ?? []).map((c) => ({ id: c.id, name: c.name }))
+  // grp rides along for MoneyRegister's "Group: Name" category cell — this
+  // query already selected it (below) for no reason beyond ordering until
+  // now.
+  const categories: CategoryOption[] = (categoryRows ?? []).map((c) => ({ id: c.id, name: c.name, grp: c.grp }))
 
   // For the Add row's show tag picker only — capped, and ordered by however
   // recently the show was created, not by its own dates. A transaction tagged
