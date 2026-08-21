@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/server'
 import { computeTotals } from '@/lib/money'
 import { addDays, todayInChicago } from '@/lib/dates'
 import { renderInvoicePdf } from '@/lib/renderInvoicePdf'
-import { sendInvoiceEmail } from '@/lib/invoiceEmail'
+import { sendInvoiceEmail, OWNER_BCC } from '@/lib/invoiceEmail'
 import { sendReminderEmail } from '@/lib/reminderEmail'
 import { assembleEmail } from '@/lib/invoiceEmailBody'
 import { billToText } from '@/lib/clientAddress'
@@ -645,6 +645,8 @@ export async function sendClientReminder(
     // must reach Dan, not INVOICE_FROM_EMAIL, which receives nothing.
     replyTo: settings?.email ?? 'dan@theaudiosmith.com',
     fromName: legalName,
+    // Client-facing, so Dan gets his copy — the cron's own sends don't.
+    bcc: OWNER_BCC,
   })
   if (result.error) return { error: result.error }
 

@@ -121,6 +121,10 @@ export async function sendReminderEmail(
     /** Defaults to the invoice's own reply-to path: nobody replies to Dan's digest. */
     replyTo?: string
     fromName?: string
+    /** Client-facing callers pass OWNER_BCC so Dan gets his own copy; the
+     *  cron digest and overdue alerts leave it unset — they already go TO
+     *  him, and a BCC would double every one. */
+    bcc?: string
   },
 ): Promise<{ error?: string }> {
   const key = process.env.RESEND_API_KEY
@@ -137,6 +141,7 @@ export async function sendReminderEmail(
       // trading name.
       from: `${input.fromName ?? 'Smith Audio, LLC'} <${from}>`,
       to: input.to,
+      ...(input.bcc ? { bcc: input.bcc } : {}),
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
       subject: input.subject,
       text: input.text,

@@ -24,6 +24,11 @@ import { invoiceFilename } from './invoicePdf.ts'
 // type from here keep working.
 export type { InvoiceEmailInput }
 
+/** Dan's own copy of every client-facing email (2026-08-20, his ask). Also
+ *  imported by the reminder send in app/invoices/actions.ts — one address,
+ *  one place to change it. */
+export const OWNER_BCC = 'dan@theaudiosmith.com'
+
 export async function sendInvoiceEmail(
   input: InvoiceEmailInput & { pdf: Buffer },
 ): Promise<{ error?: string }> {
@@ -54,6 +59,11 @@ export async function sendInvoiceEmail(
     const { error } = await new Resend(key).emails.send({
       from: `${business} <${from}>`,
       to: input.to,
+      // Every client-facing email lands in Dan's inbox too — his own copy of
+      // exactly what the client received, without relying on Resend's logs.
+      // The cron digest and overdue alerts don't carry this: they already go
+      // TO him.
+      bcc: OWNER_BCC,
       replyTo: input.replyTo,
       subject,
       text,
