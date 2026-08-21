@@ -79,8 +79,22 @@ function stopPropagation(e: React.MouseEvent) {
  *  a real <table>) — a slim receipt-icon rail, DATE, PAYEE (grows), CATEGORY,
  *  MEMO (grows, muted), OUTFLOW/INFLOW/BALANCE right-aligned and tabular, a
  *  slim cleared rail. Screenshot-derived widths (2026-08-21 plan). */
-const REGISTER_GRID =
-  'grid-cols-[2.25rem_5.5rem_minmax(0,1fr)_15rem_minmax(0,1fr)_6rem_6rem_7rem_2.25rem]'
+// The desktop register's nine columns. Five are drag-resizable from their
+// header edges (widths in px, persisted per device like the theme); payee
+// and memo stay minmax(0,1fr) and absorb whatever the fixed columns give up;
+// the two icon rails never move. Double-click a grip to reset that column.
+const COLUMN_DEFAULTS = {
+  date: 88, category: 240, outflow: 96, inflow: 96, balance: 112,
+} as const
+type ResizableColumn = keyof typeof COLUMN_DEFAULTS
+const COLUMN_MIN = 56
+const COLUMN_MAX = 480
+const COLUMNS_STORAGE_KEY = 'registerCols'
+
+function registerTemplate(w: Record<ResizableColumn, number>): string {
+  return `2.25rem ${w.date}px minmax(0,1fr) ${w.category}px minmax(0,1fr) ` +
+    `${w.outflow}px ${w.inflow}px ${w.balance}px 2.25rem`
+}
 
 /**
  * "8/16/26" for last-reconciled — that column is a timestamptz (reconcileAccount
@@ -198,7 +212,7 @@ function ReceiptControl({
   // with only one column set (shouldn't happen: the upload pair is written
   // together) shows neither icon rather than risk offering a second attach.
   // A grid child must exist even when empty, or every later cell in
-  // REGISTER_GRID's fixed 9-column template shifts a column.
+  // the register's fixed 9-column template shifts a column.
   if (row.receipt_original) return <span />
   return (
     <button
@@ -432,6 +446,68 @@ export default function MoneyRegister({
   // needs it too: the apply-to-more count it shows is only ever exact when
   // this is false.
   const truncated = transactions.length < totalCount
+
+  // Per-device column widths. Server renders the defaults; stored widths
+  // apply in an effect (same SSR-safe shape as the theme setting).
+  const [colWidths, setColWidths] = useState<Record<ResizableColumn, number>>({ ...COLUMN_DEFAULTS })
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(COLUMNS_STORAGE_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      setColWidths((prev) => {
+        const next = { ...prev }
+        for (const k of Object.keys(COLUMN_DEFAULTS) as ResizableColumn[]) {
+          const v = parsed?.[k]
+          if (typeof v === 'number' && v >= COLUMN_MIN && v <= COLUMN_MAX) next[k] = v
+        }
+        return next
+      })
+    } catch { /* storage disabled: defaults stand */ }
+  }, [])
+  const gridTemplate = registerTemplate(colWidths)
+  const colDragRef = useRef<{ col: ResizableColumn; startX: number; startW: number } | null>(null)
+
+  function setColWidth(col: ResizableColumn, px: number) {
+    const clamped = Math.round(Math.min(COLUMN_MAX, Math.max(COLUMN_MIN, px)))
+    setColWidths((prev) => {
+      if (prev[col] === clamped) return prev
+      const next = { ...prev, [col]: clamped }
+      try { localStorage.setItem(COLUMNS_STORAGE_KEY, JSON.stringify(next)) } catch { /* device state only */ }
+      return next
+    })
+  }
+
+  /** The drag grip on a resizable header cell's right edge. Pointer capture
+   *  is the same machinery CornerAdjuster's handles use. */
+  function columnGrip(col: ResizableColumn) {
+    return (
+      <span
+        aria-hidden
+        onPointerDown={(e) => {
+          e.preventDefault()
+          e.currentTarget.setPointerCapture(e.pointerId)
+          colDragRef.current = { col, startX: e.clientX, startW: colWidths[col] }
+        }}
+        onPointerMove={(e) => {
+          const d = colDragRef.current
+          if (!d || d.col !== col || !e.currentTarget.hasPointerCapture(e.pointerId)) return
+          setColWidth(col, d.startW + (e.clientX - d.startX))
+        }}
+        onPointerUp={(e) => {
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+          colDragRef.current = null
+        }}
+        onPointerCancel={(e) => {
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+          colDragRef.current = null
+        }}
+        onDoubleClick={() => setColWidth(col, COLUMN_DEFAULTS[col])}
+        className="absolute -right-1.5 top-0 bottom-0 w-3 cursor-col-resize touch-none
+                   hover:bg-line/60 rounded-pill"
+      />
+    )
+  }
 
   // Cleared + Uncleared = Working, the header equation — uncleared is never
   // stored, only derived: every row not yet cleared or reconciled still
@@ -973,8 +1049,9 @@ export default function MoneyRegister({
       <div
         key={t.id}
         onClick={() => { if (editable) startEdit(t) }}
+        style={{ gridTemplateColumns: gridTemplate }}
         className={
-          `grid ${REGISTER_GRID} items-center gap-x-2 pl-3 -ml-3 pr-3 py-2 border-b border-line ${
+          `grid items-center gap-x-2 pl-3 -ml-3 pr-3 py-2 border-b border-line ${
             editable ? 'cursor-pointer hover:bg-surface' : ''
           }`
         }
@@ -1337,18 +1414,21 @@ export default function MoneyRegister({
       ) : (
         <>
           {/* Desktop/tablet: a YNAB-style spreadsheet — one CSS grid per row,
-              a fixed column template (REGISTER_GRID), sharing the exact
+              a shared column template (resizable via the header grips), matching the
               edit-mode grid the phone list below also drops into. */}
           <div className="hidden sm:block">
-            <div className={`grid ${REGISTER_GRID} gap-x-2 pl-3 -ml-3 pr-3 pb-2 mb-1 border-b border-line`}>
+            <div
+              style={{ gridTemplateColumns: gridTemplate }}
+              className="grid gap-x-2 pl-3 -ml-3 pr-3 pb-2 mb-1 border-b border-line select-none"
+            >
               <span aria-hidden />
-              <span className="eyebrow">Date</span>
+              <span className="eyebrow relative">Date{columnGrip('date')}</span>
               <span className="eyebrow">Payee</span>
-              <span className="eyebrow">Category</span>
+              <span className="eyebrow relative">Category{columnGrip('category')}</span>
               <span className="eyebrow">Memo</span>
-              <span className="eyebrow text-right">Outflow</span>
-              <span className="eyebrow text-right">Inflow</span>
-              <span className="eyebrow text-right">Balance</span>
+              <span className="eyebrow text-right relative">Outflow{columnGrip('outflow')}</span>
+              <span className="eyebrow text-right relative">Inflow{columnGrip('inflow')}</span>
+              <span className="eyebrow text-right relative">Balance{columnGrip('balance')}</span>
               <span aria-hidden />
             </div>
             {transactions.map(renderDesktopRow)}
