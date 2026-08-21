@@ -78,11 +78,9 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000
 /**
  * Whole-day distance between two YYYY-MM-DD strings, via Date.UTC so no
  * local timezone leaks in. Copied from ledgerImport.ts's findMatch helper.
- * The income rules below only ever need a >= / <= comparison on the date
- * strings themselves, so this isn't called yet — it's kept here, in the
- * style the expense half will need, for the day-proximity matching
- * (findMatch's "closest candidate within N days" rule) that a later task
- * adds to this same file.
+ * The income half only ever needs a >= / <= comparison on the date strings
+ * themselves; the expense half below uses this for its day-proximity rules
+ * (findMatch's "closest candidate within N days" rule).
  */
 function daysApart(a: string, b: string): number {
   const utc = (d: string) => {
@@ -180,6 +178,89 @@ function proposalsFor(row: BankRow, eligibleInvoices: CandidateInvoice[]): RawIn
   })
 }
 
+/** First token of normalizePayee(text), or null when it's under 3 chars — too weak to group rows on. */
+function leadingToken(text: string): string | null {
+  const [first] = tokensOf(text)
+  return first && first.length >= 3 ? first : null
+}
+
+/** Ascending by date, then id — the deterministic order pinned for transactionIds within a proposal. */
+function byDateThenId(a: BankRow, b: BankRow): number {
+  return a.date.localeCompare(b.date) || a.id.localeCompare(b.id)
+}
+
+/**
+ * Every 2- or 3-row combination that sums exactly to targetCents, grouped by
+ * shared leading payee token (rows with different leading tokens never
+ * combine — the same restaurant split into an order and a tip is a real
+ * pattern; two unrelated charges happening to add up is a coincidence), with
+ * every pair in the group within 3 days of each other. The pairwise check
+ * doubles as the triple's check: if two rows in a candidate triple are
+ * already more than 3 days apart, no combination containing both of them —
+ * pair or triple — can be valid, so that a/b is skipped outright.
+ */
+function sumCombinationsRows(rows: BankRow[], targetCents: number): BankRow[][] {
+  const byToken = new Map<string, BankRow[]>()
+  for (const row of rows) {
+    const token = leadingToken(row.payee)
+    if (token === null) continue
+    const forToken = byToken.get(token) ?? []
+    forToken.push(row)
+    byToken.set(token, forToken)
+  }
+
+  const combos: BankRow[][] = []
+  for (const group of byToken.values()) {
+    for (let a = 0; a < group.length; a++) {
+      for (let b = a + 1; b < group.length; b++) {
+        if (daysApart(group[a].date, group[b].date) > 3) continue
+        if (-(group[a].amount_cents + group[b].amount_cents) === targetCents) {
+          combos.push([group[a], group[b]])
+        }
+        for (let c = b + 1; c < group.length; c++) {
+          if (daysApart(group[a].date, group[c].date) > 3) continue
+          if (daysApart(group[b].date, group[c].date) > 3) continue
+          if (-(group[a].amount_cents + group[b].amount_cents + group[c].amount_cents) === targetCents) {
+            combos.push([group[a], group[b], group[c]])
+          }
+        }
+      }
+    }
+  }
+  return combos
+}
+
+type RawExpenseProposal = { expenseId: string; transactionIds: string[]; single: boolean }
+
+/**
+ * Every exact-single or exact-sum candidate for one expense, before
+ * suppression or confidence. The mirror image of proposalsFor: income sums
+ * combine several invoices onto one deposit, so that iterates per row;
+ * expense sums combine several charges onto one expense (order plus tip),
+ * so this iterates per expense instead. An expense with an exact single
+ * never also gets a sum proposal, for the same reason as the income half —
+ * a coincidental sum on top of an already-spoken-for amount is just noise.
+ */
+function proposalsForExpense(expense: CandidateExpense, eligibleRows: BankRow[]): RawExpenseProposal[] {
+  const exactSingles = eligibleRows.filter(
+    (row) => -row.amount_cents === expense.amount_cents && daysApart(row.date, expense.spent_on) <= 10,
+  )
+  if (exactSingles.length > 0) {
+    return exactSingles.map((row) => ({ expenseId: expense.id, transactionIds: [row.id], single: true }))
+  }
+
+  const withinRange = eligibleRows.filter((row) => daysApart(row.date, expense.spent_on) <= 10)
+  const combos = sumCombinationsRows(withinRange, expense.amount_cents)
+  // More than 3 ways to make the amount is too illegible to guess between —
+  // same cap, same reasoning as the income half.
+  if (combos.length === 0 || combos.length > 3) return []
+
+  return combos.map((combo) => {
+    const ordered = [...combo].sort(byDateThenId)
+    return { expenseId: expense.id, transactionIds: ordered.map((row) => row.id), single: false }
+  })
+}
+
 export function proposeMatches(input: {
   rows: BankRow[]
   invoices: CandidateInvoice[]
@@ -241,5 +322,58 @@ export function proposeMatches(input: {
     return dateA.localeCompare(dateB) || a.transactionId.localeCompare(b.transactionId)
   })
 
-  return { income, expense: [] }
+  const eligibleExpenseRows = input.rows.filter(
+    (r) => !r.linked && r.amount_cents < 0 && r.kind === 'expense',
+  )
+  const eligibleExpenses = input.expenses.filter((e) => !e.linked)
+
+  const dismissedExpensePairs = new Set(
+    input.dismissed
+      .filter((d) => d.expense_id !== null)
+      .map((d) => `${d.transaction_id}:${d.expense_id}`),
+  )
+
+  const rawExpense = eligibleExpenses.flatMap((expense) => proposalsForExpense(expense, eligibleExpenseRows))
+
+  const suppressedExpense = rawExpense.filter(
+    (p) => !p.transactionIds.some((txId) => dismissedExpensePairs.has(`${txId}:${p.expenseId}`)),
+  )
+
+  // Ambiguity, same shape as income's: if two expense proposals name the
+  // same row or the same expense, every proposal touching that row or
+  // expense stays low. Income and expense rows can never overlap (opposite
+  // signs), so this is computed over expense proposals alone.
+  const expenseTxCounts = new Map<string, number>()
+  const expenseCounts = new Map<string, number>()
+  for (const p of suppressedExpense) {
+    expenseCounts.set(p.expenseId, (expenseCounts.get(p.expenseId) ?? 0) + 1)
+    for (const txId of p.transactionIds) {
+      expenseTxCounts.set(txId, (expenseTxCounts.get(txId) ?? 0) + 1)
+    }
+  }
+
+  const expensesById = new Map(input.expenses.map((e) => [e.id, e]))
+
+  const expense: ExpenseProposal[] = suppressedExpense.map((p) => {
+    let confidence: 'high' | 'low' = 'low'
+    if (p.single) {
+      const txId = p.transactionIds[0]
+      const unambiguous =
+        expenseTxCounts.get(txId) === 1 && expenseCounts.get(p.expenseId) === 1
+      const bankRow = rowsById.get(txId)
+      const candidateExpense = expensesById.get(p.expenseId)
+      if (unambiguous && bankRow && candidateExpense && shareToken(bankRow.payee, candidateExpense.where_spent)) {
+        confidence = 'high'
+      }
+    }
+    return { transactionIds: p.transactionIds, expenseId: p.expenseId, confidence }
+  })
+
+  expense.sort((a, b) => {
+    const dateA = rowsById.get(a.transactionIds[0])?.date ?? ''
+    const dateB = rowsById.get(b.transactionIds[0])?.date ?? ''
+    return dateA.localeCompare(dateB) || a.transactionIds[0].localeCompare(b.transactionIds[0])
+  })
+
+  return { income, expense }
 }
