@@ -16,6 +16,15 @@
 > YNAB chart** (Bills/Expenses/Purchases/Taxes groups), not the invented S-Corp
 > set below; income is tracked per client via the payee. Current conventions
 > live in CLAUDE.md; the deferred list in docs/BACKLOG.md.
+> **Postscript 3 (2026-08-21):** phase 3 (the invoice/expense bridge) is
+> BUILT — migration 0032, with LINK TABLES (`ledger_transaction_invoices`,
+> `ledger_transaction_expenses`) instead of the `matched_transaction_id`
+> column sketched below, because Dan's real cases are N↔N (Streamline pays
+> two invoices with one check; one Uber Eats expense posts as order + tip).
+> Design: `2026-08-21-invoice-expense-bridge-design.md`. The tax-set-aside
+> feed and the `from_invoice`/`from_expense` sources stayed unbuilt on
+> purpose — nothing is ever copied into the ledger; links join, and the
+> bank row stays the only money record.
 
 # Bookkeeping module — design reference
 
