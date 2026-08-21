@@ -1,8 +1,9 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { proposeMatches, type BankRow, type CandidateInvoice, type CandidateExpense, type Dismissal } from '@/lib/ledgerMatch'
+import { formatUSD } from '@/lib/money'
 import AppShell from '@/components/AppShell'
-import MatchQueue, { type IncomeCard, type ExpenseCard } from '@/components/MatchQueue'
+import MatchQueue, { type IncomeCard, type ExpenseCard, type DismissedCard } from '@/components/MatchQueue'
 
 export const dynamic = 'force-dynamic'
 
@@ -99,12 +100,15 @@ async function fetchAllExpenseLinks(
   return { rows, error: null }
 }
 
-type RawDismissalRow = { transaction_id: string; invoice_id: string | null; expense_id: string | null }
+type RawDismissalRow = { id: string; transaction_id: string; invoice_id: string | null; expense_id: string | null }
 
 /** Every ledger_match_dismissals row, owner-wide — proposeMatches is pure and
  *  stateless (see lib/ledgerMatch.ts's own doc comment), so a truncated read
  *  here would let a rejected guess Dan already dismissed reappear once the
- *  dismissal list grew past 1000 rows. */
+ *  dismissal list grew past 1000 rows. `id` rides along (not just the
+ *  transaction_id/invoice_id/expense_id proposeMatches itself needs) because
+ *  the Dismissed section below and restoreDismissal both key off the
+ *  dismissal row's own id, not the pair it names. */
 async function fetchAllDismissals(
   supabase: Awaited<ReturnType<typeof createClient>>,
 ): Promise<{ rows: RawDismissalRow[]; error: string | null }> {
@@ -113,7 +117,7 @@ async function fetchAllDismissals(
   for (;;) {
     const { data, error } = await supabase
       .from('ledger_match_dismissals')
-      .select('transaction_id, invoice_id, expense_id')
+      .select('id, transaction_id, invoice_id, expense_id')
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
       .range(from, from + PAGE_SIZE - 1)
@@ -195,6 +199,76 @@ async function fetchAllCandidateExpenses(
     from += PAGE_SIZE
   }
   return { rows, error: null }
+}
+
+type DismissedTxnLite = { id: string; date: string; amount_cents: number; payee: string }
+
+/**
+ * Bank rows the Dismissed section needs but fetchAllLedgerTxns above didn't
+ * return — that fetch is scoped to THIS account (`.eq('account_id', ...)`),
+ * so a dismissal naming a transaction on some other/since-closed account
+ * would otherwise have no display row at all. Not paged like the candidate
+ * fetches above: bounded by how many dismissals point somewhere the main
+ * fetch missed, never by total transaction count, so a single `.in()` is the
+ * "direct .in on collected ids is fine" case, not the "truncates past 1000"
+ * one those fetches guard against.
+ */
+async function fetchMissingTxns(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ids: string[],
+): Promise<{ rows: DismissedTxnLite[]; error: string | null }> {
+  if (ids.length === 0) return { rows: [], error: null }
+  const { data, error } = await supabase
+    .from('ledger_transactions')
+    .select('id, date, amount_cents, payee')
+    .in('id', ids)
+  if (error) return { rows: [], error: error.message }
+  return { rows: (data ?? []) as DismissedTxnLite[], error: null }
+}
+
+type DismissedInvoiceLite = { id: string; number: number; total_cents: number; clients: { name: string } | null }
+
+/**
+ * Invoices the Dismissed section needs but fetchAllCandidateInvoices above
+ * didn't return — that fetch filters to status in ('sent','paid'), so a
+ * dismissal against an invoice that's since gone back to 'draft' or been
+ * voided would otherwise have no display row. Same "direct .in, not paged"
+ * reasoning as fetchMissingTxns above.
+ */
+async function fetchMissingInvoices(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ids: string[],
+): Promise<{ rows: DismissedInvoiceLite[]; error: string | null }> {
+  if (ids.length === 0) return { rows: [], error: null }
+  const { data, error } = await supabase
+    .from('invoices')
+    .select('id, number, total_cents, clients(name)')
+    .in('id', ids)
+  if (error) return { rows: [], error: error.message }
+  return { rows: (data ?? []) as unknown as DismissedInvoiceLite[], error: null }
+}
+
+type DismissedExpenseLite = {
+  id: string; amount_cents: number; spent_on: string; where_spent: string; shows: { name: string } | null
+}
+
+/**
+ * Expenses the Dismissed section needs but fetchAllCandidateExpenses above
+ * didn't return — that fetch is unfiltered on status, but a dismissed
+ * expense can still have been deleted outright since. Same "direct .in, not
+ * paged" reasoning as fetchMissingTxns above.
+ */
+async function fetchMissingExpenses(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ids: string[],
+): Promise<{ rows: DismissedExpenseLite[]; error: string | null }> {
+  if (ids.length === 0) return { rows: [], error: null }
+  const { data, error } = await supabase
+    .from('expenses')
+    .select('id, amount_cents, spent_on, where_spent, shows(name)')
+    .in('id', ids)
+  if (error) return { rows: [], error: error.message }
+  return { rows: (data ?? []) as unknown as DismissedExpenseLite[], error: null }
 }
 
 function LoadError({ message }: { message: string }) {
@@ -334,8 +408,13 @@ export default async function MoneyMatchesPage() {
       invoices: invs.map((i) => ({
         id: i.id, number: i.number, clientName: i.client_name, totalCents: i.total_cents,
         status: i.status,
+        // Non-null: proposeMatches's own eligibleInvoices filter already
+        // requires sent_at !== null before an invoice can appear in any
+        // proposal — same cast lib/ledgerMatch.ts's own sentDate uses.
+        sent: (i.sent_at as string).slice(0, 10),
       })),
       confidence: p.confidence,
+      payeeAgrees: p.payeeAgrees,
     }
   })
 
@@ -349,14 +428,84 @@ export default async function MoneyMatchesPage() {
         showName: showNameByExpenseId.get(exp.id) ?? '',
       },
       confidence: p.confidence,
+      payeeAgrees: p.payeeAgrees,
     }
+  })
+
+  // Display maps for the Dismissed section — seeded from the candidate sets
+  // already fetched above (the common case: nothing else has happened to the
+  // dismissed pair since), then patched with whatever those fetches missed.
+  const txnDisplayById = new Map(
+    rows.map((r) => [r.id, { date: r.date, payee: r.payee, amountCents: r.amount_cents }]),
+  )
+  const invoiceDisplayById = new Map(
+    invoices.map((i) => [i.id, { number: i.number, clientName: i.client_name, totalCents: i.total_cents }]),
+  )
+  const expenseDisplayById = new Map(
+    expenses.map((e) => [e.id, {
+      whereSpent: e.where_spent, showName: showNameByExpenseId.get(e.id) ?? '',
+      amountCents: e.amount_cents, spentOn: e.spent_on,
+    }]),
+  )
+
+  const missingTxnIds = [...new Set(
+    dismissalRows.map((d) => d.transaction_id).filter((id) => !txnDisplayById.has(id)),
+  )]
+  const missingInvoiceIds = [...new Set(
+    dismissalRows.map((d) => d.invoice_id).filter((id): id is string => id !== null && !invoiceDisplayById.has(id)),
+  )]
+  const missingExpenseIds = [...new Set(
+    dismissalRows.map((d) => d.expense_id).filter((id): id is string => id !== null && !expenseDisplayById.has(id)),
+  )]
+
+  const { rows: missingTxns, error: missingTxnsError } = await fetchMissingTxns(supabase, missingTxnIds)
+  if (missingTxnsError) return <LoadError message={missingTxnsError} />
+  const { rows: missingInvoices, error: missingInvoicesError } = await fetchMissingInvoices(supabase, missingInvoiceIds)
+  if (missingInvoicesError) return <LoadError message={missingInvoicesError} />
+  const { rows: missingExpenses, error: missingExpensesError } = await fetchMissingExpenses(supabase, missingExpenseIds)
+  if (missingExpensesError) return <LoadError message={missingExpensesError} />
+
+  for (const t of missingTxns) txnDisplayById.set(t.id, { date: t.date, payee: t.payee, amountCents: t.amount_cents })
+  for (const i of missingInvoices) {
+    invoiceDisplayById.set(i.id, { number: i.number, clientName: i.clients?.name ?? '', totalCents: i.total_cents })
+  }
+  for (const e of missingExpenses) {
+    expenseDisplayById.set(e.id, {
+      whereSpent: e.where_spent, showName: e.shows?.name ?? '', amountCents: e.amount_cents, spentOn: e.spent_on,
+    })
+  }
+
+  // One dismissal can, in principle, name a transaction/invoice/expense this
+  // owner no longer has any record of at all (not just aged out of a
+  // candidate fetch, but genuinely gone — a hard-deleted expense, say).
+  // Skipped rather than crashed on: a stale dismissal with nothing left to
+  // show is not worth blocking the whole page over, and restoreDismissal
+  // still works from the raw id even for one that got filtered out here.
+  const dismissedCards: DismissedCard[] = dismissalRows.flatMap((d) => {
+    const txn = txnDisplayById.get(d.transaction_id)
+    if (!txn) return []
+    let target: string
+    if (d.invoice_id !== null) {
+      const inv = invoiceDisplayById.get(d.invoice_id)
+      if (!inv) return []
+      target = `#${inv.number} · ${inv.clientName} · ${formatUSD(inv.totalCents)}`
+    } else if (d.expense_id !== null) {
+      const exp = expenseDisplayById.get(d.expense_id)
+      if (!exp) return []
+      target = `${exp.whereSpent} · ${exp.showName} · ${formatUSD(exp.amountCents)}`
+    } else {
+      // Migration 0032's own check (num_nonnulls(invoice_id, expense_id) = 1)
+      // makes this unreachable — belt-and-suspenders, not a real case.
+      return []
+    }
+    return [{ id: d.id, txn: { date: txn.date, payee: txn.payee, amountCents: txn.amountCents }, target }]
   })
 
   return (
     <AppShell current="money">
       <BackLink />
       <h1 className="display text-3xl font-bold mb-8">Matches</h1>
-      <MatchQueue income={income} expense={expense} />
+      <MatchQueue income={income} expense={expense} dismissed={dismissedCards} />
     </AppShell>
   )
 }
