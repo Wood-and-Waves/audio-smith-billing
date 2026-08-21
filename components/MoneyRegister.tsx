@@ -197,7 +197,9 @@ function ReceiptControl({
   // action itself refuses otherwise (attachLedgerReceipt's own guard). A row
   // with only one column set (shouldn't happen: the upload pair is written
   // together) shows neither icon rather than risk offering a second attach.
-  if (row.receipt_original) return null
+  // A grid child must exist even when empty, or every later cell in
+  // REGISTER_GRID's fixed 9-column template shifts a column.
+  if (row.receipt_original) return <span />
   return (
     <button
       type="button"
@@ -813,8 +815,11 @@ export default function MoneyRegister({
    * stacks 2-col under sm, same as the add row above it), so this is the
    * ONE place either layout's row switches to when `editingId` matches. The
    * per-row × that used to sit on the display row lives here now as a plain
-   * "Delete" link, alongside the receipt links that only make sense once a
-   * row is already open for editing.
+   * "Delete" link, alongside the same "Adjust corners"/"Remove receipt"
+   * links the two display rows below also render (quietly, in the memo
+   * cell / chips line) for a row that HAS a receipt but ISN'T editable —
+   * Delete stays edit-mode-only, but the receipt links are never gated to
+   * it, matching removeLedgerReceipt's own doc comment.
    */
   function renderEditRow(t: LedgerTxnRow) {
     // categoryOptions is filtered to unhidden categories (app/money/page.tsx's
@@ -952,6 +957,14 @@ export default function MoneyRegister({
     const inlineCategory = t.category_id === null && (t.kind === 'income' || t.kind === 'expense')
     const outflowCents = t.amount_cents < 0 ? -t.amount_cents : 0
     const inflowCents = t.amount_cents > 0 ? t.amount_cents : 0
+    // A reconciled (or transfer) row can't be opened for edit, so it never
+    // reaches renderEditRow's own "Adjust corners"/"Remove receipt" links —
+    // but removeLedgerReceipt (see its own doc comment) works on a reconciled
+    // row on purpose. Surface the same two links here, quietly, whenever the
+    // row still has a receipt to act on.
+    const showReceiptLinks = !editable && (t.receipt_path !== null || t.receipt_original !== null)
+    const canAdjustReceipt = showReceiptLinks
+      && t.receipt_original !== null && t.receipt_path !== null && !t.receipt_original.endsWith('.pdf')
 
     return (
       <div
@@ -988,7 +1001,31 @@ export default function MoneyRegister({
             <CategoryText row={t} categories={categories} />
           )}
         </div>
-        <span className="min-w-0 truncate text-xs text-muted">{t.memo}</span>
+        <div className="min-w-0">
+          <span className="block truncate text-xs text-muted">{t.memo}</span>
+          {showReceiptLinks && (
+            <div className="flex items-center gap-x-3">
+              {canAdjustReceipt && (
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={(e) => { e.stopPropagation(); openFixLater(t) }}
+                  className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
+                >
+                  Adjust corners
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={pending}
+                onClick={(e) => { e.stopPropagation(); removeReceipt(t) }}
+                className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
+              >
+                Remove receipt
+              </button>
+            </div>
+          )}
+        </div>
         <span className="tabular text-right">{outflowCents > 0 ? formatUSD(outflowCents) : ''}</span>
         <span className="tabular text-right">{inflowCents > 0 ? formatUSD(inflowCents) : ''}</span>
         <span className="tabular text-right font-semibold">{formatUSD(t.balanceCents)}</span>
@@ -1014,6 +1051,10 @@ export default function MoneyRegister({
     const inlineCategory = t.category_id === null && (t.kind === 'income' || t.kind === 'expense')
     const outflowCents = t.amount_cents < 0 ? -t.amount_cents : 0
     const inflowCents = t.amount_cents > 0 ? t.amount_cents : 0
+    // Same escape hatch as renderDesktopRow's — see its own comment.
+    const showReceiptLinks = !editable && (t.receipt_path !== null || t.receipt_original !== null)
+    const canAdjustReceipt = showReceiptLinks
+      && t.receipt_original !== null && t.receipt_path !== null && !t.receipt_original.endsWith('.pdf')
 
     return (
       <li
@@ -1024,7 +1065,10 @@ export default function MoneyRegister({
         <div className="flex items-baseline gap-2">
           <span className="font-semibold flex-1 min-w-0 truncate">{t.payee || '—'}</span>
           <span className="tabular font-semibold shrink-0">
-            {outflowCents > 0 ? `−${formatUSD(outflowCents)}` : formatUSD(inflowCents)}
+            {/* A zero-cent txn (transfer carries no sign constraint) would
+                otherwise fall through to inflowCents and print "$0.00" —
+                blank instead, matching desktop's blank outflow/inflow cells. */}
+            {outflowCents > 0 ? `−${formatUSD(outflowCents)}` : inflowCents > 0 ? formatUSD(inflowCents) : ''}
           </span>
           <ClearedControl row={t} pending={pending} onToggle={() => toggleCleared(t)} />
         </div>
@@ -1054,6 +1098,28 @@ export default function MoneyRegister({
             </span>
           )}
           <ReceiptControl row={t} pending={pending} onView={openReceipt} onAttach={openAttach} />
+          {showReceiptLinks && (
+            <>
+              {canAdjustReceipt && (
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={(e) => { e.stopPropagation(); openFixLater(t) }}
+                  className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
+                >
+                  Adjust corners
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={pending}
+                onClick={(e) => { e.stopPropagation(); removeReceipt(t) }}
+                className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
+              >
+                Remove receipt
+              </button>
+            </>
+          )}
         </div>
         {t.memo && <p className="mt-1 text-xs text-muted truncate">{t.memo}</p>}
       </li>
@@ -1146,8 +1212,14 @@ export default function MoneyRegister({
           <p className="tabular text-sm sm:text-base">
             <span className="text-muted">Cleared </span>
             <span className="font-bold">{formatUSD(clearedBalanceCents)}</span>
-            <span className="text-muted"> + Uncleared </span>
-            <span>{formatUSD(unclearedCents)}</span>
+            {/* formatUSD already prints its own "-" for a negative amount, so
+                a negative uncleared total (which happens — nothing about
+                'uncleared' constrains sign) would otherwise read as "+
+                Uncleared -$X", two negatives layered on the same number. The
+                operator itself flips to a real minus sign instead, and the
+                amount goes through as its absolute value. */}
+            <span className="text-muted">{unclearedCents < 0 ? ' − Uncleared ' : ' + Uncleared '}</span>
+            <span>{formatUSD(Math.abs(unclearedCents))}</span>
             <span className="text-muted"> = Working </span>
             <span className="font-bold">{formatUSD(workingBalanceCents)}</span>
           </p>

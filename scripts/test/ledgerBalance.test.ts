@@ -103,3 +103,23 @@ test('runningBalances: invariant — last balance equals workingBalance over the
   const balances = runningBalances(opening, sorted)
   assert.equal(balances.at(-1), workingBalance(opening, rows))
 })
+
+test('display invariant: the register\'s newest-first top row (sort DESC) is '
+  + 'the same row as ledger order\'s last row (sort ASC), and its running '
+  + 'balance is workingBalance', () => {
+  const rows = [
+    { ...K('2026-01-01', '2026-01-01T08:00:00Z', 'a1'), amount_cents: 1000, cleared: 'reconciled' as const },
+    { ...K('2026-01-01', '2026-01-01T09:00:00Z', 'a2'), amount_cents: -500, cleared: 'cleared' as const },
+    { ...K('2026-01-02', '2026-01-02T08:00:00Z', 'b1'), amount_cents: 2000, cleared: 'uncleared' as const },
+    { ...K('2026-01-03', '2026-01-03T07:00:00Z', 'c1'), amount_cents: -1500, cleared: 'cleared' as const },
+    { ...K('2026-01-03', '2026-01-03T07:30:00Z', 'c2'), amount_cents: 400, cleared: 'uncleared' as const },
+  ]
+  const displayTop = [...rows].sort((a, b) => compareLedgerOrder(b, a))[0]
+  const ledgerLast = [...rows].sort(compareLedgerOrder).at(-1)
+  assert.equal(displayTop, ledgerLast)
+
+  const opening = 10000
+  const ledgerOrder = [...rows].sort(compareLedgerOrder)
+  const balances = runningBalances(opening, ledgerOrder)
+  assert.equal(balances.at(-1), workingBalance(opening, rows))
+})
