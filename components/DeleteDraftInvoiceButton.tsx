@@ -4,19 +4,23 @@ import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { deleteDraftInvoice } from '@/app/invoices/actions'
 
-// The way out for a stranded draft (unlinked from its show to re-bill, never
-// sent to anyone). Two-step control copied from DeleteShowButton: arm ->
-// named confirm, auto-disarm on a stray click or a few seconds of silence.
-// The page only renders this for a never-sent, unlinked draft; the server
-// action re-checks all three conditions regardless.
+// The way out for a wrong draft (never sent to anyone). One tap unbills its
+// shows AND deletes the draft — Dan's first version required unlinking from
+// each show page first ("a really long way around"). Two-step control copied
+// from DeleteShowButton: arm -> named confirm, auto-disarm on a stray click
+// or a few seconds of silence. The page only renders this for a never-sent
+// draft; the server action re-checks regardless.
 
 const CONFIRM_TIMEOUT_MS = 4000
 
 export default function DeleteDraftInvoiceButton({
-  invoiceId, number,
+  invoiceId, number, linkedCount,
 }: {
   invoiceId: string
   number: number
+  /** Shows still billed to this draft — names the unbilling in the copy and
+   *  steers the after-delete landing (one show -> that show, ready to fix). */
+  linkedCount: number
 }) {
   const router = useRouter()
   const [pending, start] = useTransition()
@@ -55,8 +59,9 @@ export default function DeleteDraftInvoiceButton({
     start(async () => {
       const result = await deleteDraftInvoice(invoiceId)
       if ('error' in result) { setError(result.error); setConfirming(false); return }
-      // This page 404s the instant the row is gone — leave first.
-      router.push('/invoices')
+      // This page 404s the instant the row is gone — leave first. One
+      // unbilled show means the next stop is obvious: fixing it to re-bill.
+      router.push(result.showIds.length === 1 ? `/shows/${result.showIds[0]}` : '/invoices')
       router.refresh()
     })
   }
@@ -71,7 +76,11 @@ export default function DeleteDraftInvoiceButton({
           aria-label={`Confirm delete draft #${number}`}
           className="text-danger hover:opacity-80 transition-opacity text-xs font-semibold disabled:opacity-40"
         >
-          {pending ? 'Deleting…' : `Confirm delete draft #${number}?`}
+          {pending
+            ? 'Deleting…'
+            : linkedCount > 0
+              ? `Confirm? Unbills ${linkedCount === 1 ? 'its show' : `${linkedCount} shows`} and deletes draft #${number}.`
+              : `Confirm delete draft #${number}?`}
         </button>
       ) : (
         <button
@@ -81,7 +90,7 @@ export default function DeleteDraftInvoiceButton({
           aria-label={`Delete draft #${number}`}
           className="text-muted hover:text-danger transition-colors text-xs disabled:opacity-40"
         >
-          Delete this draft
+          {linkedCount > 0 ? 'Unbill & delete this draft' : 'Delete this draft'}
         </button>
       )}
       {error && <span role="alert" className="ml-2 text-xs text-danger">{error}</span>}

@@ -277,11 +277,15 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
 
       <InvoiceDocument data={docData} />
 
-      {/* Only a stranded draft gets a way out: never sent, no show billed
-          to it. The action re-checks all of this server-side. */}
-      {inv.status === 'draft' && !inv.sent_at && !hasLinkedShows && (
+      {/* Any never-sent draft gets a way out — with shows still billed, the
+          button unbills them too. The action re-checks server-side. */}
+      {inv.status === 'draft' && !inv.sent_at && (
         <div className="mt-10">
-          <DeleteDraftInvoiceButton invoiceId={inv.id} number={inv.number} />
+          <DeleteDraftInvoiceButton
+            invoiceId={inv.id}
+            number={inv.number}
+            linkedCount={(linkedShows ?? []).length}
+          />
         </div>
       )}
     </AppShell>
