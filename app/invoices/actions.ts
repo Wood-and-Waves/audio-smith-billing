@@ -124,10 +124,11 @@ export async function saveInvoice(input: InvoiceInput): Promise<SaveResult> {
   let hoursWarning: string | undefined
 
   if (invoiceId) {
-    // Read the due date and backup_snapshot this row had BEFORE the update,
-    // so both can be compared against the new one below.
+    // Read the due date, backup_snapshot, and total_cents this row had
+    // BEFORE the update, so all three can be compared against the new ones
+    // below.
     const { data: before } = await supabase
-      .from('invoices').select('due_date, backup_snapshot').eq('id', invoiceId).maybeSingle()
+      .from('invoices').select('due_date, backup_snapshot, total_cents').eq('id', invoiceId).maybeSingle()
 
     // invoice_lines is deleted and re-inserted below, but backup_snapshot is
     // deliberately left out of `row` (see the insert branch's comment) so an
@@ -185,6 +186,25 @@ export async function saveInvoice(input: InvoiceInput): Promise<SaveResult> {
     // and reintroduce the bug this comment exists to prevent.
     if ('work_for' in input) {
       updatePatch = { ...updatePatch, work_for: input.work_for?.trim() || null }
+    }
+
+    // A linked bank deposit's amount is exactly the frozen total at match
+    // time (acceptIncomeMatch's own sum-equality check) — letting an edit
+    // move the total out from under a linked invoice would leave the
+    // deposit amount and the invoice total disagreeing with no way to
+    // reconcile them, and the deposit itself has no total_cents to update.
+    // Only refused when the total is actually MOVING; an edit that leaves it
+    // unchanged (a note tweak, a work_for edit, an hours-only change that
+    // happens to net to the same total) is unaffected. Fail closed on the
+    // links read, same rule as everywhere else linked state is checked: an
+    // ERROR must not read as "nothing links it."
+    if (before && before.total_cents !== row.total_cents) {
+      const { data: links, error: linksError } = await supabase
+        .from('ledger_transaction_invoices').select('id').eq('invoice_id', invoiceId).limit(1)
+      if (linksError) return { error: linksError.message }
+      if (links && links.length > 0) {
+        return { error: 'A bank deposit is linked to this invoice. Unlink it in the register first.' }
+      }
     }
 
     const { error } = await supabase.from('invoices').update(updatePatch).eq('id', invoiceId)
@@ -277,11 +297,46 @@ export async function setInvoiceStatus(
   if (!user) return { error: 'Not signed in.' }
   if (!INVOICE_STATUSES.includes(status)) return { error: 'Unknown invoice status.' }
 
-  // Status only. sent_at belongs to the actual send (sendInvoice stamps it) and
-  // must not be touched here: marking a sent invoice paid and then unmarking it
-  // returns it to 'sent', and re-stamping sent_at would reset the real send date
-  // — moving the reminder clock and the "sent" line on the invoice to today.
+  // Status only to start. sent_at belongs to the actual send (sendInvoice
+  // stamps it) and must not be touched here: marking a sent invoice paid and
+  // then unmarking it returns it to 'sent', and re-stamping sent_at would
+  // reset the real send date — moving the reminder clock and the "sent" line
+  // on the invoice to today. sent_at stays untouched per this comment in
+  // both branches below.
+  //
+  // paid_at is the date money landed — a fact, not a status — and is filled
+  // in by each branch below, not here.
   const patch: Record<string, unknown> = { status }
+
+  // An invoice paid by a linked bank deposit can't be un-paid from here —
+  // the link would dangle. Unlinking the deposit (register edit mode) is the
+  // undo, and it restores 'sent' itself. Fail-direction rule (unlinkTransaction's
+  // own comment in app/money/actions.ts): an ERROR on the links read must not
+  // read as "nothing links it" — that would let a still-linked invoice slip
+  // off 'paid' out from under its deposit.
+  if (status !== 'paid') {
+    const { data: links, error: linksError } = await supabase
+      .from('ledger_transaction_invoices').select('id').eq('invoice_id', id).limit(1)
+    if (linksError) return { error: linksError.message }
+    if (links && links.length > 0) {
+      return { error: 'A bank deposit is linked to this invoice. Unlink it in the register first.' }
+    }
+    patch.paid_at = null
+  } else {
+    // Mark Paid must never overwrite the bank's own date. When a deposit is
+    // already linked, its date is authoritative — acceptIncomeMatch stamped
+    // paid_at from txn.date the moment the link was made — so paid_at is left
+    // out of this patch entirely rather than reset to today. Only an
+    // unlinked invoice gets today's date stamped as a guess (a later deposit
+    // match corrects it to the bank's own date). Same fail-closed read as the
+    // non-paid branch above.
+    const { data: links, error: linksError } = await supabase
+      .from('ledger_transaction_invoices').select('id').eq('invoice_id', id).limit(1)
+    if (linksError) return { error: linksError.message }
+    if (!links || links.length === 0) {
+      patch.paid_at = todayInChicago()
+    }
+  }
 
   // .select('id') so a zero-row result — an id the caller does not own, which
   // RLS filters to nothing — is reported as a failure rather than a silent

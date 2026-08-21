@@ -88,7 +88,7 @@ status.
   `border-b border-line py-4 pl-3 -ml-3 pr-3`; eyebrow headers; FIELD_FULL;
   `components/ui/Select`; useTransition + router.refresh + `{error}`.
 
-## Money module map (migrations 0027–0031)
+## Money module map (migrations 0027–0032)
 
 - Tables: `ledger_accounts` (one business checking), `ledger_categories`
   (Dan's YNAB chart; `deductible` drives the reports figure — "Taxes" seeds
@@ -111,9 +111,22 @@ status.
 - **Reconcile** is date-scoped (rows ≤ statement date) and atomic via the
   `reconcile_ledger_account` RPC (0029); its adjustment stays merely 'cleared'
   so mistakes remain correctable; reconciled rows are locked server-side
-  except TWO carve-outs, both audit metadata that moves no money:
-  categorization (`setTransactionCategory`) and receipts (attach/replace/
-  remove all work on reconciled rows by design).
+  except THREE carve-outs, all audit metadata that moves no money:
+  categorization (`setTransactionCategory`), receipts (attach/replace/
+  remove), and bridge links (accept/unlink — by design, since a month is
+  usually reconciled before its deposits meet their invoices).
+- **The bridge (0032)**: `invoices.paid_at` + link tables
+  `ledger_transaction_invoices` / `ledger_transaction_expenses` (N↔N by
+  design: Streamline pays two invoices with one check; one Uber Eats expense
+  posts as order + tip) + `ledger_match_dismissals` (suppression list — the
+  matcher is stateless). `lib/ledgerMatch.ts` PROPOSES only; accept/dismiss/
+  unlink actions in `app/money/actions.ts` re-verify everything server-side.
+  `paid_at` is written ONLY by deposit-accept (the bank row's date) and Mark
+  Paid (today, corrected by a later accept); unlink restores 'sent'. A linked
+  expense's receipt surfaces on the bank row via DISPLAY-TIME JOIN — never
+  copy receipt paths onto ledger rows (removeLedgerReceipt deletes storage
+  objects; a copied path would delete the expense's file). Unlink dissolves
+  expense groups whole. Link data never reaches any client-facing surface.
 - **Register order and balances**: `lib/ledgerBalance.ts` is the single
   source — `compareLedgerOrder` (date asc, created_at asc, id asc; display =
   exact reverse) and `runningBalances` (pinned invariant: top rendered row's
@@ -154,7 +167,10 @@ status.
   (AppShell's `wide` prop — register only), and drag-resizable columns
   (grips at every boundary move ONLY that boundary; widths persist per
   device in localStorage 'registerCols'); per-device System/Light/Dark in
-  Settings; punch tiles 6-across from sm:.
+  Settings; punch tiles 6-across from sm:; the invoice/expense auto-bridge
+  (0032: /money/matches review queue — nothing applies without a click;
+  register shows #invoice chips + linked-expense receipts + Unlink; invoice
+  page shows Paid date + its deposit; Matches count badge on /money).
 - **The ledger is Dan's live books**: YNAB Register backfilled to prod
   2026-08-20 — 328 txns in "Chase Checking" (opening $585.75 @ 2026-01-01,
   ending verified against the bank). Monthly OFX imports adopt the manual
@@ -162,7 +178,7 @@ status.
   with `--push` to Vercel and `--probe` diagnostics; secrets never printed).
 - **Backlog:** `docs/BACKLOG.md` (canonical). Module design reference:
   `docs/superpowers/specs/2026-08-18-bookkeeping-module-reference.md` (incl.
-  Dan's CPA homework questions). Next big pieces: invoice/expense
-  auto-bridge (matcher must handle 1 expense → N bank lines), show revenue
-  projection + cash-flow forecast, calendar feed from shows, CPA year-end
-  export, income-by-payee report, W-9, MileIQ.
+  Dan's CPA homework questions). Next big pieces: show revenue projection +
+  cash-flow forecast/runway (paid_at now exists for pay-lag learning),
+  calendar feed from shows, CPA year-end export, income-by-payee report,
+  W-9, MileIQ.

@@ -19,7 +19,7 @@ import { signedReceiptUrls } from '@/app/expenses/actions'
 import {
   createLedgerAccount, addLedgerTransaction, updateLedgerTransaction,
   deleteLedgerTransaction, setTransactionCleared, setTransactionCategory,
-  attachLedgerReceipt, replaceLedgerReceipt, removeLedgerReceipt,
+  attachLedgerReceipt, replaceLedgerReceipt, removeLedgerReceipt, unlinkTransaction,
 } from '@/app/money/actions'
 
 export type LedgerKind = 'income' | 'expense' | 'owner_pay'
@@ -42,6 +42,9 @@ export type LedgerTxnRow = {
   balanceCents: number
   receipt_path: string | null
   receipt_original: string | null
+  invoiceNumbers: number[]          // linked invoices ([] = none)
+  expenseLinked: boolean            // has expense-link rows
+  linkedReceiptPath: string | null  // a linked expense's receipt, display-time join
 }
 
 export type LedgerAccountSummary = {
@@ -215,7 +218,12 @@ function ReceiptControl({
   onView: (row: LedgerTxnRow) => void
   onAttach: (row: LedgerTxnRow) => void
 }) {
-  if (row.receipt_path) {
+  // A row with no receipt of its own still shows the filled glyph when a
+  // linked expense carries one — the display-time join built in
+  // app/money/page.tsx (first linked expense with a receipt_path wins). Own
+  // receipt still takes priority; openReceipt below signs whichever this
+  // branch used.
+  if (row.receipt_path || row.linkedReceiptPath) {
     return (
       <button
         type="button"
@@ -868,7 +876,10 @@ export default function MoneyRegister({
   }
 
   function openReceipt(row: LedgerTxnRow) {
-    const path = row.receipt_path
+    // Own receipt wins over a linked expense's — mirrors ReceiptControl's own
+    // precedence above, so this always signs whichever path made the glyph
+    // show up in the first place.
+    const path = row.receipt_path || row.linkedReceiptPath
     if (!path) return
     setError(null)
     start(async () => {
@@ -990,6 +1001,22 @@ export default function MoneyRegister({
     })
   }
 
+  /** Undoes an invoice or expense link — unlinkTransaction dissolves BOTH
+   *  link tables for this row (an expense link's whole split group, not just
+   *  this row) and restores any invoice it un-links to 'sent'. Link metadata
+   *  is deliberately outside what reconciliation locks (same carve-out
+   *  setTransactionCategory and the receipt actions get above), so this is
+   *  offered on a reconciled row too — see the display rows' own showUnlink
+   *  below for that inline placement. */
+  function unlinkRow(row: LedgerTxnRow) {
+    setError(null)
+    start(async () => {
+      const result = await unlinkTransaction(row.id)
+      if ('error' in result) { setError(result.error); return }
+      router.refresh()
+    })
+  }
+
   /**
    * The edit-mode grid — identical markup for both layouts (it already
    * stacks 2-col under sm, same as the add row above it), so this is the
@@ -1103,6 +1130,16 @@ export default function MoneyRegister({
               Remove receipt
             </button>
           )}
+          {(t.invoiceNumbers.length > 0 || t.expenseLinked) && (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => unlinkRow(t)}
+              className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
+            >
+              Unlink
+            </button>
+          )}
           {/* Deletion of bank data is recoverable by re-import, and this row
               was explicitly opened for editing — a single danger link, not a
               two-step arm/confirm, matching the plan's "keep it simple". */}
@@ -1145,6 +1182,11 @@ export default function MoneyRegister({
     const showReceiptLinks = !editable && (t.receipt_path !== null || t.receipt_original !== null)
     const canAdjustReceipt = showReceiptLinks
       && t.receipt_original !== null && t.receipt_path !== null && !t.receipt_original.endsWith('.pdf')
+    // Same non-editable carve-out as showReceiptLinks above, but keyed off
+    // link state instead of receipt state — a reconciled/transfer row must
+    // still be able to unlink (renderEditRow's own Unlink covers editable
+    // rows via edit mode).
+    const showUnlink = !editable && (t.invoiceNumbers.length > 0 || t.expenseLinked)
 
     return (
       <div
@@ -1167,6 +1209,12 @@ export default function MoneyRegister({
               {t.showName}
             </span>
           )}
+          {t.invoiceNumbers.length > 0 && (
+            <span className="text-[11px] font-bold uppercase tracking-wider text-muted
+                             bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
+              #{t.invoiceNumbers.join(' + #')}
+            </span>
+          )}
         </span>
         <div className="min-w-0" onClick={stopPropagation}>
           {inlineCategory ? (
@@ -1184,9 +1232,9 @@ export default function MoneyRegister({
         </div>
         <div className="min-w-0">
           <span className="block truncate text-xs text-muted">{t.memo}</span>
-          {showReceiptLinks && (
+          {(showReceiptLinks || showUnlink) && (
             <div className="flex items-center gap-x-3">
-              {canAdjustReceipt && (
+              {showReceiptLinks && canAdjustReceipt && (
                 <button
                   type="button"
                   disabled={pending}
@@ -1196,14 +1244,26 @@ export default function MoneyRegister({
                   Adjust corners
                 </button>
               )}
-              <button
-                type="button"
-                disabled={pending}
-                onClick={(e) => { e.stopPropagation(); removeReceipt(t) }}
-                className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
-              >
-                Remove receipt
-              </button>
+              {showReceiptLinks && (
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={(e) => { e.stopPropagation(); removeReceipt(t) }}
+                  className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
+                >
+                  Remove receipt
+                </button>
+              )}
+              {showUnlink && (
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={(e) => { e.stopPropagation(); unlinkRow(t) }}
+                  className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
+                >
+                  Unlink
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -1236,6 +1296,7 @@ export default function MoneyRegister({
     const showReceiptLinks = !editable && (t.receipt_path !== null || t.receipt_original !== null)
     const canAdjustReceipt = showReceiptLinks
       && t.receipt_original !== null && t.receipt_path !== null && !t.receipt_original.endsWith('.pdf')
+    const showUnlink = !editable && (t.invoiceNumbers.length > 0 || t.expenseLinked)
 
     return (
       <li
@@ -1278,6 +1339,12 @@ export default function MoneyRegister({
               {t.showName}
             </span>
           )}
+          {t.invoiceNumbers.length > 0 && (
+            <span className="text-[11px] font-bold uppercase tracking-wider text-muted
+                             bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
+              #{t.invoiceNumbers.join(' + #')}
+            </span>
+          )}
           <ReceiptControl row={t} pending={pending} onView={openReceipt} onAttach={openAttach} />
           {showReceiptLinks && (
             <>
@@ -1300,6 +1367,16 @@ export default function MoneyRegister({
                 Remove receipt
               </button>
             </>
+          )}
+          {showUnlink && (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={(e) => { e.stopPropagation(); unlinkRow(t) }}
+              className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
+            >
+              Unlink
+            </button>
           )}
         </div>
         {t.memo && <p className="mt-1 text-xs text-muted truncate">{t.memo}</p>}

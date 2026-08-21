@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { formatUSD } from '@/lib/money'
+import { formatDateShort } from '@/lib/dates'
 import { displayStatus, daysUntilDue, STATUS_META, todayInChicago } from '@/lib/status'
 import AppShell from '@/components/AppShell'
 import InvoiceDocument, { type DocumentData } from '@/components/InvoiceDocument'
@@ -22,11 +23,11 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   const supabase = await createClient()
   const today = todayInChicago()
 
-  const [{ data: invoice, error }, { data: settings }, { data: linkedShows }] = await Promise.all([
+  const [{ data: invoice, error }, { data: settings }, { data: linkedShows }, { data: depositTxns }] = await Promise.all([
     supabase
       .from('invoices')
       .select(
-        `id, number, issue_date, due_date, terms_days, status, sent_at, bill_to_snapshot,
+        `id, number, issue_date, due_date, terms_days, status, sent_at, paid_at, bill_to_snapshot,
          subtotal_cents, tax_bp, tax_cents, deposit_cents, total_cents, notes, imported,
          work_for, backup_snapshot,
          clients(name, address_line1, address_line2, city, state, postal_code, billing_email),
@@ -51,6 +52,19 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
     // query. Used only to tell "no shows behind this invoice" apart from "a
     // show billed this invoice before the backup snapshot existed" below.
     supabase.from('shows').select('id').eq('invoice_id', id),
+    // .order + .limit(1): an invoice can in principle carry more than one
+    // link row (a rare hand-correction case), and without an explicit order
+    // Postgres makes no promise about which one comes back first — the same
+    // "unknown must never resolve to a guess" reasoning as everywhere else in
+    // this app, applied here by pinning the deterministic choice (oldest
+    // link first) instead of leaving it to whatever the planner happens to
+    // return.
+    supabase
+      .from('ledger_transaction_invoices')
+      .select('ledger_transactions(date)')
+      .eq('invoice_id', id)
+      .order('created_at', { ascending: true })
+      .limit(1),
   ])
 
   if (error) {
@@ -72,6 +86,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
     terms_days: number
     status: 'draft' | 'sent' | 'paid' | 'void'
     sent_at: string | null
+    paid_at: string | null
     bill_to_snapshot: string | null
     subtotal_cents: number
     tax_bp: number
@@ -100,6 +115,14 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   const snapshot = inv.backup_snapshot
   const snapshotExpenses = snapshot?.expenses ?? []
   const hasLinkedShows = (linkedShows ?? []).length > 0
+
+  // Extract the paying deposit from the first ledger transaction (or null).
+  // The query itself already narrowed this to one deterministic row (oldest
+  // link first) via .order + .limit(1) above.
+  const depositRow = (depositTxns ?? [])[0] as unknown as
+    | { ledger_transactions: { date: string } | null }
+    | undefined
+  const deposit = depositRow?.ledger_transactions ?? null
 
   // Fetched here, not by the PDF renderer: letting it pull a dozen remote URLs
   // would serialise a dozen round trips inside a function with a timeout — the
@@ -278,8 +301,15 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
               ? `${Math.abs(days)} ${Math.abs(days) === 1 ? 'day' : 'days'} overdue`
               : s === 'sent'
                 ? `Due in ${days} ${days === 1 ? 'day' : 'days'}`
-                : STATUS_META[s].label}
+                : s === 'paid' && inv.paid_at
+                  ? `Paid ${formatDateShort(inv.paid_at)}`
+                  : STATUS_META[s].label}
           </p>
+          {deposit && (
+            <p className="text-xs text-muted mt-1">
+              Bank deposit · {formatDateShort(deposit.date)}
+            </p>
+          )}
         </div>
       </header>
 

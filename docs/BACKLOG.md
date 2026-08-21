@@ -82,20 +82,23 @@ forecasting."
   (fallback terms_days), recurring bills at trailing-3-month average.
 - Likely home: /money/forecast or a Reports section. Needs the shows +
   ledger + invoice-history joins that all exist today; no new data entry
-  beyond the take-home need. **Pay-lag learning depends on `invoices.paid_at`
-  — which does not exist until the auto-bridge lands it.**
+  beyond the take-home need. Pay-lag learning depends on `invoices.paid_at`
+  — landed with the auto-bridge (0032, 2026-08-21); accepted deposit
+  matches backfill it with real bank dates.
 
 ## Money module — remaining phases
 
-- **Invoice/expense auto-bridge** (phase 3 of the bookkeeping design): paid
-  invoices → income transactions; show expenses → ledger expenses; both match
-  the bank feed via the existing adopt-on-import machinery. Also auto-feeds
-  the Taxes envelope from each show's set-aside. Design in
-  `docs/superpowers/specs/2026-08-18-bookkeeping-module-reference.md`.
-  **Matcher must handle 1 expense → N bank lines** (2026-08-21, Dan's real
-  case: one $40.25 Uber Eats show expense posted at Chase as $33.25 order +
-  $7.00 tip — same payee, sum matches within a short date window). The mirror
-  case (one bank line covering several expenses) deserves a look too.
+- ~~Invoice/expense auto-bridge~~ **BUILT 2026-08-21** (migration 0032;
+  design: `docs/superpowers/specs/2026-08-21-invoice-expense-bridge-design.md`).
+  Deliberately deferred from that wave, still open here:
+  - **Tax set-aside on income** — waits for the CPA's rate AND for per-show
+    profit as the base (a deposit is gross, not profit).
+  - **Partial payments** — a link means paid in full. The pre-existing,
+    still-unused `payments` table (0001) was deliberately left untouched;
+    it is the natural home if partial payments ever land (its `paid_cents`
+    plumbing in `lib/status.ts` is dead today).
+  - **N expenses ← one bank line** (the mirror of the Uber case) — the
+    matcher groups bank rows per expense, not expenses per bank row.
 - **One chart of accounts, three places** (2026-08-21, Dan: "I would like
   them all to agree"): show-expense categories are four fixed billing
   labels (meals/rides/baggage/other), the ledger uses Dan's YNAB chart, and
@@ -117,6 +120,21 @@ forecasting."
   rules.
 
 ## Small / cosmetic
+
+- Bridge accepted trade-offs (2026-08-21 final review): dismissals are a
+  one-way door (no UI lists or deletes `ledger_match_dismissals`; dismissing
+  a sum also suppresses future singles on the same pair); a bank row whose
+  linked expense has a receipt loses its own attach affordance until
+  unlinked; an expense link with no show chip is invisible on the register
+  when the show-tag write failed (recoverable via edit-mode Unlink) — an
+  expense-link chip like the `#N` invoice chip would fix it; `/money`
+  runs the matcher on every load for the badge (fine at hundreds of rows,
+  revisit at thousands); `ledger_match_dismissals` has no far-side indexes
+  (nothing queries them today; 0033 if ever needed).
+- `lib/receiptRetention.ts` still derives settlement from the dead
+  `payments` table / `updated_at` fallback — `invoices.paid_at` (0032) is
+  now the right source; direction is safe (delays reclaim), fix when
+  touching retention.
 
 - Register rebuild accepted trade-offs (2026-08-21 review): row-click-to-edit is
   pointer-only (no keyboard path to edit/delete); both layouts mount in the DOM
