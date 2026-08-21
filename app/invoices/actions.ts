@@ -15,6 +15,17 @@ import type { DocumentData } from '@/components/InvoiceDocument'
 import type { ExpenseCategory } from '@/lib/expenses'
 import type { BackupSnapshot } from '@/lib/backupSnapshot'
 
+/**
+ * How large a PDF original may be before sendInvoice skips appending it —
+ * mirrors app/expenses/actions.ts's MAX_RECEIPT_DOWNLOAD_BYTES (same bound;
+ * that file's own comment explains why: the bucket caps every object at
+ * 10MB, and a born-digital receipt PDF is typically far smaller). Appending
+ * is best-effort on top of a document that already renders and sends
+ * correctly on its own, so a receipt over this line is skipped rather than
+ * pulled fully into memory.
+ */
+const MAX_RECEIPT_APPENDIX_BYTES = 6 * 1024 * 1024
+
 export type LineInput = {
   description: string
   qty_hundredths: number
@@ -578,6 +589,60 @@ export async function sendInvoice(
       error: 'The invoice PDF could not be rendered: ' +
         (e instanceof Error ? e.message : 'unknown error.'),
     }
+  }
+
+  // ---- Original PDF receipts, appended at full fidelity -------------------
+  //
+  // The receipts page just rendered into `pdf` carries a rasterized JPEG of
+  // each receipt's first page — the fuzzy grayscale scan an emailed,
+  // born-digital PDF should never be the ONLY copy of. When the untouched
+  // original IS itself a PDF (never a photo — see lib/expenses.ts's
+  // receipt_original comment), its pages ride along at the end of the
+  // document, in full vector fidelity, in the same order expenseRows already
+  // lists them (the same order the receipt image pages above used).
+  //
+  // Wrapped end to end and deliberately never returns an error: appending is
+  // a nice-to-have on top of an invoice that already renders and sends
+  // correctly without it, so a signing failure, a slow/broken fetch, an
+  // oversized file or pdf-lib itself throwing on a corrupt PDF all degrade to
+  // the unmerged `pdf` — never to a failed send. The rasterized thumbnail is
+  // still in the body either way.
+  try {
+    const pdfOriginals = expenseRows.filter(
+      (e): e is typeof e & { receipt_original: string } =>
+        typeof e.receipt_original === 'string' && e.receipt_original.endsWith('.pdf'),
+    )
+    if (pdfOriginals.length > 0) {
+      const { urls: originalUrls } = await signedReceiptUrls(pdfOriginals.map((e) => e.receipt_original))
+      const fetched: Uint8Array[] = []
+      for (const e of pdfOriginals) {
+        const url = originalUrls[e.receipt_original]
+        if (!url) continue
+        try {
+          const res = await fetch(url)
+          if (!res.ok) continue
+          // Refused off the declared length first, same as
+          // app/expenses/actions.ts's extractReceipt, before the body is
+          // ever read fully into memory.
+          const declaredLength = Number(res.headers.get('content-length'))
+          if (Number.isFinite(declaredLength) && declaredLength > MAX_RECEIPT_APPENDIX_BYTES) continue
+          const bytes = new Uint8Array(await res.arrayBuffer())
+          if (bytes.byteLength > MAX_RECEIPT_APPENDIX_BYTES) continue
+          fetched.push(bytes)
+        } catch {
+          // This one receipt could not be downloaded — skip it, not the send.
+          continue
+        }
+      }
+      if (fetched.length > 0) {
+        const { appendPdfs } = await import('@/lib/mergePdfAppendices')
+        // Buffer extends Uint8Array, so `pdf` needs no conversion.
+        pdf = Buffer.from(await appendPdfs(pdf, fetched))
+      }
+    }
+  } catch {
+    // Whatever went wrong, `pdf` above already rendered successfully — send
+    // that, unmerged, rather than losing the invoice over an appendix.
   }
 
   const result = await sendInvoiceEmail({

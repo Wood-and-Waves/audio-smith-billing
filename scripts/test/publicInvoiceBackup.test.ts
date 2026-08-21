@@ -58,6 +58,21 @@ test('a snapshot with no expenses maps to an empty expense list', () => {
   assert.deepEqual(b.expenses, [])
 })
 
+test('receipt_original — a private Storage path — never reaches the public output', () => {
+  // The public RPC (public_invoice_backup) returns the frozen snapshot's raw
+  // jsonb, receipt_original included. This is the one place that strips it
+  // before an anonymous viewer's browser ever sees the response — see
+  // app/i/[token]/pdf/route.ts, which passes the RPC's result straight
+  // through publicBackup with nothing else in between.
+  const b = publicBackup({
+    ...SNAPSHOT,
+    expenses: [{ ...SNAPSHOT.expenses[0], receipt_original: 'owner-uuid/show-id/x-original.pdf' }],
+  })
+  assert.ok(b)
+  assert.equal(b.expenses.length, 1)
+  assert.ok(!('receipt_original' in b.expenses[0]), 'no original Storage path carried through')
+})
+
 test('bill_hourly survives the strip', () => {
   // publicBackup copies `shows` whole (it only ever touches `expenses`), so
   // this is really a lock against that changing — the public PDF route

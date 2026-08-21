@@ -24,6 +24,14 @@ export type ExpenseLike = {
   /** Storage key of the enhanced image, or null when not yet photographed. */
   receipt_path: string | null
   /**
+   * Storage key of the untouched upload — a photo or, for an emailed
+   * receipt, the original PDF itself — or null when there is none. Only the
+   * PDF case matters past billing: it is what lib/mergePdfAppendices.ts
+   * appends to the invoice at full fidelity, since receipt_path for a PDF
+   * upload is only ever its rasterized first-page thumbnail.
+   */
+  receipt_original: string | null
+  /**
    * true = billed to the client (invoice line, receipt gates billing, frozen
    * into the snapshot). false = Dan's own cost (per-diem meals): never reaches
    * the invoice or the client, never blocks billing, receipt optional.

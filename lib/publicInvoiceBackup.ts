@@ -14,7 +14,12 @@ type RawExpense = {
   where_spent: string
   amount_cents: number
   spent_on: string
-  // receipt_path may be present on the stored snapshot; deliberately not copied.
+  // receipt_path and receipt_original — both private Storage keys — may be
+  // present on the stored snapshot; deliberately not copied. The output
+  // object below is built field by field rather than spread, which is what
+  // makes that true: a new field added to the frozen snapshot (like
+  // receipt_original itself) stays excluded from what an anonymous public
+  // viewer receives without this file needing to change again.
 }
 
 export function publicBackup(snapshot: unknown): DocumentData['backup'] | undefined {

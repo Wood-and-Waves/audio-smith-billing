@@ -595,7 +595,8 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
              show_days(id, date, travel_in, travel_out, pay_as_half_day,
                        punches(punch_type, punched_at)),
              pm_entries(minutes),
-             expenses(id, category, where_spent, amount_cents, spent_on, receipt_path, billable)`)
+             expenses(id, category, where_spent, amount_cents, spent_on, receipt_path,
+                      receipt_original, billable)`)
     .in('id', showIds)
   if (error) return { error: error.message }
   if (!shows?.length) return { error: 'Those shows no longer exist.' }

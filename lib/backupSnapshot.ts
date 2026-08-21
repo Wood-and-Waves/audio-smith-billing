@@ -37,6 +37,13 @@ export type SnapshotExpense = {
   amount_cents: number
   spent_on: string
   receipt_path: string | null
+  /**
+   * Storage key of the untouched original — a PDF appends onto the invoice
+   * at full fidelity (lib/mergePdfAppendices.ts), a photo never does. Absent
+   * on every snapshot frozen before this field existed: no appendices for
+   * those, which is exactly today's document, unchanged.
+   */
+  receipt_original: string | null
 }
 
 export type BackupSnapshot = {
@@ -156,6 +163,7 @@ export function buildBackupSnapshot(
         amount_cents: e.amount_cents,
         spent_on: e.spent_on,
         receipt_path: e.receipt_path,
+        receipt_original: e.receipt_original,
       }))),
   }
 }

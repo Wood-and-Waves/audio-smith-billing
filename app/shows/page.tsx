@@ -18,6 +18,7 @@ type PmEntry = { minutes: number }
 type Expense = {
   id: string; category: ExpenseCategory; where_spent: string
   amount_cents: number; spent_on: string; receipt_path: string | null
+  receipt_original: string | null
   billable: boolean
 }
 type Row = {
@@ -46,7 +47,8 @@ export default async function ShowsPage() {
              clients(name),
              show_days(id, date, travel_in, travel_out, pay_as_half_day, punches(punch_type, punched_at)),
              pm_entries(minutes),
-             expenses(id, category, where_spent, amount_cents, spent_on, receipt_path, billable)`)
+             expenses(id, category, where_spent, amount_cents, spent_on, receipt_path,
+                      receipt_original, billable)`)
     .order('created_at', { ascending: false })
 
   if (error) {

@@ -104,24 +104,53 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   // Fetched here, not by the PDF renderer: letting it pull a dozen remote URLs
   // would serialise a dozen round trips inside a function with a timeout — the
   // send would work on a two-receipt invoice and fail on a twelve-receipt one.
-  const paths = snapshotExpenses.map((e) => e.receipt_path).filter(Boolean) as string[]
+  //
+  // Original PDFs (never photos — DownloadInvoiceButton's buildInvoicePdfBlob
+  // only ever appends a PDF onto the download) are signed in the SAME call as
+  // the enhanced images below, so this page costs one Storage round trip, not
+  // two.
+  const originalPdfPaths = snapshotExpenses
+    .map((e) => e.receipt_original)
+    .filter((p): p is string => typeof p === 'string' && p.endsWith('.pdf'))
+  const paths = [
+    ...(snapshotExpenses.map((e) => e.receipt_path).filter(Boolean) as string[]),
+    ...originalPdfPaths,
+  ]
   const { urls } = await signedReceiptUrls(paths)
   const withImages = await Promise.all(snapshotExpenses.map(async (e) => {
     const url = e.receipt_path ? urls[e.receipt_path] : null
-    if (!url) return { ...e, category: e.category as ExpenseCategory, receiptDataUri: null }
+    // Undefined for a photo original, or for a PDF original whose sign
+    // failed/was skipped (storage outage, or an original that predates this
+    // field) — either way DownloadInvoiceButton simply has nothing to append.
+    const receiptOriginalPdfUrl =
+      e.receipt_original && e.receipt_original.endsWith('.pdf')
+        ? (urls[e.receipt_original] ?? null)
+        : null
+    if (!url) {
+      return {
+        ...e, category: e.category as ExpenseCategory, receiptDataUri: null, receiptOriginalPdfUrl,
+      }
+    }
     try {
       const res = await fetch(url)
-      if (!res.ok) return { ...e, category: e.category as ExpenseCategory, receiptDataUri: null }
+      if (!res.ok) {
+        return {
+          ...e, category: e.category as ExpenseCategory, receiptDataUri: null, receiptOriginalPdfUrl,
+        }
+      }
       const buf = Buffer.from(await res.arrayBuffer())
       return {
         ...e,
         category: e.category as ExpenseCategory,
         receiptDataUri: `data:image/jpeg;base64,${buf.toString('base64')}`,
+        receiptOriginalPdfUrl,
       }
     } catch {
       // A missing image must not lose the invoice. The itemisation still
       // lists the expense; only the picture is absent.
-      return { ...e, category: e.category as ExpenseCategory, receiptDataUri: null }
+      return {
+        ...e, category: e.category as ExpenseCategory, receiptDataUri: null, receiptOriginalPdfUrl,
+      }
     }
   }))
 

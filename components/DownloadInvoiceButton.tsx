@@ -24,7 +24,51 @@ export async function buildInvoicePdfBlob(data: DocumentData): Promise<Blob> {
   }
 
   const parts: PdfParts = { Document, Page, Text, View, Image }
-  return pdf(buildInvoicePdf(parts, data, { logoSrc: '/logo.png' })).toBlob()
+  const blob = await pdf(buildInvoicePdf(parts, data, { logoSrc: '/logo.png' })).toBlob()
+
+  // Original PDF receipts (born-digital — an emailed Uber Eats/airline/hotel
+  // PDF) ride along at the end, at full vector fidelity: the receipts
+  // section the document above already has only ever carries a rasterized
+  // JPEG thumbnail of each one. app/invoices/[id]/page.tsx is the assembly
+  // point that signs a URL for every PDF original onto
+  // data.backup.expenses[].receiptOriginalPdfUrl — this is purely the
+  // browser-side merge on top of that, so a fetch failure or a corrupt file
+  // just leaves the un-merged download; it never blocks it, and this
+  // signature is unchanged so SendInvoicePanel's preview gets the same
+  // appendix for free.
+  const originalUrls = (data.backup?.expenses ?? [])
+    .map((e) => e.receiptOriginalPdfUrl)
+    .filter((u): u is string => Boolean(u))
+  if (originalUrls.length === 0) return blob
+
+  const fetched: Uint8Array[] = []
+  for (const url of originalUrls) {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) continue
+      fetched.push(new Uint8Array(await res.arrayBuffer()))
+    } catch {
+      continue
+    }
+  }
+  if (fetched.length === 0) return blob
+
+  try {
+    // Lazy-imported for the same reason @react-pdf/renderer is above: a
+    // download this page's byte size must not be paid by every page that
+    // merely imports this module's exported type.
+    const { appendPdfs } = await import('@/lib/mergePdfAppendices')
+    const merged = await appendPdfs(new Uint8Array(await blob.arrayBuffer()), fetched)
+    // The cast, and only a cast — same reasoning as ExpenseLog.tsx's zip
+    // Blob: BlobPart rejects Uint8Array<ArrayBufferLike> because that admits
+    // a SharedArrayBuffer backing store, and nothing here is shared.
+    return new Blob([merged] as BlobPart[], { type: 'application/pdf' })
+  } catch {
+    // pdf-lib itself choking on a base document should not happen — this
+    // blob just rendered cleanly above — but if it does, the un-merged
+    // download is still a complete, correct invoice.
+    return blob
+  }
 }
 
 export default function DownloadInvoiceButton({ data }: { data: DocumentData }) {

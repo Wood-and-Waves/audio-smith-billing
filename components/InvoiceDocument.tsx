@@ -86,6 +86,16 @@ export type DocumentData = {
       category: 'meals' | 'rides' | 'baggage' | 'other'
       where_spent: string; amount_cents: number; spent_on: string
       receiptDataUri: string | null
+      /**
+       * A signed URL to the untouched PDF original, set only when the
+       * receipt IS a PDF. Populated only by app/invoices/[id]/page.tsx — the
+       * one DocumentData assembly point that hands data to a client
+       * component (components/DownloadInvoiceButton.tsx) that fetches and
+       * appends it in the browser. sendInvoice's own server-side assembly
+       * (app/invoices/actions.ts) omits it: the emailed PDF's appendix is
+       * built server-side from its own fetch, never from this field.
+       */
+      receiptOriginalPdfUrl?: string | null
     }[]
   }
 }
