@@ -41,12 +41,19 @@ export async function buildInvoicePdfBlob(data: DocumentData): Promise<Blob> {
     .filter((u): u is string => Boolean(u))
   if (originalUrls.length === 0) return blob
 
+  // Mirrors sendInvoice's server-side cap: a runaway object must not be
+  // buffered into the browser's memory any more than a function's.
+  const MAX_APPENDIX_BYTES = 6 * 1024 * 1024
   const fetched: Uint8Array[] = []
   for (const url of originalUrls) {
     try {
       const res = await fetch(url)
       if (!res.ok) continue
-      fetched.push(new Uint8Array(await res.arrayBuffer()))
+      const declared = Number(res.headers.get('content-length'))
+      if (Number.isFinite(declared) && declared > MAX_APPENDIX_BYTES) continue
+      const bytes = new Uint8Array(await res.arrayBuffer())
+      if (bytes.byteLength > MAX_APPENDIX_BYTES) continue
+      fetched.push(bytes)
     } catch {
       continue
     }

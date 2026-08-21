@@ -6,11 +6,17 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { appendPdfs } from '../../lib/mergePdfAppendices.ts'
 
-async function makePdf(pageCount: number): Promise<Uint8Array> {
+async function makePdf(pageCount: number, width = 200): Promise<Uint8Array> {
   const { PDFDocument } = await import('pdf-lib')
   const doc = await PDFDocument.create()
-  for (let i = 0; i < pageCount; i++) doc.addPage([200, 200])
+  for (let i = 0; i < pageCount; i++) doc.addPage([width, 200])
   return doc.save()
+}
+
+async function pageWidthsOf(bytes: Uint8Array): Promise<number[]> {
+  const { PDFDocument } = await import('pdf-lib')
+  const doc = await PDFDocument.load(bytes)
+  return doc.getPages().map((p) => p.getWidth())
 }
 
 async function pageCountOf(bytes: Uint8Array): Promise<number> {
@@ -24,6 +30,17 @@ test('every appendix page lands after the base', async () => {
   const appendix = await makePdf(2)
   const merged = await appendPdfs(base, [appendix])
   assert.equal(await pageCountOf(merged), 3, 'the base page plus both appendix pages')
+})
+
+test('appendices keep their order, and pages keep theirs within each', async () => {
+  // Widths distinguish the pages: base 100, first appendix 300, second 500.
+  // A receipt appearing out of order beside the wrong expense would be a
+  // silent correctness bug the page-count tests above cannot see.
+  const base = await makePdf(1, 100)
+  const first = await makePdf(2, 300)
+  const second = await makePdf(1, 500)
+  const merged = await appendPdfs(base, [first, second])
+  assert.deepEqual(await pageWidthsOf(merged), [100, 300, 300, 500])
 })
 
 test('an empty appendices array leaves the base pages unchanged', async () => {
