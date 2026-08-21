@@ -69,11 +69,21 @@ forecasting."
   ledger's own history gives trailing-average monthly spend per Bills/
   Expenses category. Anchor at the current working balance → projected cash
   position / runway chart.
-- **Assumptions to surface (and let Dan tweak)**: all scheduled days worked,
-  no cancellations, per-client pay lag (fallback terms_days), recurring
-  bills at trailing-3-month average.
+- **Runway, not just a timeline** (2026-08-21, Dan): "I know what I need to
+  take home each month. The cash flow calc should tell me how far in the
+  future my finances will hold me." So: a **monthly take-home need** Dan
+  sets, then walk forward month by month — projected inflows minus the
+  need minus projected outflows — **carrying surplus forward** (a month
+  that earns more than the need funds the next one). The headline figure
+  is "covered through <month>", not a chart. A month that comes up short
+  after the carry-forward is the first uncovered month.
+- **Assumptions to surface (and let Dan tweak)**: monthly take-home need,
+  all scheduled days worked, no cancellations, per-client pay lag
+  (fallback terms_days), recurring bills at trailing-3-month average.
 - Likely home: /money/forecast or a Reports section. Needs the shows +
-  ledger + invoice-history joins that all exist today; no new data entry.
+  ledger + invoice-history joins that all exist today; no new data entry
+  beyond the take-home need. **Pay-lag learning depends on `invoices.paid_at`
+  — which does not exist until the auto-bridge lands it.**
 
 ## Money module — remaining phases
 
@@ -86,6 +96,13 @@ forecasting."
   case: one $40.25 Uber Eats show expense posted at Chase as $33.25 order +
   $7.00 tip — same payee, sum matches within a short date window). The mirror
   case (one bank line covering several expenses) deserves a look too.
+- **One chart of accounts, three places** (2026-08-21, Dan: "I would like
+  them all to agree"): show-expense categories are four fixed billing
+  labels (meals/rides/baggage/other), the ledger uses Dan's YNAB chart, and
+  the CPA has a third list. The auto-bridge deliberately does NOT guess a
+  ledger category from an expense label. Once the CPA answers homework
+  question 1, reconcile all three — then an accepted expense match can
+  fill the ledger category too.
 - **CPA year-end export**: category totals + income + per-show profit +
   MileIQ/home-office slots + receipts, shaped by the CPA's answers to the
   homework questions (in the reference doc).
