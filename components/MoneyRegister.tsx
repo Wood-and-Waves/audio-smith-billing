@@ -30,6 +30,9 @@ export type LedgerTxnRow = {
   payee: string
   memo: string | null
   cleared: 'uncleared' | 'cleared' | 'reconciled'
+  balanceCents: number
+  receipt_path: string | null
+  receipt_original: string | null
 }
 
 export type LedgerAccountSummary = {
@@ -150,7 +153,12 @@ export default function MoneyRegister({
   account: LedgerAccountSummary | null
   categories: CategoryOption[]
   shows: ShowOption[]
-  /** Newest first, already capped at the latest 200 — see app/money/page.tsx. */
+  /**
+   * Newest first, already capped at the latest 200 — see app/money/page.tsx.
+   * Each row carries the true ledger balance after it posted (balanceCents),
+   * computed there over the full account before this list was capped or
+   * filtered, so it's correct regardless of what subset is being rendered.
+   */
   transactions: LedgerTxnRow[]
   workingBalanceCents: number
   clearedBalanceCents: number
