@@ -281,7 +281,25 @@ export async function setInvoiceStatus(
   // must not be touched here: marking a sent invoice paid and then unmarking it
   // returns it to 'sent', and re-stamping sent_at would reset the real send date
   // — moving the reminder clock and the "sent" line on the invoice to today.
-  const patch: Record<string, unknown> = { status }
+  // paid_at is the date money landed — a fact, not a status. Marking paid by
+  // hand stamps today (a guess the deposit match later corrects to the bank's
+  // own date); any other status clears it. sent_at stays untouched per the
+  // comment above.
+  const patch: Record<string, unknown> = {
+    status,
+    paid_at: status === 'paid' ? todayInChicago() : null,
+  }
+
+  // An invoice paid by a linked bank deposit can't be un-paid from here —
+  // the link would dangle. Unlinking the deposit (register edit mode) is the
+  // undo, and it restores 'sent' itself.
+  if (status !== 'paid') {
+    const { data: links } = await supabase
+      .from('ledger_transaction_invoices').select('id').eq('invoice_id', id).limit(1)
+    if (links && links.length > 0) {
+      return { error: 'A bank deposit is linked to this invoice. Unlink it in the register first.' }
+    }
+  }
 
   // .select('id') so a zero-row result — an id the caller does not own, which
   // RLS filters to nothing — is reported as a failure rather than a silent
