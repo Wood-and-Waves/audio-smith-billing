@@ -547,22 +547,204 @@ export async function updateLedgerTransaction(input: {
   return { ok: true }
 }
 
-/** Removes a transaction. Same reconciled-lock as updateLedgerTransaction. */
-export async function deleteLedgerTransaction(id: string): Promise<Fail | { ok: true }> {
+/**
+ * Removes a transaction and any receipt files it carried. Same reconciled-
+ * lock as updateLedgerTransaction; the receipt columns ride along on the
+ * same select purely so the row is read once, not because they affect the
+ * lock decision.
+ */
+export async function deleteLedgerTransaction(
+  id: string,
+): Promise<Fail | { ok: true; warning?: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not signed in.' }
 
   const { data: existing } = await supabase
-    .from('ledger_transactions').select('cleared').eq('id', id).maybeSingle()
+    .from('ledger_transactions')
+    .select('cleared, receipt_path, receipt_original')
+    .eq('id', id).maybeSingle()
   if (!existing) return { error: 'That transaction no longer exists.' }
   if (existing.cleared === 'reconciled') return { error: 'Reconciled transactions are locked.' }
 
   const { error } = await supabase.from('ledger_transactions').delete().eq('id', id)
   if (error) return { error: error.message }
 
+  // Files after the row: an orphaned file costs storage, an orphaned row
+  // costs a receipt that cannot be opened — same policy as expenses'
+  // deleteExpense.
+  const paths = [existing.receipt_path, existing.receipt_original].filter(Boolean) as string[]
+  let warning: string | undefined
+  if (paths.length) {
+    const { error: storageError } = await supabase.storage.from('receipts').remove(paths)
+    // The row is already gone by this point — there is nothing to roll back,
+    // so a storage failure here is a warning about a leftover file, not a
+    // reason to report the delete itself as failed.
+    if (storageError) {
+      warning = `The transaction was deleted, but its receipt file${paths.length === 1 ? '' : 's'} ` +
+        `could not be removed from storage: ${storageError.message}`
+    }
+  }
+
+  revalidatePath('/money')
+  return warning ? { ok: true, warning } : { ok: true }
+}
+
+/**
+ * Storage-path convention for every ledger receipt action below (migration
+ * 0031's own comment): `{owner_id}/ledger/{stamp}-...`. Storage RLS
+ * constrains writes to the caller's own folder[1] but says nothing about
+ * which subfolder a path names — same reasoning as addExpense's show-prefix
+ * check in app/expenses/actions.ts, narrowed to the fixed 'ledger' segment
+ * instead of a per-show id.
+ */
+function ledgerReceiptPrefix(userId: string): string {
+  return `${userId}/ledger/`
+}
+
+/**
+ * Attaches a FIRST receipt to a transaction that was entered without one —
+ * mirrors attachExpenseReceipt in app/expenses/actions.ts, minus that
+ * action's billed-show freeze (the ledger has no equivalent frozen
+ * artifact). Deliberately NOT gated on `cleared === 'reconciled'` the way
+ * updateLedgerTransaction/deleteLedgerTransaction are: a receipt is audit
+ * metadata, not a fact reconcileAccount's cleared-balance math reads, the
+ * same reasoning setTransactionCategory's doc comment gives for leaving
+ * categorization open on locked rows. Receipts also routinely arrive AFTER
+ * the statement closes — Dan photographs a paper receipt whenever he gets to
+ * it, which is often well after the bank line cleared — so gating this on
+ * `cleared` would make attaching one impossible for exactly the rows most
+ * likely to need it.
+ */
+export async function attachLedgerReceipt(
+  txnId: string,
+  enhancedPath: string,
+  originalPath: string,
+): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const { data: existing } = await supabase
+    .from('ledger_transactions')
+    .select('receipt_path, receipt_original')
+    .eq('id', txnId).maybeSingle()
+  if (!existing) return { error: 'That transaction no longer exists.' }
+
+  if (existing.receipt_path || existing.receipt_original) {
+    return { error: 'This transaction already has a receipt.' }
+  }
+
+  const prefix = ledgerReceiptPrefix(user.id)
+  if (!enhancedPath.startsWith(prefix) || !originalPath.startsWith(prefix)) {
+    return { error: 'That receipt was not uploaded to this ledger.' }
+  }
+
+  const { error } = await supabase
+    .from('ledger_transactions')
+    .update({ receipt_path: enhancedPath, receipt_original: originalPath })
+    .eq('id', txnId)
+  if (error) return { error: error.message }
+
   revalidatePath('/money')
   return { ok: true }
+}
+
+/**
+ * Swaps a transaction's enhanced receipt for a freshly re-cropped one — the
+ * fix-later flow, mirrors replaceExpenseReceipt. Same reconciled-exempt
+ * reasoning as attachLedgerReceipt above: re-cropping changes only the
+ * displayed image, never the amount/date/kind a reconciliation locked in.
+ */
+export async function replaceLedgerReceipt(
+  txnId: string,
+  newEnhancedPath: string,
+): Promise<Fail | { ok: true; warning?: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const { data: existing } = await supabase
+    .from('ledger_transactions')
+    .select('receipt_path, receipt_original')
+    .eq('id', txnId).maybeSingle()
+  if (!existing) return { error: 'That transaction no longer exists.' }
+
+  // This re-flattens an EXISTING original — never a back door for attaching
+  // a first receipt to a row that never had one (that's attachLedgerReceipt).
+  if (!existing.receipt_original) {
+    return { error: 'This transaction has no original photo to re-crop.' }
+  }
+
+  const prefix = ledgerReceiptPrefix(user.id)
+  if (!newEnhancedPath.startsWith(prefix)) {
+    return { error: 'That receipt was not uploaded to this ledger.' }
+  }
+
+  const { error } = await supabase
+    .from('ledger_transactions').update({ receipt_path: newEnhancedPath }).eq('id', txnId)
+  if (error) return { error: error.message }
+
+  // The row already points at the new file, so a failure to remove the old
+  // one is only a leftover object in storage, not a broken transaction —
+  // same warning-not-failure policy as deleteLedgerTransaction above.
+  let warning: string | undefined
+  if (existing.receipt_path && existing.receipt_path !== newEnhancedPath) {
+    const { error: storageError } = await supabase.storage.from('receipts').remove([existing.receipt_path])
+    if (storageError) {
+      warning = `The receipt was swapped, but the old file could not be removed from storage: ${storageError.message}`
+    }
+  }
+
+  revalidatePath('/money')
+  return warning ? { ok: true, warning } : { ok: true }
+}
+
+/**
+ * Strips a receipt off a transaction entirely — no expense equivalent exists
+ * because an expense row can just be deleted and retyped; a ledger row often
+ * can't be (reconciled rows are locked, and even an unreconciled row may
+ * carry OFX import state Dan doesn't want to lose). Shipped in the SAME pass
+ * as attach/replace rather than deferred: a wrong photo attached to a
+ * reconciled row would otherwise be permanent, since neither
+ * updateLedgerTransaction nor deleteLedgerTransaction can touch that row at
+ * all, and there would be no other way off. Nulls both columns FIRST — the
+ * row is the source of truth for what has a receipt, so a crash between the
+ * write and the storage cleanup below leaves an orphaned file (a storage-cost
+ * problem) rather than a row that still claims a receipt it can no longer
+ * serve (a broken-link problem).
+ */
+export async function removeLedgerReceipt(
+  txnId: string,
+): Promise<Fail | { ok: true; warning?: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const { data: existing } = await supabase
+    .from('ledger_transactions')
+    .select('receipt_path, receipt_original')
+    .eq('id', txnId).maybeSingle()
+  if (!existing) return { error: 'That transaction no longer exists.' }
+
+  const { error } = await supabase
+    .from('ledger_transactions')
+    .update({ receipt_path: null, receipt_original: null })
+    .eq('id', txnId)
+  if (error) return { error: error.message }
+
+  const paths = [existing.receipt_path, existing.receipt_original].filter(Boolean) as string[]
+  let warning: string | undefined
+  if (paths.length) {
+    const { error: storageError } = await supabase.storage.from('receipts').remove(paths)
+    if (storageError) {
+      warning = `The receipt was removed, but its file${paths.length === 1 ? '' : 's'} ` +
+        `could not be removed from storage: ${storageError.message}`
+    }
+  }
+
+  revalidatePath('/money')
+  return warning ? { ok: true, warning } : { ok: true }
 }
 
 /**
