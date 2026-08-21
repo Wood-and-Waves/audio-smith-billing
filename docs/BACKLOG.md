@@ -121,6 +121,21 @@ forecasting."
 
 ## Small / cosmetic
 
+- Bridge accepted trade-offs (2026-08-21 final review): dismissals are a
+  one-way door (no UI lists or deletes `ledger_match_dismissals`; dismissing
+  a sum also suppresses future singles on the same pair); a bank row whose
+  linked expense has a receipt loses its own attach affordance until
+  unlinked; an expense link with no show chip is invisible on the register
+  when the show-tag write failed (recoverable via edit-mode Unlink) — an
+  expense-link chip like the `#N` invoice chip would fix it; `/money`
+  runs the matcher on every load for the badge (fine at hundreds of rows,
+  revisit at thousands); `ledger_match_dismissals` has no far-side indexes
+  (nothing queries them today; 0033 if ever needed).
+- `lib/receiptRetention.ts` still derives settlement from the dead
+  `payments` table / `updated_at` fallback — `invoices.paid_at` (0032) is
+  now the right source; direction is safe (delays reclaim), fix when
+  touching retention.
+
 - Register rebuild accepted trade-offs (2026-08-21 review): row-click-to-edit is
   pointer-only (no keyboard path to edit/delete); both layouts mount in the DOM
   at once (duplicate aria-labels, ~400 nodes at the cap); punch 6-across is
