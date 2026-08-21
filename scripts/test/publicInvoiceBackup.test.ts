@@ -10,7 +10,7 @@ import { publicBackup } from '../../lib/publicInvoiceBackup.ts'
 const SNAPSHOT = {
   show_hours: true,
   shows: [{
-    name: 'Willow Creek', zone_label: 'Chicago',
+    name: 'Willow Creek', zone_label: 'Chicago', bill_hourly: true,
     days: [{
       day: '2026-08-01', in: '09:00', out: '17:00', meal_minutes: 30,
       net_hours: 7.5, st_hours: 7.5, ot_hours: 0, dt_hours: 0,
@@ -56,4 +56,14 @@ test('a snapshot with no expenses maps to an empty expense list', () => {
   const b = publicBackup({ ...SNAPSHOT, expenses: [] })
   assert.ok(b)
   assert.deepEqual(b.expenses, [])
+})
+
+test('bill_hourly survives the strip', () => {
+  // publicBackup copies `shows` whole (it only ever touches `expenses`), so
+  // this is really a lock against that changing — the public PDF route
+  // needs bill_hourly intact for the same day-rate/hourly branch the
+  // emailed PDF renders with (lib/invoicePdf.ts).
+  const b = publicBackup(SNAPSHOT)
+  assert.ok(b)
+  assert.equal(b.shows[0].bill_hourly, true)
 })

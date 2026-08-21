@@ -373,7 +373,10 @@ test('the hours page prints only when the client opted in', () => {
     ...INVOICE,
     backup: {
       show_hours: true,
-      shows: [{ name: 'PwC Orlando', zone_label: 'Eastern', days: [
+      // Explicit true: this fixture is exercising the ordinary hourly sheet
+      // (it prints ST/OT below), not the legacy-absent fail direction that
+      // has its own dedicated test further down.
+      shows: [{ name: 'PwC Orlando', zone_label: 'Eastern', bill_hourly: true, days: [
         { day: 'Sat 8/30', in: '8:00 AM', out: '8:30 PM', meal_minutes: 30,
           net_hours: 12, st_hours: 10, ot_hours: 2, dt_hours: 0,
           travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
@@ -399,8 +402,11 @@ test('a multi-show invoice subtotals each show and labels the grand total ALL SH
     ...INVOICE,
     backup: {
       show_hours: true,
+      // Both explicitly true: this test pins the FULL hourly column layout
+      // (the strings[i + 3] offset below is only valid for that layout), so
+      // neither show may take the simplified day-rate branch.
       shows: [
-        { name: 'Napa', zone_label: 'Pacific', days: [
+        { name: 'Napa', zone_label: 'Pacific', bill_hourly: true, days: [
           { day: 'Mon 8/24', in: '8:00 AM', out: '2:30 PM', meal_minutes: 0,
             net_hours: 6.5, st_hours: 6.5, ot_hours: 0, dt_hours: 0,
             travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
@@ -408,7 +414,7 @@ test('a multi-show invoice subtotals each show and labels the grand total ALL SH
             net_hours: 7.0, st_hours: 7.0, ot_hours: 0, dt_hours: 0,
             travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
         ] },
-        { name: 'PwC Orlando', zone_label: 'Eastern', days: [
+        { name: 'PwC Orlando', zone_label: 'Eastern', bill_hourly: true, days: [
           { day: 'Sat 8/29', in: '8:00 AM', out: '8:30 PM', meal_minutes: 30,
             net_hours: 20.0, st_hours: 10.0, ot_hours: 10.0, dt_hours: 0,
             travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
@@ -441,6 +447,182 @@ test('a multi-show invoice subtotals each show and labels the grand total ALL SH
   )
 })
 
+// Day-rate shows: times, not hour math. Dan bills some clients a flat day
+// rate; printing "ST 9.5 / NET 9.5" beside that reads as someone else's
+// billing model and invites the client's AP clerk to recompute the invoice
+// as hours x rate.
+test('a day-rate show prints times, not hour math, and gains no totals', () => {
+  // Two day-rate shows, not one: a single-show invoice's grand row (were it
+  // to wrongly render) labels itself "TOTAL", which collides with the
+  // ordinary invoice line-items table's own TOTAL column header and would
+  // make that check meaningless. Two shows makes the would-be label the
+  // unambiguous "ALL SHOWS" instead.
+  const dayRate: DocumentData = {
+    ...INVOICE,
+    backup: {
+      show_hours: true,
+      shows: [
+        { name: 'Clinique', zone_label: 'Eastern', bill_hourly: false, days: [
+          { day: 'Mon 8/24', in: '8:00 AM', out: '6:00 PM', meal_minutes: 30,
+            net_hours: 9.5, st_hours: 9.5, ot_hours: 0, dt_hours: 0,
+            travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
+        ] },
+        { name: 'Second Show', zone_label: 'Eastern', bill_hourly: false, days: [
+          { day: 'Tue 8/25', in: '8:00 AM', out: '5:00 PM', meal_minutes: 30,
+            net_hours: 8.5, st_hours: 8.5, ot_hours: 0, dt_hours: 0,
+            travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
+        ] },
+      ],
+      total_net: 18.0, total_st: 18.0, total_ot: 0, total_dt: 0, expenses: [],
+    },
+  }
+  const all = textOf(buildInvoicePdf(PARTS, dayRate, ASSETS))
+  // The show heading is one combined "CLINIQUE   ·   Eastern" text node, so
+  // this checks a substring of the joined page rather than an exact element.
+  assert.ok(all.join(' ').includes('CLINIQUE'), 'the show is named')
+  assert.ok(all.includes('DAY'), 'DAY still heads the day column')
+  assert.ok(all.includes('TIMES'), 'TIMES still heads the clock column')
+  assert.ok(all.includes('8:00 AM – 6:00 PM'), 'the clock times themselves still print')
+  // A flat day rate bills as ONE invoice line, not hours x rate — none of
+  // the hourly sheet's columns, a per-show subtotal, or the page's grand
+  // total may reach a page that is entirely day-rate shows.
+  for (const noise of ['MEAL', 'NET', 'ST', 'OT', 'SUBTOTAL', 'ALL SHOWS']) {
+    assert.ok(!all.includes(noise), `"${noise}" must not reach a day-rate sheet`)
+  }
+})
+
+test('a day-rate show keeps an OT column only when it has overtime', () => {
+  // A day past the OT threshold still bills Overtime even at a day rate (day
+  // rate + OT hours) — the sheet must show which day produced a charge that
+  // is genuinely on the invoice, so the column survives exactly when needed.
+  const withOt: DocumentData = {
+    ...INVOICE,
+    backup: {
+      show_hours: true,
+      shows: [{
+        name: 'Clinique', zone_label: 'Eastern', bill_hourly: false,
+        days: [
+          { day: 'Mon 8/24', in: '8:00 AM', out: '9:00 PM', meal_minutes: 30,
+            net_hours: 12.5, st_hours: 10, ot_hours: 2.5, dt_hours: 0,
+            travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
+        ],
+      }],
+      total_net: 12.5, total_st: 10, total_ot: 2.5, total_dt: 0, expenses: [],
+    },
+  }
+  const on = textOf(buildInvoicePdf(PARTS, withOt, ASSETS))
+  assert.ok(on.includes('OT'), 'the OT header prints for the day that earned it')
+  assert.ok(on.includes('2.5'), 'and its hours print')
+
+  const noOt: DocumentData = {
+    ...withOt,
+    backup: {
+      ...withOt.backup!,
+      shows: [{
+        name: 'Clinique', zone_label: 'Eastern', bill_hourly: false,
+        days: [
+          { day: 'Mon 8/24', in: '8:00 AM', out: '6:00 PM', meal_minutes: 30,
+            net_hours: 9.5, st_hours: 9.5, ot_hours: 0, dt_hours: 0,
+            travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
+        ],
+      }],
+      total_ot: 0,
+    },
+  }
+  const off = textOf(buildInvoicePdf(PARTS, noOt, ASSETS))
+  assert.ok(!off.includes('OT'), 'no overtime on this show means no OT column at all')
+})
+
+test('the DT column on a day-rate show is scoped to that show, not the page', () => {
+  // Two day-rate shows on one invoice; only the first actually hit double
+  // time. The existing full-sheet `anyDt` is page-wide by design (one column
+  // set shared by every hourly show) — a simplified show must NOT inherit
+  // that and gain a blank DT column just because some OTHER show has one.
+  const twoSimplified: DocumentData = {
+    ...INVOICE,
+    backup: {
+      show_hours: true,
+      shows: [
+        { name: 'Clinique', zone_label: 'Eastern', bill_hourly: false, days: [
+          { day: 'Mon 8/24', in: '8:00 AM', out: '11:00 PM', meal_minutes: 30,
+            net_hours: 14.5, st_hours: 10, ot_hours: 2, dt_hours: 2.5,
+            travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
+        ] },
+        { name: 'Second Show', zone_label: 'Eastern', bill_hourly: false, days: [
+          { day: 'Tue 8/25', in: '8:00 AM', out: '6:00 PM', meal_minutes: 30,
+            net_hours: 9.5, st_hours: 9.5, ot_hours: 0, dt_hours: 0,
+            travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
+        ] },
+      ],
+      total_net: 24.0, total_st: 19.5, total_ot: 2, total_dt: 2.5, expenses: [],
+    },
+  }
+  const strings = textOf(buildInvoicePdf(PARTS, twoSimplified, ASSETS))
+  const joinedAll = strings.join(' ')
+  assert.ok(joinedAll.includes('CLINIQUE'), "Clinique's own sheet prints")
+  assert.ok(joinedAll.includes('SECOND SHOW'), 'the other day-rate show prints too')
+  const dtCount = strings.filter((v) => v === 'DT').length
+  assert.equal(dtCount, 1, 'DT heads only the show that actually has double time')
+})
+
+test('an absent bill_hourly renders the full legacy sheet', () => {
+  // No `bill_hourly` key at all — exactly what every snapshot frozen before
+  // this field existed looks like. The fail direction the repo mandates: an
+  // absent field falls toward the visible OLD page, never toward a guessed
+  // simplified one.
+  const legacy: DocumentData = {
+    ...INVOICE,
+    backup: {
+      show_hours: true,
+      shows: [{ name: 'PwC Orlando', zone_label: 'Eastern', days: [
+        { day: 'Sat 8/30', in: '8:00 AM', out: '8:30 PM', meal_minutes: 30,
+          net_hours: 12, st_hours: 10, ot_hours: 2, dt_hours: 0,
+          travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
+      ] }],
+      total_net: 12, total_st: 10, total_ot: 2, total_dt: 0, expenses: [],
+    },
+  }
+  const all = textOf(buildInvoicePdf(PARTS, legacy, ASSETS))
+  for (const header of ['MEAL', 'NET', 'ST', 'OT']) {
+    assert.ok(all.includes(header), `"${header}" still prints on a legacy snapshot`)
+  }
+  assert.ok(all.includes('TOTAL'), 'the grand total row still prints for a single-show legacy invoice')
+})
+
+test('a mixed invoice renders each show its own way and keeps the grand total row', () => {
+  const mixed: DocumentData = {
+    ...INVOICE,
+    backup: {
+      show_hours: true,
+      shows: [
+        { name: 'PwC Orlando', zone_label: 'Eastern', bill_hourly: true, days: [
+          { day: 'Sat 8/29', in: '8:00 AM', out: '8:30 PM', meal_minutes: 30,
+            net_hours: 12, st_hours: 10, ot_hours: 2, dt_hours: 0,
+            travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
+        ] },
+        { name: 'Clinique', zone_label: 'Eastern', bill_hourly: false, days: [
+          { day: 'Mon 8/31', in: '8:00 AM', out: '6:00 PM', meal_minutes: 30,
+            net_hours: 9.5, st_hours: 9.5, ot_hours: 0, dt_hours: 0,
+            travel_in: false, travel_out: false, half_day: false, meal_penalties: 0 },
+        ] },
+      ],
+      total_net: 21.5, total_st: 19.5, total_ot: 2, total_dt: 0, expenses: [],
+    },
+  }
+  const strings = textOf(buildInvoicePdf(PARTS, mixed, ASSETS))
+  const joinedAll = strings.join(' ')
+  assert.ok(joinedAll.includes('PWC ORLANDO'), 'the hourly show is named')
+  assert.ok(joinedAll.includes('CLINIQUE'), 'the day-rate show is named')
+  // Each show got its own treatment: the hourly show's columns show up
+  // exactly once, never duplicated onto the day-rate show beside it.
+  assert.equal(strings.filter((v) => v === 'MEAL').length, 1, 'MEAL heads only the hourly show')
+  assert.equal(strings.filter((v) => v === 'NET').length, 1, 'NET heads only the hourly show')
+  assert.equal(strings.filter((v) => v === 'SUBTOTAL').length, 1,
+    'only the hourly show earns a per-show subtotal')
+  assert.ok(strings.includes('ALL SHOWS'),
+    'the grand total row still closes the page because a real hourly show is on it')
+})
+
 test('an invoice with no snapshot renders exactly as it always did', () => {
   const joined = textOf(buildInvoicePdf(PARTS, INVOICE, ASSETS)).join(' ')
   assert.ok(!/HOURS —/.test(joined), 'no hours page')
@@ -457,6 +639,10 @@ test('a travel day is labelled instead of showing empty columns', () => {
     ...INVOICE,
     backup: {
       show_hours: true,
+      // bill_hourly deliberately absent: this fixture exercises the
+      // legacy-snapshot path (frozen before the field existed), which must
+      // render the full sheet exactly as it always has — including this
+      // punchless-day label, which is identical on either branch.
       shows: [{ name: 'PwC Orlando', zone_label: 'Eastern', days: [
         { day: 'Fri 8/29', in: null, out: null, meal_minutes: 0,
           net_hours: 0, st_hours: 0, ot_hours: 0, dt_hours: 0,
@@ -480,6 +666,8 @@ test('a show with zero net hours renders no hours page', () => {
     ...INVOICE,
     backup: {
       show_hours: true,
+      // bill_hourly absent, same legacy-snapshot reasoning as above — moot
+      // here either way, since a zero-net show renders no page at all.
       shows: [{ name: 'PwC Orlando', zone_label: 'Eastern', days: [
         { day: 'Fri 8/29', in: null, out: null, meal_minutes: 0,
           net_hours: 0, st_hours: 0, ot_hours: 0, dt_hours: 0,

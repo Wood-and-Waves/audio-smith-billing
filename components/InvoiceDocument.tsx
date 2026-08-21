@@ -76,7 +76,7 @@ export type DocumentData = {
    */
   backup?: {
     show_hours: boolean
-    shows: { name: string; zone_label: string; days: {
+    shows: { name: string; zone_label: string; bill_hourly: boolean; days: {
       day: string; in: string | null; out: string | null; meal_minutes: number
       net_hours: number; st_hours: number; ot_hours: number; dt_hours: number
       travel_in: boolean; travel_out: boolean; half_day: boolean; meal_penalties: number

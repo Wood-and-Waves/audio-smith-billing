@@ -29,7 +29,7 @@ export type SnapshotDay = {
   meal_penalties: number
 }
 
-export type SnapshotShow = { name: string; zone_label: string; days: SnapshotDay[] }
+export type SnapshotShow = { name: string; zone_label: string; bill_hourly: boolean; days: SnapshotDay[] }
 
 export type SnapshotExpense = {
   category: string
@@ -52,6 +52,7 @@ export type BackupSnapshot = {
 export type SnapshotInput = {
   name: string
   timezone: string
+  bill_hourly: boolean
   days: ShowDayLike[]
   rules: ShowRuleset
   expenses: ExpenseLike[]
@@ -81,6 +82,14 @@ export function buildBackupSnapshot(
   const shows: SnapshotShow[] = input.shows.map((s) => ({
     name: s.name,
     zone_label: timezoneShortLabel(s.timezone),
+    // Frozen so the PDF renderer can decide, per show, whether the hours
+    // page owes hour math or just times (lib/invoicePdf.ts) — without this,
+    // re-deriving the decision from the show row later would let a rate
+    // change made AFTER billing silently redraw an already-sent invoice's
+    // backup page. A snapshot frozen before this field existed simply lacks
+    // it; the renderer's fail direction for that is the byte-identical old
+    // page, not a guess.
+    bill_hourly: s.bill_hourly,
     days: [...s.days]
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((d) => {

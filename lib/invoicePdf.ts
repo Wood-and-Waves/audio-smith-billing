@@ -266,31 +266,80 @@ export function buildInvoicePdf(parts: PdfParts, data: DocumentData, assets: Pdf
     ot: sh.days.reduce((t, d) => t + d.ot_hours, 0),
     dt: sh.days.reduce((t, d) => t + d.dt_hours, 0),
   })
+  // A day-rate show gets times, not hour math: printing "ST 9.5" beside a
+  // flat day rate invites the client's AP clerk to recompute the invoice as
+  // hours x rate, which is a different billing model than the one being
+  // billed. `false` is the only way into the simplified sheet — `true`
+  // (hourly) and, crucially, `undefined` (every snapshot frozen before this
+  // field existed) both take the full sheet below, unchanged. That is the
+  // same fail direction every other optional snapshot field in this file
+  // already uses: an absent field renders the OLD, visible page, never a
+  // guessed new one.
+  const isSimplified = (sh: { bill_hourly?: boolean }) => sh.bill_hourly === false
+  // The grand row used to close every hours page unconditionally. A
+  // day-rate-only invoice now has no hour math anywhere on the page, so the
+  // row that used to sum it renders only when at least one show kept the
+  // full sheet — otherwise it would be the ONLY thing on the page still
+  // doing arithmetic nothing above it did. Its own figures are untouched
+  // (backup.total_ot etc. sum every show, day-rate included, because a
+  // day-rate show can still bill Overtime and that OT must reconcile with
+  // the invoice's Overtime line — see backupSnapshot.test.ts).
+  const anyFullShow = Boolean(backup?.shows.some((sh) => !isSimplified(sh)))
 
   const hoursPages = !backup?.show_hours || backup.total_net === 0 ? [] : [
     h(Page, { size: 'LETTER', style: s.page },
       V(s.body, [
         T(s.expenseHead, `HOURS — INVOICE #${data.number}`),
         ...backup.shows.flatMap((sh) => {
+          const simplified = isSimplified(sh)
           const totals = showTotals(sh)
+          // OT and DT survive on a day-rate show because a day past the OT
+          // threshold still bills Overtime/Double Time there (day rate + the
+          // extra hours) — the sheet must show which day produced a charge
+          // that is genuinely on the invoice. Scoped to THIS show, not the
+          // page-wide `anyDt` below (shared by every full-sheet show): a
+          // day-rate show with no double time must not gain a blank DT
+          // column just because some OTHER show on the invoice hit it.
+          const anyOtInShow = sh.days.some((d) => d.ot_hours > 0)
+          const anyDtInShow = sh.days.some((d) => d.dt_hours > 0)
+
+          const headCells = simplified
+            ? [
+                T(s.hDay, 'DAY'), T(s.hClock, 'TIMES'),
+                ...(anyOtInShow ? [T(s.hNum, 'OT')] : []),
+                ...(anyDtInShow ? [T(s.hNum, 'DT')] : []),
+                T(s.hFlag, ''),
+              ]
+            : [
+                T(s.hDay, 'DAY'), T(s.hClock, 'TIMES'), T(s.hMeal, 'MEAL'),
+                T(s.hNum, 'NET'), T(s.hNum, 'ST'), T(s.hNum, 'OT'),
+                ...(anyDt ? [T(s.hNum, 'DT')] : []), T(s.hFlag, ''),
+              ]
+
           return [
             T(s.hoursShow, `${sh.name.toUpperCase()}   ·   ${sh.zone_label}`),
-            V(s.hoursHead, [
-              T(s.hDay, 'DAY'), T(s.hClock, 'TIMES'), T(s.hMeal, 'MEAL'),
-              T(s.hNum, 'NET'), T(s.hNum, 'ST'), T(s.hNum, 'OT'),
-              ...(anyDt ? [T(s.hNum, 'DT')] : []), T(s.hFlag, ''),
-            ]),
+            V(s.hoursHead, headCells),
             ...sh.days.map((d) => {
               const flag = [d.travel_in && 'travel in', d.travel_out && 'travel out',
                             d.half_day && 'half day',
                             d.meal_penalties ? 'meal penalty' : ''].filter(Boolean).join(' · ')
               // A travel or half day carries no punches. Left blank it reads
               // as missing data, so it is labelled instead of given empty
-              // columns.
+              // columns. Same row on either sheet — there is no hour math
+              // here for the two layouts to disagree about.
               if (!d.in || !d.out) {
                 return V(s.hoursRow, [
                   T(s.hDay, d.day),
                   T({ ...s.hClock, color: MUTED_DARK, fontSize: 8 }, flag || '—'),
+                ])
+              }
+              if (simplified) {
+                return V(s.hoursRow, [
+                  T(s.hDay, d.day),
+                  T(s.hClock, `${d.in} – ${d.out}`),
+                  ...(anyOtInShow ? [T(s.hNum, hrs(d.ot_hours))] : []),
+                  ...(anyDtInShow ? [T(s.hNum, hrs(d.dt_hours))] : []),
+                  T(s.hFlag, flag),
                 ])
               }
               return V(s.hoursRow, [
@@ -304,7 +353,9 @@ export function buildInvoicePdf(parts: PdfParts, data: DocumentData, assets: Pdf
                 T(s.hFlag, flag),
               ])
             }),
-            ...(multiShow ? [
+            // No SUBTOTAL for a day-rate show — there is no hour math on its
+            // rows to sum.
+            ...(multiShow && !simplified ? [
               V(s.hoursSubtotal, [
                 T({ ...s.hDay, fontSize: 8, color: MUTED_DARK }, 'SUBTOTAL'),
                 T(s.hClock, ''), T(s.hMeal, ''),
@@ -317,15 +368,17 @@ export function buildInvoicePdf(parts: PdfParts, data: DocumentData, assets: Pdf
             ] : []),
           ]
         }),
-        V(s.hoursTotal, [
-          T({ ...s.hDay, fontFamily: 'Oswald', fontSize: 10 }, multiShow ? 'ALL SHOWS' : 'TOTAL'),
-          T(s.hClock, ''), T(s.hMeal, ''),
-          T({ ...s.hNum, fontFamily: 'Oswald', fontSize: 10 }, hrs(backup.total_net)),
-          T({ ...s.hNum, fontFamily: 'Oswald', fontSize: 10 }, hrs(backup.total_st)),
-          T({ ...s.hNum, fontFamily: 'Oswald', fontSize: 10 }, hrs(backup.total_ot)),
-          ...(anyDt ? [T({ ...s.hNum, fontFamily: 'Oswald', fontSize: 10 }, hrs(backup.total_dt))] : []),
-          T(s.hFlag, ''),
-        ]),
+        ...(anyFullShow ? [
+          V(s.hoursTotal, [
+            T({ ...s.hDay, fontFamily: 'Oswald', fontSize: 10 }, multiShow ? 'ALL SHOWS' : 'TOTAL'),
+            T(s.hClock, ''), T(s.hMeal, ''),
+            T({ ...s.hNum, fontFamily: 'Oswald', fontSize: 10 }, hrs(backup.total_net)),
+            T({ ...s.hNum, fontFamily: 'Oswald', fontSize: 10 }, hrs(backup.total_st)),
+            T({ ...s.hNum, fontFamily: 'Oswald', fontSize: 10 }, hrs(backup.total_ot)),
+            ...(anyDt ? [T({ ...s.hNum, fontFamily: 'Oswald', fontSize: 10 }, hrs(backup.total_dt))] : []),
+            T(s.hFlag, ''),
+          ]),
+        ] : []),
       ]),
     ),
   ]

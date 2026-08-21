@@ -28,6 +28,14 @@ const RATES: ShowRates = {
   day_rate_cents: 78000, travel_rate_cents: 39000, pm_rate_cents: 8500,
   ot_rate_cents: 11700, dt_rate_cents: 15600, meal_penalty_cents: 5000,
   rate_card_name: null,
+  // These two were silently missing — ShowRates has required them since
+  // migration 0022, but scripts/** is excluded from tsc so nothing caught
+  // it. `false` matches this fixture's original implicit behavior (the
+  // short-turnaround test below relies on a sub-threshold day still billing
+  // a whole Day Rate day); hourly_rate_cents is day_rate_cents divided by
+  // this fixture's own OT threshold (RULES.overtime_after_hours = 10), the
+  // same derivation computeShowLines expects.
+  bill_hourly: false, hourly_rate_cents: 7800,
 }
 
 /** `2026-08-30` + 1 -> `2026-08-31`, in UTC so it can't skip a day locally. */
@@ -57,7 +65,7 @@ const day = (date: string, startZ: string, endZ: string, over: Partial<ShowDayLi
 }) as ShowDayLike
 
 const show = (days: ShowDayLike[], over: Partial<SnapshotInput> = {}): SnapshotInput => ({
-  name: 'PwC Orlando', timezone: 'America/New_York', days, rules: RULES, expenses: [], ...over,
+  name: 'PwC Orlando', timezone: 'America/New_York', bill_hourly: true, days, rules: RULES, expenses: [], ...over,
 })
 
 test('the OT on the page equals the OT on the invoice', () => {
@@ -116,6 +124,22 @@ test('a travel day is labelled, not given hours', () => {
   assert.equal(d.travel_in, true)
   assert.equal(d.in, null, 'no punches means no clock times, not a fabricated pair')
   assert.equal(d.net_hours, 0)
+})
+
+test('bill_hourly is recorded on the snapshot, straight from the input', () => {
+  // lib/invoicePdf.ts's day-rate/hourly branch reads this straight off the
+  // frozen show — it must be the value billing actually used at bill time,
+  // not re-derived later from a show row whose rate card may since have
+  // changed.
+  const hourly = buildBackupSnapshot({
+    shows: [show([day('2026-08-30', '12:00', '00:30')], { bill_hourly: true })], showHours: true,
+  })
+  assert.equal(hourly.shows[0].bill_hourly, true)
+
+  const dayRate = buildBackupSnapshot({
+    shows: [show([day('2026-08-30', '12:00', '00:30')], { bill_hourly: false })], showHours: true,
+  })
+  assert.equal(dayRate.shows[0].bill_hourly, false)
 })
 
 test('the flag off still records the hours, it only stops them rendering', () => {

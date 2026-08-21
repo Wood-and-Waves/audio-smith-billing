@@ -672,6 +672,7 @@ export async function billShows(showIds: string[]): Promise<Fail | { ok: true; i
       return {
         name: s.name,
         timezone: s.timezone,
+        bill_hourly: s.bill_hourly,
         days: ((s.show_days ?? []) as unknown as ShowDayLike[]),
         rules,
         expenses: ((s as unknown as { expenses?: ExpenseLike[] }).expenses ?? []),
