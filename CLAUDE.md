@@ -65,13 +65,30 @@ status.
   receipts gate via `expensesMissingReceipts` — all filter internally so every
   caller stays in lockstep. Public surfaces: `/i/[token]` page + pdf route,
   emails. `/money*` is Dan-only and not in `proxy.ts` PUBLIC_PREFIXES.
+- **Vercel "sensitive" env vars pull as the literal `<ENCRYPTED>`** — a
+  `vercel env pull` can never prove or disprove a credential's value. Verify
+  by making the system DO the thing (a real upload, a cron run); a morning
+  was lost diagnosing "placeholders" that were real values (2026-08-21).
+- **Browser-only shared code lives in `components/`** (`receiptCapture.ts` —
+  the ONE capture pipeline both ExpenseLog and MoneyRegister consume;
+  `ReceiptLightbox.tsx` likewise): it needs canvas/DOM/Storage that
+  `node --test` can't run. The pure math stays in `lib/receipt*.ts`. Never
+  re-inline the pipeline into a screen component.
+- **Native date/time inputs are flattened globally** (`globals.css`
+  `input[type=date|time] { appearance: none }`): iOS drew them taller than
+  every other field. Never re-style them per component.
+- **The light palette lives TWICE in globals.css** (media-query block +
+  `[data-theme='light']` block) and the two must stay byte-identical — loud
+  comments mark both. `app/layout.tsx` holds the app's ONLY inline script
+  (pre-paint theme read), safe only because next.config deliberately ships
+  no script-src CSP — adding one breaks theming.
 - **UI copy:** minimal — Dan: "There are too many instructions. I understand
   what is happening." Use his vocabulary ("Non-reimbursable", not invented
   terms; category names come from his YNAB chart). List-row idiom:
   `border-b border-line py-4 pl-3 -ml-3 pr-3`; eyebrow headers; FIELD_FULL;
   `components/ui/Select`; useTransition + router.refresh + `{error}`.
 
-## Money module map (migrations 0027–0030)
+## Money module map (migrations 0027–0031)
 
 - Tables: `ledger_accounts` (one business checking), `ledger_categories`
   (Dan's YNAB chart; `deductible` drives the reports figure — "Taxes" seeds
@@ -79,7 +96,11 @@ status.
   income|expense|owner_pay|transfer with DB sign/category checks; cleared
   uncleared|cleared|reconciled; unique partial `(owner,account,import_id)`),
   `ledger_reconciliations`, `ledger_envelopes` + immutable
-  `ledger_envelope_moves` (corrections = counter-moves).
+  `ledger_envelope_moves` (corrections = counter-moves). 0031 adds
+  `receipt_path`/`receipt_original` to ledger_transactions — receipts attach
+  to bank rows via the shared capture pipeline; storage paths are
+  `{owner_id}/ledger/{stamp}-…` (folder[2]='ledger' can't collide with show
+  uuids; every ledger-receipt action prefix-checks `${user.id}/ledger/`).
 - **Import semantics:** OFX parse (`lib/ofx.ts`) → `planImport`
   (`lib/ledgerImport.ts`): duplicate by import_id (GEN ids use
   occurrence-position classification + maxN-anchored numbering — re-import is
@@ -90,7 +111,14 @@ status.
 - **Reconcile** is date-scoped (rows ≤ statement date) and atomic via the
   `reconcile_ledger_account` RPC (0029); its adjustment stays merely 'cleared'
   so mistakes remain correctable; reconciled rows are locked server-side
-  except categorization (`setTransactionCategory` works on them by design).
+  except TWO carve-outs, both audit metadata that moves no money:
+  categorization (`setTransactionCategory`) and receipts (attach/replace/
+  remove all work on reconciled rows by design).
+- **Register order and balances**: `lib/ledgerBalance.ts` is the single
+  source — `compareLedgerOrder` (date asc, created_at asc, id asc; display =
+  exact reverse) and `runningBalances` (pinned invariant: top rendered row's
+  balance === working balance). Balances are computed over the FULL paged
+  set, never the RENDER_CAP 200 slice — do not "optimize" that.
 - Envelopes: Available-to-allocate = working balance − net allocated; hidden
   envelopes must stay reachable (the "Hidden (N)" disclosure); hide requires a
   zero balance, server-enforced.
@@ -111,20 +139,26 @@ status.
 - Reviews of money code are adversarial and worth it. Fix waves are ONE
   subagent with the complete findings list; tiny fixes are controller-direct.
 
-## Current state (2026-08-20) & where things are written
+## Current state (2026-08-21) & where things are written
 
-- Everything through the Money module + envelopes is LIVE in prod, plus the
-  receipt corner-flattening branch (2026-08-20, no migrations): detection/warp
-  pure libs (`lib/receiptQuad|receiptCorners|receiptWarp.ts`, fail-to-null →
-  old pipeline, never a mangled crop), `CornerAdjuster` (handles + loupe),
-  fix-later via `replaceExpenseReceipt` (billed-locked, never re-runs OCR),
-  receipt lightbox, punch tile grid, invoice-row show titles (work_for). YNAB
-  Register backfill tooling ready: `lib/ynabRegister.ts` +
-  `scripts/import/ynab-backfill.mjs` (`npm run import:ynab -- [--prod]
-  [--commit] <csv>`; dry-run default; refuses non-empty accounts; ending-
-  balance cross-check). Awaiting Dan: Register CSV, Jan 1 2026 balance, prod
-  first-visit account creation. Dev ledger wiped ready for rehearsal.
+- LIVE in prod: billing + full Money module + envelopes; receipt corner
+  detection/flattening (CornerAdjuster + loupe; PDFs skip corners); attach/
+  replace receipts on expenses AND on ledger rows; original PDF receipts ride
+  the invoice as full-fidelity appendices (`lib/mergePdfAppendices.ts`,
+  pdf-lib); day-rate shows get a times-not-math hours sheet; every client
+  email BCCs Dan (`OWNER_BCC`) and files its exact PDF to Dropbox
+  (`/receipts/{year}/{show}/`); send panel shows attachment contents + View
+  PDF; never-sent drafts delete (and unbill) with number giveback; the
+  register is a YNAB-style spreadsheet (running balance, outflow/inflow,
+  receipt + cleared columns) with date-grouped phone view; per-device
+  System/Light/Dark in Settings; punch tiles 6-across from sm:.
+- **The ledger is Dan's live books**: YNAB Register backfilled to prod
+  2026-08-20 — 328 txns in "Chase Checking" (opening $585.75 @ 2026-01-01,
+  ending verified against the bank). Monthly OFX imports adopt the manual
+  rows. Dropbox archive LIVE (nightly cron; helper: `npm run dropbox:auth`,
+  with `--push` to Vercel and `--probe` diagnostics; secrets never printed).
 - **Backlog:** `docs/BACKLOG.md` (canonical). Module design reference:
   `docs/superpowers/specs/2026-08-18-bookkeeping-module-reference.md` (incl.
-  Dan's CPA homework questions). Remaining big pieces: invoice/expense
-  auto-bridge, CPA year-end export, income-by-payee report.
+  Dan's CPA homework questions). Next big pieces: invoice/expense
+  auto-bridge (matcher must handle 1 expense → N bank lines), CPA year-end
+  export, income-by-payee report, W-9, MileIQ, calendar feed from shows.

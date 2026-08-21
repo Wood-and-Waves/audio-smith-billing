@@ -1,3 +1,7 @@
+> **Postscript (2026-08-21):** the capture pipeline this doc places inside
+> ExpenseLog now lives in components/receiptCapture.ts (byte-verified move,
+> commit 4857c3b) and serves the Money register too. Edit it THERE.
+
 # Expenses and Receipts Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

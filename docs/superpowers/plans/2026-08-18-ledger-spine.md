@@ -1,3 +1,8 @@
+> **Postscript (2026-08-21):** dated recipe. The register this built was
+> rebuilt YNAB-style (docs/superpowers/plans/2026-08-21-register.md); the
+> action inventory predates the four ledger-receipt actions, and
+> updateLedgerAccount was removed as dead code long ago.
+
 > **Note (2026-08-19):** this plan is a dated build recipe. Task 2's
 > DEFAULT_CATEGORIES code was later replaced by Dan's own YNAB chart
 > (lib/ledgerCategories.ts is the truth).

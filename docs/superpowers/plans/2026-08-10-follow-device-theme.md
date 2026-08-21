@@ -1,3 +1,13 @@
+> **Postscript (2026-08-21):** superseded on its central argument. Dan asked
+> for a per-device Appearance switch (Settings → Preferences), so everything
+> this plan removed came back deliberately: localStorage 'theme', the
+> data-theme attribute, a pre-paint inline script in app/layout.tsx (the
+> app's only one — safe because next.config ships no script-src CSP), and a
+> toggle control. The light palette now lives TWICE in globals.css (media
+> block + attribute block, byte-identical, KEEP-IN-SYNC comments). The
+> "no flash to defend against" and "globals.css only" claims below no longer
+> hold. Test count references are of their time.
+
 # Follow the Device's Light/Dark Mode — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

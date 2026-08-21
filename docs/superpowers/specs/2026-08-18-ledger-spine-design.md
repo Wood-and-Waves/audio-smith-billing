@@ -1,8 +1,12 @@
-> **Postscript (2026-08-19):** SHIPPED to production (migrations 0027–0030 —
+> **Postscript (2026-08-19):** SHIPPED to production (migrations 0027–0031 —
 > envelopes/0030 arrived in a later wave). Two things below are superseded:
 > the DEFAULT_CATEGORIES list (the seed is now Dan's own YNAB chart — see
 > lib/ledgerCategories.ts) and the GEN import-id description (re-import is now
 > a no-op via occurrence-position classification; see lib/ledgerImport.ts).
+> **Postscript 2 (2026-08-21):** the register UI described below is
+> superseded — rebuilt as a YNAB-style grid (balance column, equation
+> header, phone date groups; delete moved inside edit mode; transfer rows
+> uneditable). See docs/superpowers/plans/2026-08-21-register.md.
 
 # Money — the ledger spine (bookkeeping phase 1) — design
 

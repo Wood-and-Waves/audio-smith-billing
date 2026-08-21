@@ -226,7 +226,9 @@ cap with their aspect ratio intact.
   **OCR shipped on 2026-08-14** — see
   `docs/superpowers/plans/2026-08-14-receipt-ocr.md`. Photographing a receipt
   now fills in the vendor, amount, date and category for confirmation.
-- **Perspective correction** — finding a receipt's corners and warping them
+- **Perspective correction** *(shipped 2026-08-20 after all — hand-rolled
+  corner detection + homography in lib/receipt*.ts with a draggable-corner
+  adjuster; the "drop it" instinct below lost to a real diner-table photo)* — finding a receipt's corners and warping them
   square. **Probably drop this rather than defer it.** It was queued as a
   prerequisite for a pipeline no longer being built: a vision model does not
   need a squared-up receipt, and it read a sideways photograph correctly on the

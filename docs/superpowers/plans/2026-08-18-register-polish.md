@@ -1,3 +1,8 @@
+> **Postscript (2026-08-21):** the visible "Edit" affordance this plan adds
+> became a row-background click in the register rebuild (and edit is now
+> denied to transfer rows); the edit FORM specified here survived intact.
+> See docs/superpowers/plans/2026-08-21-register.md.
+
 # Register Polish Implementation Plan (Money wave A)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

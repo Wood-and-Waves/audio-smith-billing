@@ -38,6 +38,19 @@ Wanted: import MileIQ data to track reimbursable miles instead of retyping them.
 - Rate: use MileIQ's own computed value column rather than hardcoding the IRS
   rate (it changes yearly and MileIQ already applies the right one per drive).
 
+## Calendar from shows (2026-08-21, Dan)
+
+"This system drives my calendar" — every booked show already carries the
+dates, venue, location and notes that could fill and update his calendar.
+- Sketch: a tokenized read-only **ICS feed** (the public-invoice-token
+  pattern): `/calendar/{token}.ics` serving every show day as an event —
+  title = show name, location = venue + city, all-day (or in/out times once
+  punches exist), description = client + rate-card name. Google/Apple
+  Calendar subscribe once and auto-refresh. No OAuth or push API needed for
+  a first pass.
+- Brainstorm openers: which calendar app; what belongs in the event body;
+  should travel days render differently; prep/lead-time events?
+
 ## Money module — remaining phases
 
 - **Invoice/expense auto-bridge** (phase 3 of the bookkeeping design): paid
@@ -55,7 +68,9 @@ Wanted: import MileIQ data to track reimbursable miles instead of retyping them.
 - **Income-by-payee report**: Dan's YNAB tracked income per client; payee
   carries that here — a Reports section grouping income by payee.
 - **SimpleFIN auto-connect** (optional, privacy-first alternative to Plaid).
-- **Mark-as-owner-pay quick control** on imported rows (Edit covers it today).
+- **Mark-as-owner-pay quick control** on imported rows (row-click → edit
+  mode covers it today — less discoverable since the register rebuild, which
+  strengthens the case for a quick control).
 - Category editor: no "new group" control (add categories only within existing
   groups); percent-style targets/goals per envelope; envelope auto-funding
   rules.
@@ -79,7 +94,9 @@ Wanted: import MileIQ data to track reimbursable miles instead of retyping them.
 
 - Recent-moves line field order differs from the original sketch (info
   complete; cosmetic).
-- Delete remains available on transfer-kind ledger rows (legitimate but
-  unguarded by any special copy).
+- Transfer-kind ledger rows are now uneditable AND undeletable from the
+  register UI (2026-08-21 rebuild: delete moved inside edit mode, and edit is
+  gated `kind !== 'transfer'`); the server action still permits deletion.
+  Fine while nothing writes transfers — revisit when account pairing lands.
 - `ledger_reconciliations` is written but never surfaced anywhere (audit trail
   only).

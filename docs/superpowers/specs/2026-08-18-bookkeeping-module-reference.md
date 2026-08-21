@@ -1,5 +1,13 @@
 > **Postscript (2026-08-19):** the module is BUILT AND LIVE in production
-> (migrations 0027–0030). Three notes where reality diverged from this design:
+> (migrations 0027–0031).
+> **Postscript 2 (2026-08-21):** the register described below was REBUILT
+> YNAB-style (running balance, outflow/inflow, receipt + cleared columns,
+> phone date groups) — see docs/superpowers/plans/2026-08-21-register.md.
+> The transaction model's "receipt link" intent is now REAL (0031:
+> receipt_path/receipt_original on ledger_transactions). Still NEVER built
+> from this model: matched_transaction_id (schema has transfer_transaction_id
+> only), split/subtransactions, and the import-batch table — the auto-bridge
+> plan should treat those as open design, not existing schema.. Three notes where reality diverged from this design:
 > (1) a full YNAB Rule-1 **envelope layer was built** (/money/budget — immutable
 > move ledger, Available-to-allocate) even though this doc lists the
 > goals/targets engine as skipped; the tax jar is the Taxes envelope.

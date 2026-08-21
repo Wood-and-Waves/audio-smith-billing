@@ -1,3 +1,7 @@
+> **Postscript (2026-08-21):** the capture pipeline this doc places inside
+> ExpenseLog now lives in components/receiptCapture.ts (byte-verified move,
+> commit 4857c3b) and serves the Money register too. Edit it THERE.
+
 # Receipt Corner-Finding + Perspective Flattening
 
 ## Context

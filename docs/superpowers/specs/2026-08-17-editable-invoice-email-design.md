@@ -1,3 +1,9 @@
+> **Postscript (2026-08-21):** "No CC/BCC" was superseded — every
+> client-facing email now BCCs Dan (OWNER_BCC in lib/invoiceEmail.ts; the
+> cron digest/alerts are exempt, they already go TO him). The send panel
+> also gained an attachment-contents line, a View PDF preview of the exact
+> attachment, and a Dropbox copy of the as-sent PDF.
+
 # Editable invoice email — design
 
 ## Problem

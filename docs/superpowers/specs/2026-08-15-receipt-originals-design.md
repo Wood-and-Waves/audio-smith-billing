@@ -1,3 +1,9 @@
+> **Postscript (2026-08-21):** the Dropbox hookup this doc left to Dan by
+> hand is now scripted — `npm run dropbox:auth` (OAuth flow verified by a
+> real upload; `--push` copies creds to Vercel; `--probe` bisects console
+> token vs authorize flow; secrets never printed). The archive is LIVE on
+> prod: first cron-verified run filed 2 real receipts on 2026-08-21.
+
 # Retiring receipt originals, and archiving them to Dropbox first
 
 **Status:** approved 2026-08-15
