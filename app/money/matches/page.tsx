@@ -145,9 +145,13 @@ type RawCandidateInvoiceRow = {
 }
 
 /** Every sent-or-paid invoice, owner-wide — a paid-but-unlinked invoice stays
- *  a candidate on purpose (a deposit matched by hand, or an invoice marked
- *  paid before this bridge existed, should still get its own bank row linked
- *  up), so the filter is `.in('status', ['sent','paid'])`, not just 'sent'. */
+ *  a candidate on purpose (a deposit matched by hand should still get its own
+ *  bank row linked up), so the filter here stays broad:
+ *  `.in('status', ['sent','paid'])`, not just 'sent'. The recency narrowing
+ *  — a paid invoice only counts within PAID_RECENCY_DAYS of paid_at — is NOT
+ *  this query's job; it's applied per row by lib/ledgerMatch.ts's
+ *  eligibleForRow, which is exactly where a pre-0032 invoice (paid_at NULL)
+ *  drops out. */
 async function fetchAllCandidateInvoices(
   supabase: Awaited<ReturnType<typeof createClient>>,
 ): Promise<{ rows: RawCandidateInvoiceRow[]; error: string | null }> {
@@ -481,7 +485,13 @@ export default async function MoneyMatchesPage() {
   // Skipped rather than crashed on: a stale dismissal with nothing left to
   // show is not worth blocking the whole page over, and restoreDismissal
   // still works from the raw id even for one that got filtered out here.
-  const dismissedCards: DismissedCard[] = dismissalRows.flatMap((d) => {
+  //
+  // Reversed here, and only here: fetchAllDismissals pages oldest-first (the
+  // (created_at, id) order every paged fetch on this page shares), which is
+  // what keeps its own range() calls stable — but the Dismissed section
+  // should read newest-first, so the display list is reversed after paging,
+  // not the fetch itself.
+  const dismissedCards: DismissedCard[] = [...dismissalRows].reverse().flatMap((d) => {
     const txn = txnDisplayById.get(d.transaction_id)
     if (!txn) return []
     let target: string

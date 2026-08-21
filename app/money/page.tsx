@@ -179,7 +179,8 @@ type RawCandidateInvoiceRow = {
 /** Every sent-or-paid invoice, owner-wide — mirrors
  *  app/money/matches/page.tsx's own fetchAllCandidateInvoices exactly (same
  *  `.in('status', ['sent','paid'])` filter: a paid-but-unlinked invoice still
- *  counts toward the badge, same reasoning as that page's own comment). */
+ *  counts toward the badge, same broad-query-narrow-per-row split that page's
+ *  own comment explains). */
 async function fetchAllCandidateInvoices(
   supabase: Awaited<ReturnType<typeof createClient>>,
 ): Promise<{ rows: RawCandidateInvoiceRow[]; error: string | null }> {

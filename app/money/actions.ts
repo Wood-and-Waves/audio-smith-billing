@@ -1135,11 +1135,16 @@ export async function restoreDismissal(id: string): Promise<Fail | { ok: true }>
     .from('ledger_match_dismissals')
     .select('id')
     .eq('id', id)
+    .eq('owner_id', user.id)
     .maybeSingle()
   if (existingError) return { error: existingError.message }
   if (!existing) return { error: 'That dismissal no longer exists.' }
 
-  const { error } = await supabase.from('ledger_match_dismissals').delete().eq('id', id)
+  const { error } = await supabase
+    .from('ledger_match_dismissals')
+    .delete()
+    .eq('id', id)
+    .eq('owner_id', user.id)
   if (error) return { error: error.message }
 
   revalidatePath('/money')

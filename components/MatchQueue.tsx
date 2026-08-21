@@ -360,7 +360,9 @@ export default function MatchQueue({ income, expense, dismissed }: {
                     <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
                       <span className="tabular text-xs">{formatDateShort(card.txn.date)}</span>
                       <span className="truncate">{card.txn.payee || '—'}</span>
-                      <span className="tabular">{formatUSD(card.txn.amountCents)}</span>
+                      {/* Same sign convention as the Charges section above: a charge (negative
+                          amount_cents) displays as its absolute value, a deposit as-is. */}
+                      <span className="tabular">{formatUSD(Math.abs(card.txn.amountCents))}</span>
                       <span aria-hidden="true">→</span>
                       <span className="truncate">{card.target}</span>
                     </div>

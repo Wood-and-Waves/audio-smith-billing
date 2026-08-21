@@ -40,7 +40,10 @@ export type CandidateInvoice = {
   client_name: string
   total_cents: number
   sent_at: string | null // ISO timestamptz; compare on its YYYY-MM-DD prefix
-  paid_at: string | null // YYYY-MM-DD or null; drives the paid-candidate recency rule (see eligibleForRow)
+  paid_at: string | null // YYYY-MM-DD or null; drives the paid-candidate recency rule (see eligibleForRow).
+  // Must stay a Postgres `date`, not a timestamptz: daysApart splits on '-'
+  // and Date.UTC's its parts, so a timestamptz string here would make it
+  // return NaN and silently exclude every paid candidate.
   status: 'sent' | 'paid' // paid-but-unlinked stays a candidate only within paid_at's recency window (see eligibleForRow)
   linked: boolean // already linked to any transaction
 }
@@ -422,7 +425,11 @@ export function proposeMatches(input: {
   })
 
   // Ascending by first-transaction date, then id; ties order the
-  // payee-agreeing card first, then expenseId as the deterministic final key.
+  // payee-agreeing card first, then a joined-transactionIds compare as the
+  // deterministic final key — expenseId alone would tie for two combos of
+  // the same expense that share a first transaction (e.g. a single-row
+  // proposal and a sum proposal both starting at the same transaction id),
+  // mirroring the income sort's joined-invoiceIds tiebreak above.
   expense.sort((a, b) => {
     const dateA = rowsById.get(a.transactionIds[0])?.date ?? ''
     const dateB = rowsById.get(b.transactionIds[0])?.date ?? ''
@@ -430,7 +437,7 @@ export function proposeMatches(input: {
       dateA.localeCompare(dateB) ||
       a.transactionIds[0].localeCompare(b.transactionIds[0]) ||
       Number(b.payeeAgrees) - Number(a.payeeAgrees) ||
-      a.expenseId.localeCompare(b.expenseId)
+      a.transactionIds.join(',').localeCompare(b.transactionIds.join(','))
     )
   })
 

@@ -46,7 +46,7 @@ test('a deposit dated before sent_at proposes nothing — money cannot land befo
   assert.deepEqual(result.income, [])
 })
 
-test('an invoice already marked paid by hand is still proposed — the deposit still needs its date', () => {
+test('an invoice marked paid by hand within the window is still proposed — the deposit still needs its date', () => {
   const result = proposeMatches({
     rows: [row()],
     invoices: [invoice({ status: 'paid', paid_at: '2026-08-08' })],
@@ -89,6 +89,38 @@ test('a paid invoice forty-six days out is never offered — the boundary pair (
     expenses: [], dismissed: [],
   })
   assert.deepEqual(fortySix.income, [])
+})
+
+test("paid-candidate eligibility is per deposit — a sum for a far row never borrows a near row's invoice", () => {
+  // Two same-client invoices, one paid recently and one still sent, sum
+  // exactly to two different deposits' amount. Both deposits are present in
+  // the same call on purpose: eligibleForRow has to be applied fresh per row
+  // inside proposalsFor, not computed once and reused, or the far deposit
+  // could silently borrow the paid invoice's eligibility from the near one.
+  const paidInvoice = invoice({
+    id: 'iPaid', client_id: 'c1', total_cents: 100000,
+    sent_at: '2026-06-01T00:00:00Z', status: 'paid', paid_at: '2026-08-01',
+  })
+  const sentInvoice = invoice({
+    id: 'iSent', client_id: 'c1', total_cents: 140000,
+    sent_at: '2026-06-02T00:00:00Z', status: 'sent',
+  })
+
+  const result = proposeMatches({
+    rows: [
+      // 9 days after paid_at — inside the 45-day window, so both invoices
+      // are eligible here and the sum combines.
+      row({ id: 'tNear', date: '2026-08-10', amount_cents: 240000 }),
+      // 92 days after paid_at — outside the window, so only the sent
+      // invoice is eligible; alone it can't form a 2-invoice sum.
+      row({ id: 'tFar', date: '2026-11-01', amount_cents: 240000 }),
+    ],
+    invoices: [paidInvoice, sentInvoice],
+    expenses: [], dismissed: [],
+  })
+  assert.deepEqual(result.income, [
+    { transactionId: 'tNear', invoiceIds: ['iPaid', 'iSent'], confidence: 'low', payeeAgrees: true },
+  ])
 })
 
 test('a sent invoice years old is still offered — unpaid debts never age out', () => {
