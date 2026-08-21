@@ -5,6 +5,9 @@ import { createClient } from '@/lib/supabase/server'
 import { computeTotals } from '@/lib/money'
 import { addDays, todayInChicago } from '@/lib/dates'
 import { renderInvoicePdf } from '@/lib/renderInvoicePdf'
+import { invoiceFilename } from '@/lib/invoicePdf'
+import { getAccessToken, uploadAndVerify } from '@/lib/dropbox'
+import { sanitizeSegment } from '@/lib/receiptArchiveName'
 import { sendInvoiceEmail, OWNER_BCC } from '@/lib/invoiceEmail'
 import { sendReminderEmail } from '@/lib/reminderEmail'
 import { assembleEmail } from '@/lib/invoiceEmailBody'
@@ -376,7 +379,7 @@ export async function deleteDraftInvoice(
 export async function sendInvoice(
   invoiceId: string,
   draft: { to: string; subject: string; body: string },
-): Promise<{ error: string } | { ok: true }> {
+): Promise<{ error: string } | { ok: true; warning?: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not signed in.' }
@@ -676,7 +679,46 @@ export async function sendInvoice(
 
   revalidatePath(`/invoices/${invoiceId}`)
   revalidatePath('/invoices')
-  return { ok: true }
+
+  // The exact bytes the client received, filed beside the show's receipts —
+  // /receipts/{year}/{show}/Invoice-N-Client.pdf, the same folders the
+  // archive cron builds, the same filename the download button uses. AFTER
+  // the send and the mark on purpose: this is a copy of something that
+  // already happened, and a Dropbox hiccup must degrade to a warning on the
+  // send panel, never to a failed or doubted send. autorename means a resend
+  // files as "... (1).pdf" beside the first rather than overwriting it.
+  let warning: string | undefined
+  try {
+    const appKey = process.env.DROPBOX_APP_KEY
+    const appSecret = process.env.DROPBOX_APP_SECRET
+    const refreshToken = process.env.DROPBOX_REFRESH_TOKEN
+    if (!appKey || !appSecret || !refreshToken) {
+      warning = 'Sent — but no Dropbox copy was made (Dropbox is not configured).'
+    } else {
+      const accessToken = await getAccessToken({ appKey, appSecret, refreshToken })
+      const year = sanitizeSegment(data.issue_date.slice(0, 4), 'unknown-year')
+      const folders = [...new Set(
+        (snapshot?.shows ?? []).map((sh) => sanitizeSegment(sh.name, 'Unfiled')),
+      )]
+      if (folders.length === 0) folders.push('Unfiled')
+      const bytes = new Uint8Array(pdf)
+      const failed: string[] = []
+      for (const folder of folders) {
+        const res = await uploadAndVerify(
+          accessToken, `/receipts/${year}/${folder}/${invoiceFilename(data)}`, bytes,
+        )
+        if (!res.ok) failed.push(folder)
+      }
+      if (failed.length > 0) {
+        warning = `Sent — but the Dropbox copy failed for ${failed.join(', ')}.`
+      }
+    }
+  } catch (e) {
+    warning = 'Sent — but the Dropbox copy failed: ' +
+      (e instanceof Error ? e.message : 'unknown error.')
+  }
+
+  return warning ? { ok: true, warning } : { ok: true }
 }
 
 /**

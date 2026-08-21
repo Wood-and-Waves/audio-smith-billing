@@ -39,6 +39,9 @@ export default function SendInvoicePanel({
   const [body, setBody] = useState(defaults.body)
   const [error, setError] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
+  // A send that succeeded but could not file its Dropbox copy — shown beside
+  // "Sent" so a quiet archive failure is never silent.
+  const [warning, setWarning] = useState<string | null>(null)
   const [pending, start] = useTransition()
 
   const { emails, invalid } = parseRecipients(toField)
@@ -87,6 +90,7 @@ export default function SendInvoicePanel({
       try {
         const result = await sendInvoice(invoiceId, { to: toField, subject, body })
         if ('error' in result) { setError(result.error); return }
+        setWarning(result.warning ?? null)
         setSent(true)
         setOpen(false)
         router.refresh()
@@ -99,9 +103,10 @@ export default function SendInvoicePanel({
   if (!open) {
     return (
       <div className="flex items-center gap-3">
-        {sent && <span className="text-xs text-good">Sent</span>}
+        {sent && !warning && <span className="text-xs text-good">Sent</span>}
+        {sent && warning && <span role="alert" className="text-xs text-danger">{warning}</span>}
         {error && <span role="alert" className="text-xs text-danger">{error}</span>}
-        <button type="button" onClick={() => { setOpen(true); setSent(false) }}
+        <button type="button" onClick={() => { setOpen(true); setSent(false); setWarning(null) }}
                 className="text-xs font-semibold uppercase tracking-wider text-accent hover:opacity-80">
           Email invoice
         </button>
