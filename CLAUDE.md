@@ -150,8 +150,11 @@ status.
   (`/receipts/{year}/{show}/`); send panel shows attachment contents + View
   PDF; never-sent drafts delete (and unbill) with number giveback; the
   register is a YNAB-style spreadsheet (running balance, outflow/inflow,
-  receipt + cleared columns) with date-grouped phone view; per-device
-  System/Light/Dark in Settings; punch tiles 6-across from sm:.
+  receipt + cleared columns) with date-grouped phone view, a wide canvas
+  (AppShell's `wide` prop — register only), and drag-resizable columns
+  (grips at every boundary move ONLY that boundary; widths persist per
+  device in localStorage 'registerCols'); per-device System/Light/Dark in
+  Settings; punch tiles 6-across from sm:.
 - **The ledger is Dan's live books**: YNAB Register backfilled to prod
   2026-08-20 — 328 txns in "Chase Checking" (opening $585.75 @ 2026-01-01,
   ending verified against the bank). Monthly OFX imports adopt the manual
@@ -160,5 +163,6 @@ status.
 - **Backlog:** `docs/BACKLOG.md` (canonical). Module design reference:
   `docs/superpowers/specs/2026-08-18-bookkeeping-module-reference.md` (incl.
   Dan's CPA homework questions). Next big pieces: invoice/expense
-  auto-bridge (matcher must handle 1 expense → N bank lines), CPA year-end
-  export, income-by-payee report, W-9, MileIQ, calendar feed from shows.
+  auto-bridge (matcher must handle 1 expense → N bank lines), show revenue
+  projection + cash-flow forecast, calendar feed from shows, CPA year-end
+  export, income-by-payee report, W-9, MileIQ.
