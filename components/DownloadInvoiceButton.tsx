@@ -10,6 +10,23 @@ import type { DocumentData } from '@/components/InvoiceDocument'
 // Font.register is global to the library and only needs to happen once.
 let fontReady = false
 
+/**
+ * The browser-side render of the exact document the email attaches — shared
+ * by this download button and SendInvoicePanel's pre-send preview, so what
+ * Dan checks, what he saves, and what the client receives can never diverge.
+ */
+export async function buildInvoicePdfBlob(data: DocumentData): Promise<Blob> {
+  const { Document, Page, Text, View, Image, Font, pdf } = await import('@react-pdf/renderer')
+
+  if (!fontReady) {
+    Font.register({ family: 'Oswald', src: '/fonts/Oswald-Bold.ttf', fontWeight: 700 })
+    fontReady = true
+  }
+
+  const parts: PdfParts = { Document, Page, Text, View, Image }
+  return pdf(buildInvoicePdf(parts, data, { logoSrc: '/logo.png' })).toBlob()
+}
+
 export default function DownloadInvoiceButton({ data }: { data: DocumentData }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -18,15 +35,7 @@ export default function DownloadInvoiceButton({ data }: { data: DocumentData }) 
     setError(null)
     setBusy(true)
     try {
-      const { Document, Page, Text, View, Image, Font, pdf } = await import('@react-pdf/renderer')
-
-      if (!fontReady) {
-        Font.register({ family: 'Oswald', src: '/fonts/Oswald-Bold.ttf', fontWeight: 700 })
-        fontReady = true
-      }
-
-      const parts: PdfParts = { Document, Page, Text, View, Image }
-      const blob = await pdf(buildInvoicePdf(parts, data, { logoSrc: '/logo.png' })).toBlob()
+      const blob = await buildInvoicePdfBlob(data)
 
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { buildInvoiceEmailDefaults } from '@/lib/invoiceEmailBody'
 import { parseRecipients } from '@/lib/invoiceRecipients'
 import { sendInvoice } from '@/app/invoices/actions'
+import { buildInvoicePdfBlob } from '@/components/DownloadInvoiceButton'
 import type { DocumentData } from '@/components/InvoiceDocument'
 
 // Sending is irreversible, so nothing goes until Dan has seen and can edit the
@@ -42,6 +43,39 @@ export default function SendInvoicePanel({
 
   const { emails, invalid } = parseRecipients(toField)
   const canSend = emails.length > 0 && subject.trim().length > 0 && invalid.length === 0
+
+  const [previewBusy, setPreviewBusy] = useState(false)
+  const receiptCount = data.backup?.expenses.filter((e) => e.receiptDataUri).length ?? 0
+  const attachedParts = [
+    'the invoice',
+    ...(data.backup?.show_hours ? ['hours sheet'] : []),
+    ...(receiptCount > 0 ? [`${receiptCount} receipt${receiptCount === 1 ? '' : 's'}`] : []),
+  ]
+
+  /** Opens the EXACT attachment in a new tab — same builder as the send. */
+  async function viewAttachment() {
+    setError(null)
+    // The window opens synchronously, inside the click — Safari refuses a
+    // window.open that arrives after an async gap, which is exactly where
+    // the 2MB-renderer import puts us.
+    const w = window.open('', '_blank')
+    if (!w) {
+      setError('The preview window was blocked — allow pop-ups for this site.')
+      return
+    }
+    setPreviewBusy(true)
+    try {
+      const blob = await buildInvoicePdfBlob(data)
+      const url = URL.createObjectURL(blob)
+      w.location.href = url
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch (e) {
+      w.close()
+      setError(e instanceof Error ? e.message : 'Could not build the PDF.')
+    } finally {
+      setPreviewBusy(false)
+    }
+  }
 
   function send() {
     setError(null)
@@ -102,9 +136,21 @@ export default function SendInvoicePanel({
       <textarea id="body" rows={10} value={body} onChange={(e) => setBody(e.target.value)}
                 className={`${fieldClass} mb-2`} />
 
-      <p className="text-xs text-muted mb-4">
-        A link to a read-only copy and the PDF are added automatically at the end,
-        so you don&rsquo;t need to include them.
+      {/* The final check. The PDF named here is built by the same code that
+          builds the attachment, so viewing it IS viewing what the client
+          gets — hours, receipts, everything. */}
+      <p className="text-xs text-muted mb-4 flex flex-wrap items-baseline gap-x-2">
+        <span>Attached: {attachedParts.join(' · ')}.</span>
+        <button
+          type="button"
+          onClick={() => void viewAttachment()}
+          disabled={previewBusy || pending}
+          className="font-semibold uppercase tracking-wider text-accent hover:opacity-80
+                     disabled:opacity-50"
+        >
+          {previewBusy ? 'Building…' : 'View PDF'}
+        </button>
+        <span>A link to a read-only copy is added at the end.</span>
       </p>
 
       {error && (
