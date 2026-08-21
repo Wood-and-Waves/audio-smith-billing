@@ -1,10 +1,18 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { saveSettings } from '@/app/settings/actions'
 import { FIELD_FULL } from '@/components/ui/field'
+import Select, { type SelectOption } from '@/components/ui/Select'
 
+type Appearance = 'system' | 'light' | 'dark'
+
+const APPEARANCE_OPTIONS: SelectOption[] = [
+  { value: 'system', label: 'System' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+]
 
 export type EditorSettings = {
   business_name: string
@@ -41,6 +49,47 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
 
   const [remitTo, setRemitTo] = useState(initial.remit_to ?? '')
   const [achDetails, setAchDetails] = useState(initial.ach_details ?? '')
+
+  // Per-device Appearance. This is NOT business data — it never leaves the
+  // browser, isn't part of `initial`/`saveSettings`, and its default here
+  // ('system') must match what an absent localStorage key means everywhere
+  // else (the pre-paint script in app/layout.tsx, the CSS in globals.css).
+  // Reading localStorage happens in an effect, not during render, so the
+  // server-rendered and first-hydrated markup both start at 'system' — SSR
+  // has no localStorage, and disagreeing here would trip a hydration warning.
+  const [appearance, setAppearance] = useState<Appearance>('system')
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('theme')
+      if (stored === 'light' || stored === 'dark') setAppearance(stored)
+    } catch {
+      // Storage can throw (Safari private mode, disabled storage) — the
+      // 'system' default set above already covers that case.
+    }
+  }, [])
+
+  // Applies immediately on change, independent of the Save button below.
+  // Deliberately not folded into submit()/saveSettings: this is device
+  // state (where THIS browser renders), not business data that belongs in
+  // the settings row or needs a round trip to the server.
+  function onAppearanceChange(next: string) {
+    const value = next as Appearance
+    setAppearance(value)
+    try {
+      if (value === 'system') {
+        localStorage.removeItem('theme')
+        delete document.documentElement.dataset.theme
+      } else {
+        localStorage.setItem('theme', value)
+        document.documentElement.dataset.theme = value
+      }
+    } catch {
+      // Best-effort, same as the mount effect above — the visible <html>
+      // dataset was already updated, so the picked theme still applies for
+      // this page load even if persisting it for next time failed.
+    }
+  }
 
   function submit() {
     setError(null)
@@ -155,6 +204,20 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
             Never printed on an invoice. A client who wants to pay by transfer asks, and you send
             these to them separately.
           </p>
+        </div>
+      </div>
+
+      <h2 className="eyebrow mb-3">Preferences</h2>
+      <div className="grid gap-4 sm:grid-cols-2 mb-8">
+        <div>
+          <label className="eyebrow block mb-2">Appearance</label>
+          <Select
+            ariaLabel="Appearance"
+            value={appearance}
+            onChange={onAppearanceChange}
+            options={APPEARANCE_OPTIONS}
+          />
+          <p className="text-xs text-muted mt-1.5">This device only.</p>
         </div>
       </div>
 

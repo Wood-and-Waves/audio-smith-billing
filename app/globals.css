@@ -64,7 +64,24 @@
 
 /*
   Light mode. The dark palette above is the designed default and stays in
-  :root; this overrides it when the device asks for light.
+  :root; this overrides it in TWO places that must stay byte-identical:
+
+    1. Below, gated on the OS/browser preference (system theme).
+    2. Immediately after it, gated on `data-theme="light"` — set by the
+       per-device Appearance switch in Settings (components/SettingsEditor.tsx)
+       via a pre-paint inline script in app/layout.tsx that reads
+       localStorage 'theme' before first render.
+
+  Four-state matrix (system preference x explicit device choice):
+    system dark  + no data-theme       -> :root dark values stand (default)
+    system light + no data-theme       -> @media block below applies (light)
+    any system   + data-theme="light"  -> attribute block below applies
+                                           (light), overriding the OS
+    any system   + data-theme="dark"   -> @media block is excluded by its
+                                           :not([data-theme='dark']) guard,
+                                           so :root dark values stand; the
+                                           data-theme="dark" block further
+                                           down only locks color-scheme
 
   These are NOT the dark values inverted. Amber #f59e0b measures 2.15:1 on a
   light ground — unreadable — which is why theaudiosmith.com only ever puts
@@ -73,9 +90,13 @@
 
   --paper-* are deliberately absent. An invoice is a document a client
   receives, so it looks the same whatever theme the app is wearing.
+
+  >>> KEEP IN SYNC: this block and the :root[data-theme='light'] block that
+  >>> follows it must carry byte-identical variable values. Copy, don't
+  >>> retype, when either changes. <<<
 */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme='dark']) {
     --bg: #f1f5f9;          /* the site's --bg-light */
     --surface: #ffffff;     /* the site's white cards */
     --surface-2: #e2e8f0;
@@ -92,6 +113,43 @@
     --good: #047857;        /* 5.5:1 — #10b981 measures 2.56 */
     --edge-shadow: rgba(34, 30, 22, 0.18);
   }
+}
+
+/*
+  >>> KEEP IN SYNC with the @media block above — same values, byte-identical.
+  >>> This is the explicit per-device override written by the Appearance
+  >>> control (components/SettingsEditor.tsx) via localStorage 'theme' and
+  >>> applied pre-paint in app/layout.tsx. It lives OUTSIDE the @media query
+  >>> on purpose, so it wins no matter what the OS preference is. <<<
+*/
+:root[data-theme='light'] {
+  --bg: #f1f5f9;          /* the site's --bg-light */
+  --surface: #ffffff;     /* the site's white cards */
+  --surface-2: #e2e8f0;
+  --ink: #121212;         /* 16.4:1 on --bg */
+  --muted: #475569;       /* 6.9:1 — #64748b measures 4.35 and fails */
+  --line: #cbd5e1;        /* the site's --line */
+
+  --accent: #b45309;          /* ink: 4.8:1 — #f59e0b measures 2.15 and fails */
+  --accent-surface: #f59e0b;  /* fill stays the brand amber */
+  --accent-ink: #121212;      /* charcoal on that fill: 8.8:1 */
+  --accent-wash: rgba(180, 83, 9, 0.14);
+
+  --danger: #dc2626;      /* 4.9:1 — #ef4444 measures 3.76 */
+  --good: #047857;        /* 5.5:1 — #10b981 measures 2.56 */
+  --edge-shadow: rgba(34, 30, 22, 0.18);
+
+  /* Explicit choice locks native-widget rendering (date pickers, selects,
+     scrollbars) to light, regardless of what the OS prefers. */
+  color-scheme: light;
+}
+
+/* The dark counterpart: :root's default values already apply whenever
+   data-theme isn't "light" (including "dark" — see the :not() above), so
+   this block only needs to lock native-widget rendering to dark even when
+   the OS preference is light. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
 }
 
 @theme inline {

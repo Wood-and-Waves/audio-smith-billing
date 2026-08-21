@@ -1,7 +1,9 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { formatDateShort } from '@/lib/dates'
-import { workingBalance, clearedBalance, type BalanceLike } from '@/lib/ledgerBalance'
+import {
+  workingBalance, clearedBalance, compareLedgerOrder, runningBalances, type BalanceLike,
+} from '@/lib/ledgerBalance'
 import AppShell from '@/components/AppShell'
 import MoneyRegister, {
   type CategoryOption, type LedgerAccountSummary, type LedgerTxnRow, type ShowOption,
@@ -36,6 +38,8 @@ type RawTxnRow = {
   memo: string | null
   cleared: 'uncleared' | 'cleared' | 'reconciled'
   created_at: string
+  receipt_path: string | null
+  receipt_original: string | null
   // Denormalized here (rather than cross-referenced client-side against the
   // "not hidden" categories list or the "most recent 25" shows list) so a
   // transaction tagged to an old show or a since-hidden category still shows
@@ -56,6 +60,7 @@ async function fetchAllTransactions(
     const { data, error } = await supabase
       .from('ledger_transactions')
       .select(`id, date, amount_cents, kind, category_id, show_id, payee, memo, cleared, created_at,
+                receipt_path, receipt_original,
                 category:ledger_categories(name), show:shows(name)`)
       .eq('account_id', accountId)
       .order('created_at', { ascending: true })
@@ -120,7 +125,10 @@ export default async function MoneyPage({
     .order('sort', { ascending: true })
   if (categoryError) return <LoadError message={categoryError.message} />
 
-  const categories: CategoryOption[] = (categoryRows ?? []).map((c) => ({ id: c.id, name: c.name }))
+  // grp rides along for MoneyRegister's "Group: Name" category cell — this
+  // query already selected it (below) for no reason beyond ordering until
+  // now.
+  const categories: CategoryOption[] = (categoryRows ?? []).map((c) => ({ id: c.id, name: c.name, grp: c.grp }))
 
   // For the Add row's show tag picker only — capped, and ordered by however
   // recently the show was created, not by its own dates. A transaction tagged
@@ -171,17 +179,37 @@ export default async function MoneyPage({
     (t) => t.category_id === null && (t.kind === 'income' || t.kind === 'expense'),
   ).length
 
-  // Newest first for the register, same as every other list in this app
-  // (ExpenseLog, ShowsPage). created_at is the tiebreak for two rows entered
-  // on the same date, matching the pagination order above.
-  const sorted = [...allTxns].sort((a, b) => (
-    a.date === b.date ? b.created_at.localeCompare(a.created_at) : b.date.localeCompare(a.date)
-  ))
+  // Canonical (oldest-first) ledger order — date asc, created_at asc, id asc,
+  // see compareLedgerOrder's doc comment — over the FULL set (never the
+  // 200-slice), so runningBalances can prefix-sum from the account's true
+  // opening balance. balanceById then lets the render step below look up
+  // "the balance after this txn" by id regardless of what order or subset
+  // it's about to display.
+  const ledgerOrdered = [...allTxns].sort(compareLedgerOrder)
+  const balances = runningBalances(accountRow.opening_balance_cents, ledgerOrdered)
+  const balanceById = new Map(ledgerOrdered.map((t, i) => [t.id, balances[i]]))
+
+  // Display order is the EXACT reverse of ledger order (compareLedgerOrder
+  // called with its arguments swapped), rather than a hand-rolled
+  // newest-first sort — that used to skip the id tiebreak, which
+  // compareLedgerOrder has. Because it's the true reverse, the top rendered
+  // row is always the most-recent txn in ledger order, so its balanceCents
+  // equals workingBalanceCents exactly (see runningBalances' invariant,
+  // proven by the "invariant — last balance equals workingBalance" test in
+  // scripts/test/ledgerBalance.test.ts).
+  const sorted = [...allTxns].sort((a, b) => compareLedgerOrder(b, a))
   // The RENDERED list only — filtered before the 200-cap below (not after),
   // so ?filter=uncategorized shows the actual next 200 uncategorized rows
   // rather than whatever uncategorized rows happened to survive an unrelated
   // most-recent-200 cut. Same kind filter as uncategorizedCount above, so
   // this list's length always agrees with that badge.
+  //
+  // Balances (balanceById, built above) are computed over the FULL,
+  // unfiltered set — DELIBERATELY unaffected by this filter. A row's balance
+  // is what the account held after that transaction actually posted; that
+  // fact doesn't change because the review queue is currently narrowed to
+  // uncategorized rows only, so filtering here must never recompute or
+  // re-derive it.
   const filtered = uncategorizedOnly
     ? sorted.filter((t) => t.category_id === null && (t.kind === 'income' || t.kind === 'expense'))
     : sorted
@@ -198,6 +226,12 @@ export default async function MoneyPage({
     payee: t.payee,
     memo: t.memo,
     cleared: t.cleared,
+    // Non-null assertion is safe: t comes from allTxns (via sorted/filtered),
+    // and balanceById was built from ledgerOrdered — the exact same array,
+    // just sorted differently — so every id here is guaranteed a key there.
+    balanceCents: balanceById.get(t.id)!,
+    receipt_path: t.receipt_path,
+    receipt_original: t.receipt_original,
   }))
 
   const account: LedgerAccountSummary = {
