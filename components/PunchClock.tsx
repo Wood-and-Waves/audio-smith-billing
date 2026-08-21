@@ -98,7 +98,9 @@ export default function PunchClock({
           read as one clock face instead of a ragged chip row. A recorded
           punch becomes a tile (label over time, × to remove); an empty slot
           stays a button; the next expected punch is the filled one. */}
-      <div className="grid grid-cols-3 gap-2 max-w-md">
+      {/* 6-across from sm: — one clock-face row on anything iPad-portrait
+          (744/768px) and wider; phones keep the 3x2. */}
+      <div className="grid grid-cols-3 gap-2 max-w-md sm:grid-cols-6 sm:max-w-2xl">
         {PUNCH_ORDER.map((type) => {
           const hit = punches.find((p) => p.punch_type === type)
           if (hit) {

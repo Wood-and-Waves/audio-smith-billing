@@ -58,6 +58,10 @@ Wanted: import MileIQ data to track reimbursable miles instead of retyping them.
 
 ## Small / cosmetic
 
+- Browser-chrome tint (theme-color meta + manifest) stays media-based and does
+  not follow the manual Appearance setting (2026-08-21). Accepted: a JS
+  meta-updater on toggle is the known fix if it ever grates.
+
 - Mixed hourly+day-rate invoice hours sheet (2026-08-20 review): the page-wide
   DT column trigger isn't scoped to full-sheet shows (a day-rate show's DT can
   add an empty DT column to an hourly show's table), and the ALL SHOWS total
