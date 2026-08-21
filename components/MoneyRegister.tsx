@@ -80,7 +80,7 @@ function stopPropagation(e: React.MouseEvent) {
  *  MEMO (grows, muted), OUTFLOW/INFLOW/BALANCE right-aligned and tabular, a
  *  slim cleared rail. Screenshot-derived widths (2026-08-21 plan). */
 const REGISTER_GRID =
-  'grid-cols-[2.25rem_5.5rem_minmax(0,1fr)_12rem_minmax(0,1fr)_6rem_6rem_7rem_2.25rem]'
+  'grid-cols-[2.25rem_5.5rem_minmax(0,1fr)_15rem_minmax(0,1fr)_6rem_6rem_7rem_2.25rem]'
 
 /**
  * "8/16/26" for last-reconciled — that column is a timestamptz (reconcileAccount
@@ -231,7 +231,10 @@ function CategoryText({ row, categories }: { row: LedgerTxnRow; categories: Cate
   if (!row.categoryName) return <span className="text-muted">Uncategorized</span>
   const grp = categories.find((c) => c.id === row.category_id)?.grp
   return (
-    <span className="truncate">
+    // block, not inline: overflow/text-overflow do nothing on an inline box,
+    // so an inline "truncate" let long names paint straight over the memo
+    // column (Dan caught "Misc Business Shoespenses" on day one).
+    <span className="block truncate">
       {grp && <span className="text-muted">{grp}: </span>}
       <span>{row.categoryName}</span>
     </span>
