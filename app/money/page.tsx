@@ -76,7 +76,7 @@ async function fetchAllTransactions(
 
 function LoadError({ message }: { message: string }) {
   return (
-    <AppShell current="money">
+    <AppShell current="money" wide>
       <p role="alert" className="text-danger border-l-2 border-danger pl-4 py-2">
         Couldn&rsquo;t load the ledger: {message}
       </p>
@@ -151,7 +151,7 @@ export default async function MoneyPage({
 
   if (!accountRow) {
     return (
-      <AppShell current="money">
+      <AppShell current="money" wide>
         <MoneyRegister
           account={null}
           categories={categories}
@@ -241,7 +241,7 @@ export default async function MoneyPage({
   }
 
   return (
-    <AppShell current="money">
+    <AppShell current="money" wide>
       <MoneyRegister
         account={account}
         categories={categories}

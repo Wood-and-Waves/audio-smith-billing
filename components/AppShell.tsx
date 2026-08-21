@@ -16,9 +16,14 @@ const NAV = [
 export default function AppShell({
   current,
   children,
+  wide = false,
 }: {
   current: (typeof NAV)[number]['key']
   children: React.ReactNode
+  /** The register earns a wider canvas (nine columns on a big monitor);
+   *  everything else reads better constrained. Header stays put either way
+   *  so navigation doesn't jump between pages. */
+  wide?: boolean
 }) {
   return (
     <div className="min-h-dvh">
@@ -80,7 +85,7 @@ export default function AppShell({
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-6 py-10">{children}</main>
+      <main className={`mx-auto ${wide ? 'max-w-[96rem]' : 'max-w-5xl'} px-6 py-10`}>{children}</main>
     </div>
   )
 }
