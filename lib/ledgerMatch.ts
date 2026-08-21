@@ -90,9 +90,17 @@ function daysApart(a: string, b: string): number {
   return Math.abs(utc(a) - utc(b)) / MS_PER_DAY
 }
 
-/** Normalized payee text split into its space-separated tokens. */
+/**
+ * Normalized payee text, punctuation stripped, split into its tokens — the
+ * design spec's own "lowercased, punctuation stripped" pin. normalizePayee
+ * alone only lowercases and collapses whitespace (it also keys exact-match
+ * payee memory, where "streamline," and "streamline" are legitimately
+ * different strings), so the punctuation strip lives here, not there:
+ * "Streamline, Inc." and "STREAMLINE INC" must tokenize the same way for
+ * similarity, without changing what payee memory treats as identical.
+ */
 function tokensOf(text: string): string[] {
-  return normalizePayee(text).split(' ').filter((t) => t.length > 0)
+  return normalizePayee(text).replace(/[^a-z0-9]+/g, ' ').split(' ').filter((t) => t.length > 0)
 }
 
 /**

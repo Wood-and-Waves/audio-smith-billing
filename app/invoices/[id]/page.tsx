@@ -52,10 +52,19 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
     // query. Used only to tell "no shows behind this invoice" apart from "a
     // show billed this invoice before the backup snapshot existed" below.
     supabase.from('shows').select('id').eq('invoice_id', id),
+    // .order + .limit(1): an invoice can in principle carry more than one
+    // link row (a rare hand-correction case), and without an explicit order
+    // Postgres makes no promise about which one comes back first — the same
+    // "unknown must never resolve to a guess" reasoning as everywhere else in
+    // this app, applied here by pinning the deterministic choice (oldest
+    // link first) instead of leaving it to whatever the planner happens to
+    // return.
     supabase
       .from('ledger_transaction_invoices')
-      .select('ledger_transactions(date, payee)')
-      .eq('invoice_id', id),
+      .select('ledger_transactions(date)')
+      .eq('invoice_id', id)
+      .order('created_at', { ascending: true })
+      .limit(1),
   ])
 
   if (error) {
@@ -108,8 +117,10 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   const hasLinkedShows = (linkedShows ?? []).length > 0
 
   // Extract the paying deposit from the first ledger transaction (or null).
+  // The query itself already narrowed this to one deterministic row (oldest
+  // link first) via .order + .limit(1) above.
   const depositRow = (depositTxns ?? [])[0] as unknown as
-    | { ledger_transactions: { date: string; payee: string } | null }
+    | { ledger_transactions: { date: string } | null }
     | undefined
   const deposit = depositRow?.ledger_transactions ?? null
 

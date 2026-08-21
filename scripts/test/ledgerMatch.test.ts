@@ -224,6 +224,15 @@ test('a two-letter shared token does not count toward payee similarity', () => {
   assert.deepEqual(result.income, [{ transactionId: 't1', invoiceIds: ['i1'], confidence: 'low' }])
 })
 
+test('a client name with punctuation still reaches high confidence', () => {
+  const result = proposeMatches({
+    rows: [row({ payee: 'STREAMLINE INC DES:PAYMENT' })],
+    invoices: [invoice({ client_name: 'Streamline, Inc.' })],
+    expenses: [], dismissed: [],
+  })
+  assert.deepEqual(result.income, [{ transactionId: 't1', invoiceIds: ['i1'], confidence: 'high' }])
+})
+
 test('proposals are sorted by transaction date ascending then transaction id', () => {
   const result = proposeMatches({
     rows: [

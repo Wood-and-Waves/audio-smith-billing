@@ -551,7 +551,9 @@ export async function updateLedgerTransaction(input: {
  * Removes a transaction and any receipt files it carried. Same reconciled-
  * lock as updateLedgerTransaction; the receipt columns ride along on the
  * same select purely so the row is read once, not because they affect the
- * lock decision.
+ * lock decision. A linked row is refused outright — see the link guard
+ * below — the same unlink-first rule setInvoiceStatus enforces on its own
+ * leaving-paid path.
  */
 export async function deleteLedgerTransaction(
   id: string,
@@ -566,6 +568,21 @@ export async function deleteLedgerTransaction(
     .eq('id', id).maybeSingle()
   if (!existing) return { error: 'That transaction no longer exists.' }
   if (existing.cleared === 'reconciled') return { error: 'Reconciled transactions are locked.' }
+
+  // A linked row must be unlinked first — deleting a linked deposit would
+  // strand a paid invoice whose deposit no longer exists (same for a linked
+  // expense payment). Fail closed on either check: an ERROR must not read
+  // as "nothing links it," the same rule unlinkTransaction's own comment
+  // gives.
+  const { data: invoiceLinks, error: invoiceLinksErr } = await supabase
+    .from('ledger_transaction_invoices').select('id').eq('transaction_id', id).limit(1)
+  if (invoiceLinksErr) return { error: invoiceLinksErr.message }
+  const { data: expenseLinks, error: expenseLinksErr } = await supabase
+    .from('ledger_transaction_expenses').select('id').eq('transaction_id', id).limit(1)
+  if (expenseLinksErr) return { error: expenseLinksErr.message }
+  if ((invoiceLinks && invoiceLinks.length > 0) || (expenseLinks && expenseLinks.length > 0)) {
+    return { error: 'This row is linked. Unlink it first.' }
+  }
 
   const { error } = await supabase.from('ledger_transactions').delete().eq('id', id)
   if (error) return { error: error.message }
@@ -812,14 +829,18 @@ export async function acceptIncomeMatch(input: {
 
   // Neither link table may already name this transaction — a bank row is
   // either an income link, an expense link, or unlinked, never two of those
-  // at once.
-  const { data: existingInvoiceLink } = await supabase
+  // at once. Fail-direction rule (see unlinkTransaction's own comment): an
+  // ERROR here must not read as "no links of that kind" — that would let an
+  // already-linked row link a second time.
+  const { data: existingInvoiceLink, error: existingInvoiceLinkErr } = await supabase
     .from('ledger_transaction_invoices').select('id').eq('transaction_id', txn.id).limit(1)
+  if (existingInvoiceLinkErr) return { error: existingInvoiceLinkErr.message }
   if (existingInvoiceLink && existingInvoiceLink.length > 0) {
     return { error: 'This transaction is already linked.' }
   }
-  const { data: existingExpenseLink } = await supabase
+  const { data: existingExpenseLink, error: existingExpenseLinkErr } = await supabase
     .from('ledger_transaction_expenses').select('id').eq('transaction_id', txn.id).limit(1)
+  if (existingExpenseLinkErr) return { error: existingExpenseLinkErr.message }
   if (existingExpenseLink && existingExpenseLink.length > 0) {
     return { error: 'This transaction is already linked.' }
   }
@@ -838,9 +859,11 @@ export async function acceptIncomeMatch(input: {
   // Scoped to invoice_id alone, not (transaction_id, invoice_id) — an
   // invoice already linked to a DIFFERENT transaction is exactly as invalid
   // a target as one linked to this one; a link means paid in full, and an
-  // invoice cannot be paid in full twice.
-  const { data: alreadyLinked } = await supabase
+  // invoice cannot be paid in full twice. Fail-direction rule applies here
+  // too: an ERROR must not read as "none of these are linked."
+  const { data: alreadyLinked, error: alreadyLinkedErr } = await supabase
     .from('ledger_transaction_invoices').select('invoice_id').in('invoice_id', invoiceIds)
+  if (alreadyLinkedErr) return { error: alreadyLinkedErr.message }
   if (alreadyLinked && alreadyLinked.length > 0) {
     return { error: 'One of those invoices is already linked to a transaction.' }
   }
@@ -936,8 +959,12 @@ export async function acceptExpenseMatch(input: {
     .from('expenses').select('id, show_id, amount_cents').eq('id', input.expenseId).maybeSingle()
   if (!expense) return { error: 'That expense no longer exists.' }
 
-  const { data: existingExpenseLink } = await supabase
+  // Fail-direction rule (see unlinkTransaction's own comment): an ERROR here
+  // must not read as "not yet linked" — that would let an already-linked
+  // expense link a second time.
+  const { data: existingExpenseLink, error: existingExpenseLinkErr } = await supabase
     .from('ledger_transaction_expenses').select('id').eq('expense_id', expense.id).limit(1)
+  if (existingExpenseLinkErr) return { error: existingExpenseLinkErr.message }
   if (existingExpenseLink && existingExpenseLink.length > 0) {
     return { error: 'This expense is already linked.' }
   }
@@ -957,14 +984,18 @@ export async function acceptExpenseMatch(input: {
   }
 
   // Neither link table may already name any of these transactions — same
-  // either-table exclusivity acceptIncomeMatch checks on the txn side.
-  const { data: linkedAsInvoice } = await supabase
+  // either-table exclusivity acceptIncomeMatch checks on the txn side. Same
+  // fail-direction rule as acceptIncomeMatch: an ERROR must not read as
+  // "none of these are linked."
+  const { data: linkedAsInvoice, error: linkedAsInvoiceErr } = await supabase
     .from('ledger_transaction_invoices').select('transaction_id').in('transaction_id', transactionIds)
+  if (linkedAsInvoiceErr) return { error: linkedAsInvoiceErr.message }
   if (linkedAsInvoice && linkedAsInvoice.length > 0) {
     return { error: 'One of those transactions is already linked.' }
   }
-  const { data: linkedAsExpense } = await supabase
+  const { data: linkedAsExpense, error: linkedAsExpenseErr } = await supabase
     .from('ledger_transaction_expenses').select('transaction_id').in('transaction_id', transactionIds)
+  if (linkedAsExpenseErr) return { error: linkedAsExpenseErr.message }
   if (linkedAsExpense && linkedAsExpense.length > 0) {
     return { error: 'One of those transactions is already linked.' }
   }
@@ -1056,9 +1087,9 @@ export async function dismissMatch(
   }
 
   // Two upsert calls, not one: migration 0032 gives ledger_match_dismissals
-  // two separate partial-unique indexes — (transaction_id, invoice_id) and
-  // (transaction_id, expense_id) — one per discriminant, so onConflict has
-  // to name whichever one this batch of rows actually populates.
+  // two separate UNIQUE constraints relying on NULLS DISTINCT — (transaction_id,
+  // invoice_id) and (transaction_id, expense_id) — one per discriminant, so
+  // onConflict has to name whichever one this batch of rows actually populates.
   const invoicePairs = pairs.filter((p) => p.invoiceId !== undefined && p.invoiceId !== null)
   const expensePairs = pairs.filter((p) => p.expenseId !== undefined && p.expenseId !== null)
 
@@ -1101,10 +1132,16 @@ export async function unlinkTransaction(txnId: string): Promise<Fail | { ok: tru
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not signed in.' }
 
-  const { data: invoiceLinks } = await supabase
+  // Fail-direction rule (named and explained further down, where the same
+  // rule gates the invoice-restore loop): an ERROR on either fetch must not
+  // read as "no links of that kind" — that would let the code below treat a
+  // linked row as unlinked and skip deleting/restoring it.
+  const { data: invoiceLinks, error: invoiceLinksErr } = await supabase
     .from('ledger_transaction_invoices').select('id, invoice_id').eq('transaction_id', txnId)
-  const { data: expenseLinks } = await supabase
+  if (invoiceLinksErr) return { error: invoiceLinksErr.message }
+  const { data: expenseLinks, error: expenseLinksErr } = await supabase
     .from('ledger_transaction_expenses').select('id, expense_id').eq('transaction_id', txnId)
+  if (expenseLinksErr) return { error: expenseLinksErr.message }
 
   const hasInvoiceLinks = !!invoiceLinks && invoiceLinks.length > 0
   const hasExpenseLinks = !!expenseLinks && expenseLinks.length > 0
