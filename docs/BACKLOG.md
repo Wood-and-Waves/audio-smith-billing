@@ -51,6 +51,30 @@ dates, venue, location and notes that could fill and update his calendar.
 - Brainstorm openers: which calendar app; what belongs in the event body;
   should travel days render differently; prep/lead-time events?
 
+## Show revenue projection + cash-flow forecast (2026-08-21, Dan)
+
+"I am putting all shows in. This should give me a calculation of what each
+show could make and do some cash flow predictions… a valuable tool for my
+forecasting."
+- **Per-show projection**: before punches exist, scheduled days already imply
+  revenue — days x frozen day rate (+ travel legs x travel rate, half days),
+  assuming a standard day (no OT). `lib/showBuckets.ts` computes ACTUALS from
+  punches; a projection variant assumes st = a full day per scheduled date.
+  Surface on the show page pre-punch ("could make ~$X") and in a Forecast
+  list of upcoming shows.
+- **Cash-flow timeline**: expected invoice date (last show day + a billing-lag
+  assumption) + payment timing → expected inflows by week/month. The payment
+  timing should be LEARNED per client: invoices carry sent_at and paid dates,
+  so each client's real median pay-lag beats assuming Net-30. Outflows: the
+  ledger's own history gives trailing-average monthly spend per Bills/
+  Expenses category. Anchor at the current working balance → projected cash
+  position / runway chart.
+- **Assumptions to surface (and let Dan tweak)**: all scheduled days worked,
+  no cancellations, per-client pay lag (fallback terms_days), recurring
+  bills at trailing-3-month average.
+- Likely home: /money/forecast or a Reports section. Needs the shows +
+  ledger + invoice-history joins that all exist today; no new data entry.
+
 ## Money module — remaining phases
 
 - **Invoice/expense auto-bridge** (phase 3 of the bookkeeping design): paid
