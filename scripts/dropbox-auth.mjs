@@ -48,14 +48,27 @@ function missingScopes(tokenJson) {
   return ['files.content.write'].filter((s) => !granted.includes(s))
 }
 
-async function tokenWorks(accessToken) {
-  // account_info.read is on for every app — this only proves the token is
-  // alive, not any particular permission.
-  const res = await fetch('https://api.dropboxapi.com/2/users/get_current_account', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}` },
+// The only verification that cannot lie: do what the archive does. A tiny
+// upload into the app folder proves the whole chain — token, scope, folder —
+// and leaves a visible file as evidence. (An account-info ping was tried
+// here first and refused on a working setup; probing an ADJACENT capability
+// answers a question nobody asked.)
+async function probeUpload(accessToken) {
+  const arg = JSON.stringify({
+    path: '/connection-test.txt', mode: 'add', autorename: true, mute: true,
   })
-  return res.ok
+  const res = await fetch('https://content.dropboxapi.com/2/files/upload', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Dropbox-API-Arg': arg,
+      'Content-Type': 'application/octet-stream',
+    },
+    body: `Connected ${new Date().toISOString()}\n`,
+  })
+  if (res.ok) return { ok: true }
+  const text = await res.text().catch(() => '')
+  return { ok: false, detail: `HTTP ${res.status} ${text.slice(0, 200)}` }
 }
 
 async function authFlow() {
@@ -100,13 +113,17 @@ async function authFlow() {
     process.exit(1)
   }
 
-  if (!(await tokenWorks(json.access_token))) {
-    console.log('Dropbox issued a token but then refused it — not saving. Wait a minute and retry with a fresh code.')
+  const probe = await probeUpload(json.access_token)
+  if (!probe.ok) {
+    console.log(`\nThe test upload failed — not saving. Dropbox said: ${probe.detail}`)
+    console.log('Fix whatever it names, then run this again with a fresh code.')
     process.exit(1)
   }
 
   writeEnvValue('DROPBOX_REFRESH_TOKEN', json.refresh_token)
-  console.log('\nConnected and verified. The refresh token is saved in .env.local (not shown).')
+  console.log('\nConnected and PROVEN: a file named connection-test.txt was just uploaded')
+  console.log('to the app\'s Dropbox folder — go look. The refresh token is saved in')
+  console.log('.env.local (not shown).')
   console.log('Now put all three values into production:\n')
   console.log('   npm run dropbox:auth -- --push\n')
 }
