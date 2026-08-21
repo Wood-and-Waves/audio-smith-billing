@@ -38,11 +38,22 @@ function writeEnvValue(name, value) {
   writeFileSync(ENV_PATH, lines.join('\n'))
 }
 
-async function verify(accessToken) {
-  const res = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
+// The archive only ever UPLOADS (lib/dropbox.ts's uploadAndVerify reads the
+// upload response itself), so the one scope that matters is
+// files.content.write. The first version of this script verified with a
+// folder LISTING — which needs files.metadata.read, a permission the app
+// doesn't use — and refused a perfectly good token over it.
+function missingScopes(tokenJson) {
+  const granted = String(tokenJson.scope ?? '').split(' ')
+  return ['files.content.write'].filter((s) => !granted.includes(s))
+}
+
+async function tokenWorks(accessToken) {
+  // account_info.read is on for every app — this only proves the token is
+  // alive, not any particular permission.
+  const res = await fetch('https://api.dropboxapi.com/2/users/get_current_account', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path: '', recursive: false }),
+    headers: { Authorization: `Bearer ${accessToken}` },
   })
   return res.ok
 }
@@ -79,8 +90,18 @@ async function authFlow() {
     process.exit(1)
   }
 
-  if (!(await verify(json.access_token))) {
-    console.log('Got a token but Dropbox refused a folder listing with it — not saving. Check the app\'s permissions (files.content.write, files.content.read) and retry.')
+  const missing = missingScopes(json)
+  if (missing.length > 0) {
+    console.log(`\nThe token is missing: ${missing.join(', ')}.`)
+    console.log('On your app\'s page at https://www.dropbox.com/developers/apps open the')
+    console.log('PERMISSIONS tab, tick "files.content.write" (and "files.content.read"),')
+    console.log('click Submit — then run this again for a FRESH code. Permissions are')
+    console.log('baked into the token when you click Allow, so the old code cannot work.')
+    process.exit(1)
+  }
+
+  if (!(await tokenWorks(json.access_token))) {
+    console.log('Dropbox issued a token but then refused it — not saving. Wait a minute and retry with a fresh code.')
     process.exit(1)
   }
 
