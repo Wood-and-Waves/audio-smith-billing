@@ -599,7 +599,10 @@ export default function MoneyRegister({
         // -top-0.5/-bottom-2 stretch the divider from just above the label
         // down through the header's padding to its underline, so it reads as
         // a real column boundary level with the text — not a floating tick.
-        className={`group absolute ${side === 'right' ? '-right-1.5' : '-left-1.5'} -top-0.5 -bottom-2 w-3
+        // Centered in the 12px gutter (offset = half gutter + half own width),
+        // so the bar floats midway between the two labels instead of hugging
+        // the word to its right.
+        className={`group absolute ${side === 'right' ? '-right-3' : '-left-3'} -top-0.5 -bottom-2 w-3
                    cursor-col-resize touch-none flex justify-center`}
       >
         <span className="h-full w-[2px] rounded-pill bg-line group-hover:w-[3px] group-hover:bg-accent" />
@@ -1149,7 +1152,7 @@ export default function MoneyRegister({
         onClick={() => { if (editable) startEdit(t) }}
         style={{ gridTemplateColumns: gridTemplate }}
         className={
-          `grid items-center gap-x-2 pl-3 -ml-3 pr-3 py-2 border-b border-line ${
+          `grid items-center gap-x-3 pl-3 -ml-3 pr-3 py-2 border-b border-line ${
             editable ? 'cursor-pointer hover:bg-surface' : ''
           }`
         }
@@ -1517,7 +1520,7 @@ export default function MoneyRegister({
           <div className="hidden sm:block">
             <div
               style={{ gridTemplateColumns: gridTemplate }}
-              className="grid gap-x-2 pl-3 -ml-3 pr-3 pb-2 mb-1 border-b border-line select-none"
+              className="grid gap-x-3 pl-3 -ml-3 pr-3 pb-2 mb-1 border-b border-line select-none"
             >
               <span aria-hidden />
               <span className="eyebrow relative">Date{columnGrip('b1', 'right')}</span>
