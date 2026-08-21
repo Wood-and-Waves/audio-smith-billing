@@ -58,6 +58,11 @@ Wanted: import MileIQ data to track reimbursable miles instead of retyping them.
 
 ## Small / cosmetic
 
+- Register rebuild accepted trade-offs (2026-08-21 review): row-click-to-edit is
+  pointer-only (no keyboard path to edit/delete); both layouts mount in the DOM
+  at once (duplicate aria-labels, ~400 nodes at the cap); punch 6-across is
+  borderline at exactly 640px. Revisit in a register a11y pass.
+
 - Browser-chrome tint (theme-color meta + manifest) stays media-based and does
   not follow the manual Appearance setting (2026-08-21). Accepted: a JS
   meta-updater on toggle is the known fix if it ever grates.
