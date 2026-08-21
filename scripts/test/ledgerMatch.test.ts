@@ -508,3 +508,65 @@ test('expense proposals are sorted by first transaction date ascending then tran
   })
   assert.deepEqual(result.expense.map((p) => p.transactionIds[0]), ['xM', 'xW', 'xX'])
 })
+
+test('a charge dated before the expense day still matches — the window is symmetric', () => {
+  // Unlike income's forward-only rule (a deposit can't land before the ask),
+  // an expense charge can post before OR after spent_on — daysApart is
+  // symmetric, so 8 days before is inside the same 10-day window as 8 days
+  // after.
+  const eightDaysBefore = proposeMatches({
+    rows: [expenseRow({ id: 'x1', date: '2026-08-02', amount_cents: -5000 })],
+    invoices: [],
+    expenses: [expenseFixture({ id: 'e1', spent_on: '2026-08-10', amount_cents: 5000 })],
+    dismissed: [],
+  })
+  assert.deepEqual(eightDaysBefore.expense, [{ transactionIds: ['x1'], expenseId: 'e1', confidence: 'high' }])
+
+  const elevenDaysBefore = proposeMatches({
+    rows: [expenseRow({ id: 'x2', date: '2026-07-30', amount_cents: -5000 })],
+    invoices: [],
+    expenses: [expenseFixture({ id: 'e2', spent_on: '2026-08-10', amount_cents: 5000 })],
+    dismissed: [],
+  })
+  assert.deepEqual(elevenDaysBefore.expense, [])
+})
+
+test('more than three valid groups proposes none for that expense', () => {
+  // Four same-leading-token rows, every pair summing exactly to the
+  // expense's amount: C(4,2) = 6 valid pairs, over the cap of three.
+  const result = proposeMatches({
+    rows: [
+      expenseRow({ id: 'x1', date: '2026-08-10', amount_cents: -1000, payee: 'ACME SUPPLY' }),
+      expenseRow({ id: 'x2', date: '2026-08-10', amount_cents: -1000, payee: 'ACME SUPPLY' }),
+      expenseRow({ id: 'x3', date: '2026-08-10', amount_cents: -1000, payee: 'ACME SUPPLY' }),
+      expenseRow({ id: 'x4', date: '2026-08-10', amount_cents: -1000, payee: 'ACME SUPPLY' }),
+    ],
+    invoices: [],
+    expenses: [expenseFixture({ id: 'e1', spent_on: '2026-08-10', amount_cents: 2000 })],
+    dismissed: [],
+  })
+  assert.deepEqual(result.expense, [])
+})
+
+test('rows exactly three days apart still group — the pairwise boundary is inclusive', () => {
+  const result = proposeMatches({
+    rows: [
+      expenseRow({ id: 'x1', date: '2026-08-10', amount_cents: -3000, payee: 'UBER EATS' }),
+      expenseRow({ id: 'x2', date: '2026-08-13', amount_cents: -2000, payee: 'UBER EATS TIP' }),
+    ],
+    invoices: [],
+    expenses: [expenseFixture({ id: 'e1', spent_on: '2026-08-10', amount_cents: 5000 })],
+    dismissed: [],
+  })
+  assert.deepEqual(result.expense, [{ transactionIds: ['x1', 'x2'], expenseId: 'e1', confidence: 'low' }])
+})
+
+test('an unambiguous single without where_spent token overlap stays low', () => {
+  const result = proposeMatches({
+    rows: [expenseRow({ id: 'x1', date: '2026-08-10', amount_cents: -5000, payee: 'RANDOM XYZ CORP' })],
+    invoices: [],
+    expenses: [expenseFixture({ id: 'e1', spent_on: '2026-08-10', amount_cents: 5000, where_spent: 'Acme Supply' })],
+    dismissed: [],
+  })
+  assert.deepEqual(result.expense, [{ transactionIds: ['x1'], expenseId: 'e1', confidence: 'low' }])
+})
