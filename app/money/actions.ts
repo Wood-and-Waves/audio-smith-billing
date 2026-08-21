@@ -1136,8 +1136,13 @@ export async function unlinkTransaction(txnId: string): Promise<Fail | { ok: tru
   // counts as "still linked" against itself.
   if (hasInvoiceLinks) {
     for (const link of invoiceLinks!) {
-      const { data: stillLinked } = await supabase
+      // Fail-direction rule: an ERROR here must not read as "nothing links it"
+      // — that would revert a still-linked invoice to unpaid. Unknown blocks
+      // the write, the same way an unknown show count never resolves to sole
+      // coverage.
+      const { data: stillLinked, error: stillErr } = await supabase
         .from('ledger_transaction_invoices').select('id').eq('invoice_id', link.invoice_id).limit(1)
+      if (stillErr) return { error: stillErr.message }
       if (!stillLinked || stillLinked.length === 0) {
         const { error } = await supabase
           .from('invoices').update({ status: 'sent', paid_at: null }).eq('id', link.invoice_id)
