@@ -235,6 +235,62 @@ export async function replaceExpenseReceipt(
 }
 
 /**
+ * Attaches a FIRST receipt to an expense that was saved without one — the
+ * mirror image of replaceExpenseReceipt above, with the guard flipped: that
+ * one refuses a row with no original, this one refuses a row that already
+ * has any receipt at all (replacement stays that action's job, with its
+ * old-file cleanup; letting this one overwrite would silently orphan files).
+ * Exists because deleting a receiptless row and retyping it was the only way
+ * to attach a forgotten receipt (Dan hit this on a real show, 2026-08-20).
+ */
+export async function attachExpenseReceipt(
+  expenseId: string,
+  enhancedPath: string,
+  originalPath: string,
+): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const { data: expense } = await supabase
+    .from('expenses')
+    .select('show_id, receipt_path, receipt_original, shows(status)')
+    .eq('id', expenseId).maybeSingle()
+  if (!expense) return { error: 'That expense no longer exists.' }
+
+  const row = expense as unknown as {
+    show_id: string
+    receipt_path: string | null
+    receipt_original: string | null
+    shows: { status: string } | null
+  }
+  // Same frozen-artifact rule as replaceExpenseReceipt: once billed, the
+  // snapshot is what the client saw and the row stops changing.
+  if (row.shows?.status === 'billed') {
+    return { error: 'This show is billed. Unlink it before editing.' }
+  }
+
+  if (row.receipt_path || row.receipt_original) {
+    return { error: 'This expense already has a receipt.' }
+  }
+
+  // Same folder-ownership check as addExpense's, on BOTH paths.
+  const prefix = `${user.id}/${row.show_id}/`
+  if (!enhancedPath.startsWith(prefix) || !originalPath.startsWith(prefix)) {
+    return { error: 'That receipt was not uploaded to this show.' }
+  }
+
+  const { error } = await supabase
+    .from('expenses')
+    .update({ receipt_path: enhancedPath, receipt_original: originalPath })
+    .eq('id', expenseId)
+  if (error) return { error: error.message }
+
+  revalidatePath(`/shows/${row.show_id}`)
+  return { ok: true }
+}
+
+/**
  * Short-lived read URLs, keyed by storage path.
  *
  * `storageError` is true only for a genuine top-level failure from Storage

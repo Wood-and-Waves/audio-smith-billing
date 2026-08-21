@@ -8,8 +8,8 @@ import { formatDateShort, todayInChicago } from '@/lib/dates'
 import { CATEGORY_LABEL, CATEGORY_ORDER, expensesMissingReceipts, type ExpenseCategory } from '@/lib/expenses'
 import { scaleToFit, contrastBounds, buildLut, applyContrastStretch, JPEG_QUALITY } from '@/lib/receiptImage'
 import {
-  addExpense, deleteExpense, extractReceipt, listShowOriginals, replaceExpenseReceipt,
-  setExpenseBillable, signedReceiptUrls,
+  addExpense, attachExpenseReceipt, deleteExpense, extractReceipt, listShowOriginals,
+  replaceExpenseReceipt, setExpenseBillable, signedReceiptUrls,
 } from '@/app/expenses/actions'
 import {
   dropExactRepeats, duplicateOf, markDuplicates, type NamedCandidate,
@@ -571,6 +571,24 @@ export default function ExpenseLog({
   // downloaded or revoked.
   const [viewer, setViewer] = useState<{ url: string; label: string } | null>(null)
 
+  // "Add receipt" on a row saved without one — the same capture pipeline as
+  // a fresh add (adjuster included for photos), but the result attaches to
+  // the EXISTING row via attachExpenseReceipt instead of creating a new one.
+  // OCR is not re-run: the amount/vendor/date were typed and reviewed when
+  // the row was saved. Same lifecycle shape as fixLater above.
+  const [attach, setAttach] = useState<{
+    expenseId: string; file: File; url: string; quad: Quad; busy: boolean
+  } | null>(null)
+  const attachRef = useRef(attach)
+  useEffect(() => { attachRef.current = attach }, [attach])
+  useEffect(() => () => {
+    if (attachRef.current) URL.revokeObjectURL(attachRef.current.url)
+  }, [])
+  const attachInputRef = useRef<HTMLInputElement>(null)
+  // Which row the hidden shared input is picking for — set on button tap,
+  // read in onChange. A ref, not state: nothing renders from it.
+  const attachTargetRef = useRef<string | null>(null)
+
   // Minted fresh on every file pick; an async result is applied only if it
   // still matches. This one mechanism covers three otherwise-separate races:
   // a pick superseded by a later pick, a save that landed while OCR was
@@ -652,10 +670,10 @@ export default function ExpenseLog({
 
     const detected = await detectCorners(f).catch(() => null)
     if (myToken !== tokenRef.current) return // superseded while detecting
-    // The fix-later adjuster opened while this detection ran: two overlaid
-    // dialogs would fight for the screen, so the pick loses. Re-picking
-    // after the other dialog closes recovers it.
-    if (fixLaterRef.current) return
+    // Another adjuster (fix-later or add-receipt) opened while this
+    // detection ran: two overlaid dialogs would fight for the screen, so
+    // the pick loses. Re-picking after the other closes recovers it.
+    if (fixLaterRef.current || attachRef.current) return
     setPendingAdjust({ file: f, url: URL.createObjectURL(f), quad: detected ?? INSET_QUAD, token: myToken })
   }
 
@@ -1368,6 +1386,74 @@ export default function ExpenseLog({
    * flight — nothing here updates a `pending`-gated row until `setFixLater`
    * at the very end.
    */
+  /** The "Add receipt" tap: remember the row, open the shared picker. */
+  function openAttach(row: Row) {
+    if (pendingAdjustRef.current || fixLaterRef.current || attachRef.current) return
+    setError(null)
+    attachTargetRef.current = row.id
+    attachInputRef.current?.click()
+  }
+
+  function onAttachPick(fileList: FileList | null) {
+    const expenseId = attachTargetRef.current
+    const f = fileList?.[0]
+    // Reset so re-picking the same file still fires change — same reason as
+    // LedgerImport's input reset.
+    if (attachInputRef.current) attachInputRef.current.value = ''
+    if (!f || !expenseId) return
+
+    if (isPdf(f)) {
+      // PDFs never see the adjuster (already-flat documents) — straight to
+      // upload+attach, under the shared transition so row buttons disable.
+      start(async () => { await runAttach(expenseId, f, null) })
+      return
+    }
+    void (async () => {
+      const detected = await detectCorners(f).catch(() => null)
+      // Same anti-stacking guard as the other two dialog flows.
+      if (pendingAdjustRef.current || fixLaterRef.current || attachRef.current) return
+      setAttach({
+        expenseId, file: f, url: URL.createObjectURL(f), quad: detected ?? INSET_QUAD, busy: false,
+      })
+    })()
+  }
+
+  /** Upload the pair, then point the row at it. Shared by the PDF path
+   *  (quad null, no dialog) and the adjuster's confirm. */
+  async function runAttach(expenseId: string, file: File, quad: Quad | null): Promise<boolean> {
+    const supabase = createClient()
+    const uploaded = await uploadReceiptPair(supabase, showId, file, () => {}, quad)
+    if ('error' in uploaded) {
+      setError(uploaded.error)
+      return false
+    }
+    const result = await attachExpenseReceipt(expenseId, uploaded.enhancedPath, uploaded.originalPath)
+    if ('error' in result) {
+      // The row never adopted the files, so they are orphans — same
+      // best-effort cleanup as a superseded pick.
+      removeSuperseded([uploaded.enhancedPath, uploaded.originalPath])
+      setError(result.error)
+      return false
+    }
+    router.refresh()
+    return true
+  }
+
+  async function confirmAttach(quad: Quad | null) {
+    if (!attach) return
+    const { expenseId, file, url } = attach
+    setAttach({ ...attach, busy: true })
+    const ok = await runAttach(expenseId, file, quad)
+    if (ok) {
+      URL.revokeObjectURL(url)
+      setAttach(null)
+    } else {
+      // Error is on screen; the dialog stays open so the corners survive a
+      // retry — same policy as confirmFixLater.
+      setAttach((a) => (a ? { ...a, busy: false } : a))
+    }
+  }
+
   function openReceipt(row: Row) {
     const path = row.receipt_path
     if (!path) return
@@ -1415,10 +1501,10 @@ export default function ExpenseLog({
       const blob = await response.blob()
       const file = new File([blob], 'original.jpg', { type: blob.type || 'image/jpeg' })
       const detected = await detectCorners(file).catch(() => null)
-      // Mirror of onPickFile's guard: if the single-add adjuster mounted
-      // while this fetch/detect ran, this tap loses rather than stacking a
+      // Mirror of onPickFile's guard: if another adjuster mounted while
+      // this fetch/detect ran, this tap loses rather than stacking a
       // second dialog on top of it.
-      if (pendingAdjustRef.current) return
+      if (pendingAdjustRef.current || attachRef.current) return
       setFixLater({
         expenseId: row.id, file, url: URL.createObjectURL(blob), quad: detected ?? INSET_QUAD, busy: false,
       })
@@ -1625,6 +1711,32 @@ export default function ExpenseLog({
         />
       )}
 
+      {/* The one hidden picker every row's "Add receipt" shares — which row
+          is attaching lives in attachTargetRef. */}
+      <input
+        ref={attachInputRef}
+        type="file"
+        accept="image/*,application/pdf"
+        className="sr-only"
+        aria-hidden="true"
+        tabIndex={-1}
+        onChange={(e) => onAttachPick(e.target.files)}
+      />
+
+      {attach && (
+        <CornerAdjuster
+          src={attach.url}
+          initialQuad={attach.quad}
+          confirmLabel="Save"
+          busy={attach.busy}
+          onConfirm={(quad) => void confirmAttach(quad)}
+          onCancel={() => {
+            URL.revokeObjectURL(attach.url)
+            setAttach(null)
+          }}
+        />
+      )}
+
       {viewer && (
         <div
           role="dialog"
@@ -1750,6 +1862,17 @@ export default function ExpenseLog({
                     nothing at all (Dan: "I understand what is happening"). */}
                 {!e.receipt_path && e.billable !== false && (
                   <span className="text-danger">needs a receipt</span>
+                )}
+                {!e.receipt_path && !e.receipt_original && (
+                  <button
+                    type="button"
+                    disabled={locked || pending}
+                    onClick={() => openAttach(e)}
+                    aria-label={`Add receipt: ${e.where_spent}`}
+                    className="underline hover:text-ink disabled:opacity-40"
+                  >
+                    Add receipt
+                  </button>
                 )}
                 <button
                   type="button"
