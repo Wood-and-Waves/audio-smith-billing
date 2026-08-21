@@ -79,20 +79,41 @@ function stopPropagation(e: React.MouseEvent) {
  *  a real <table>) — a slim receipt-icon rail, DATE, PAYEE (grows), CATEGORY,
  *  MEMO (grows, muted), OUTFLOW/INFLOW/BALANCE right-aligned and tabular, a
  *  slim cleared rail. Screenshot-derived widths (2026-08-21 plan). */
-// The desktop register's nine columns. Five are drag-resizable from their
-// header edges (widths in px, persisted per device like the theme); payee
-// and memo stay minmax(0,1fr) and absorb whatever the fixed columns give up;
-// the two icon rails never move. Double-click a grip to reset that column.
+// The desktop register's nine columns, resizable spreadsheet-style: a
+// visible grip sits at every internal boundary, and dragging one moves ONLY
+// that boundary — the column on its left and the column on its right trade
+// the pixels; nothing else shifts (Dan's first cut re-balanced both sides
+// of a column at once, which felt wrong immediately). Payee and memo are
+// elastic between drags — during a drag they're pinned to measured pixels,
+// and on release their final sizes become fr WEIGHTS again so the table
+// still stretches with the window. Widths persist per device like the
+// theme. Double-click a grip to reset the two columns it separates.
 const COLUMN_DEFAULTS = {
   date: 88, category: 240, outflow: 96, inflow: 96, balance: 112,
 } as const
 type ResizableColumn = keyof typeof COLUMN_DEFAULTS
+type FlexColumn = 'payee' | 'memo'
+type RegisterColumn = ResizableColumn | FlexColumn
 const COLUMN_MIN = 56
 const COLUMN_MAX = 480
+const FLEX_MIN = 80
 const COLUMNS_STORAGE_KEY = 'registerCols'
 
-function registerTemplate(w: Record<ResizableColumn, number>): string {
-  return `2.25rem ${w.date}px minmax(0,1fr) ${w.category}px minmax(0,1fr) ` +
+/** Each grip's boundary: the column to its left, the column to its right. */
+const BOUNDARIES = {
+  b1: ['date', 'payee'], b2: ['payee', 'category'], b3: ['category', 'memo'],
+  b4: ['memo', 'outflow'], b5: ['outflow', 'inflow'], b6: ['inflow', 'balance'],
+} as const
+type BoundaryId = keyof typeof BOUNDARIES
+
+function registerTemplate(
+  w: Record<ResizableColumn, number>,
+  flex: Record<FlexColumn, number>,
+  dragPx: Record<FlexColumn, number> | null,
+): string {
+  const payee = dragPx ? `${dragPx.payee}px` : `minmax(0,${flex.payee}fr)`
+  const memo = dragPx ? `${dragPx.memo}px` : `minmax(0,${flex.memo}fr)`
+  return `2.25rem ${w.date}px ${payee} ${w.category}px ${memo} ` +
     `${w.outflow}px ${w.inflow}px ${w.balance}px 2.25rem`
 }
 
@@ -448,8 +469,11 @@ export default function MoneyRegister({
   const truncated = transactions.length < totalCount
 
   // Per-device column widths. Server renders the defaults; stored widths
-  // apply in an effect (same SSR-safe shape as the theme setting).
+  // apply in an effect (same SSR-safe shape as the theme setting). Weights
+  // are the elastic pair's fr ratio, committed from real pixels on release.
   const [colWidths, setColWidths] = useState<Record<ResizableColumn, number>>({ ...COLUMN_DEFAULTS })
+  const [flexWeights, setFlexWeights] = useState<Record<FlexColumn, number>>({ payee: 1, memo: 1 })
+  const [dragPx, setDragPx] = useState<Record<FlexColumn, number> | null>(null)
   useEffect(() => {
     try {
       const raw = localStorage.getItem(COLUMNS_STORAGE_KEY)
@@ -463,49 +487,120 @@ export default function MoneyRegister({
         }
         return next
       })
+      const pw = parsed?.payeeW, mw = parsed?.memoW
+      if (typeof pw === 'number' && typeof mw === 'number' && pw > 0 && mw > 0 && pw < 1e4 && mw < 1e4) {
+        setFlexWeights({ payee: pw, memo: mw })
+      }
     } catch { /* storage disabled: defaults stand */ }
   }, [])
-  const gridTemplate = registerTemplate(colWidths)
-  const colDragRef = useRef<{ col: ResizableColumn; startX: number; startW: number } | null>(null)
+  const gridTemplate = registerTemplate(colWidths, flexWeights, dragPx)
 
-  function setColWidth(col: ResizableColumn, px: number) {
-    const clamped = Math.round(Math.min(COLUMN_MAX, Math.max(COLUMN_MIN, px)))
-    setColWidths((prev) => {
-      if (prev[col] === clamped) return prev
-      const next = { ...prev, [col]: clamped }
-      try { localStorage.setItem(COLUMNS_STORAGE_KEY, JSON.stringify(next)) } catch { /* device state only */ }
-      return next
-    })
+  const payeeHeadRef = useRef<HTMLSpanElement>(null)
+  const memoHeadRef = useRef<HTMLSpanElement>(null)
+  const colDragRef = useRef<{
+    boundary: BoundaryId; startX: number
+    startLeft: number; startRight: number
+    startFlex: Record<FlexColumn, number>
+  } | null>(null)
+
+  function persistColumns(w: Record<ResizableColumn, number>, flex: Record<FlexColumn, number>) {
+    try {
+      localStorage.setItem(COLUMNS_STORAGE_KEY,
+        JSON.stringify({ ...w, payeeW: Math.round(flex.payee), memoW: Math.round(flex.memo) }))
+    } catch { /* device state only */ }
   }
 
-  /** The drag grip on a resizable header cell's right edge. Pointer capture
-   *  is the same machinery CornerAdjuster's handles use. */
-  function columnGrip(col: ResizableColumn) {
+  const isFlex = (c: RegisterColumn): c is FlexColumn => c === 'payee' || c === 'memo'
+  const floorOf = (c: RegisterColumn) => (isFlex(c) ? FLEX_MIN : COLUMN_MIN)
+  const ceilOf = (c: RegisterColumn) => (isFlex(c) ? 10000 : COLUMN_MAX)
+
+  function applyBoundary(boundary: BoundaryId, rawDx: number) {
+    const d = colDragRef.current
+    if (!d || d.boundary !== boundary) return
+    const [left, right] = BOUNDARIES[boundary]
+    // The grabbed boundary is the ONLY thing that moves: left gains what
+    // right loses (or vice versa), clamped so neither passes its floor/cap.
+    const dx = Math.round(Math.min(
+      Math.min(ceilOf(left) - d.startLeft, d.startRight - floorOf(right)),
+      Math.max(rawDx, Math.max(floorOf(left) - d.startLeft, d.startRight - ceilOf(right))),
+    ))
+    const leftW = d.startLeft + dx
+    const rightW = d.startRight - dx
+    const nextFlex = { ...d.startFlex }
+    const nextFixed: Partial<Record<ResizableColumn, number>> = {}
+    if (isFlex(left)) nextFlex[left] = leftW; else nextFixed[left] = leftW
+    if (isFlex(right)) nextFlex[right] = rightW; else nextFixed[right] = rightW
+    setDragPx(nextFlex)
+    if (Object.keys(nextFixed).length) setColWidths((prev) => ({ ...prev, ...nextFixed }))
+  }
+
+  function endColumnDrag() {
+    colDragRef.current = null
+    document.body.style.cursor = ''
+    // Closure state is current here: every drag move re-rendered, so this
+    // handler was recreated with the latest dragPx/colWidths. The elastic
+    // pair's final pixels become their fr weights — the layout is identical
+    // the instant elasticity returns, and window resizes keep sharing space
+    // at the new ratio.
+    if (dragPx) {
+      setFlexWeights(dragPx)
+      persistColumns(colWidths, dragPx)
+    }
+    setDragPx(null)
+  }
+
+  /** A visible divider at one column boundary; drag it, and only it moves. */
+  function columnGrip(boundary: BoundaryId, side: 'left' | 'right') {
     return (
       <span
         aria-hidden
         onPointerDown={(e) => {
           e.preventDefault()
+          e.stopPropagation()
+          const [left, right] = BOUNDARIES[boundary]
+          const payeeW = payeeHeadRef.current?.getBoundingClientRect().width ?? 200
+          const memoW = memoHeadRef.current?.getBoundingClientRect().width ?? 200
+          const flexNow = { payee: payeeW, memo: memoW }
+          const widthOf = (c: RegisterColumn) => (isFlex(c) ? flexNow[c] : colWidths[c])
+          colDragRef.current = {
+            boundary, startX: e.clientX,
+            startLeft: widthOf(left), startRight: widthOf(right),
+            startFlex: flexNow,
+          }
+          setDragPx(flexNow)
+          document.body.style.cursor = 'col-resize'
           e.currentTarget.setPointerCapture(e.pointerId)
-          colDragRef.current = { col, startX: e.clientX, startW: colWidths[col] }
         }}
         onPointerMove={(e) => {
+          if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
           const d = colDragRef.current
-          if (!d || d.col !== col || !e.currentTarget.hasPointerCapture(e.pointerId)) return
-          setColWidth(col, d.startW + (e.clientX - d.startX))
+          if (d) applyBoundary(boundary, e.clientX - d.startX)
         }}
         onPointerUp={(e) => {
           if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
-          colDragRef.current = null
+          endColumnDrag()
         }}
         onPointerCancel={(e) => {
           if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
-          colDragRef.current = null
+          endColumnDrag()
         }}
-        onDoubleClick={() => setColWidth(col, COLUMN_DEFAULTS[col])}
-        className="absolute -right-1.5 top-0 bottom-0 w-3 cursor-col-resize touch-none
-                   hover:bg-line/60 rounded-pill"
-      />
+        onDoubleClick={() => {
+          const [left, right] = BOUNDARIES[boundary]
+          const w = { ...colWidths }
+          const flex = { ...flexWeights }
+          for (const c of [left, right]) {
+            if (isFlex(c)) flex[c] = 1
+            else w[c] = COLUMN_DEFAULTS[c]
+          }
+          setColWidths(w)
+          setFlexWeights(flex)
+          persistColumns(w, flex)
+        }}
+        className={`group absolute ${side === 'right' ? '-right-1.5' : '-left-1.5'} top-0 bottom-0 w-3
+                   cursor-col-resize touch-none flex justify-center`}
+      >
+        <span className="h-full w-px bg-line group-hover:w-0.5 group-hover:bg-accent" />
+      </span>
     )
   }
 
@@ -1422,13 +1517,17 @@ export default function MoneyRegister({
               className="grid gap-x-2 pl-3 -ml-3 pr-3 pb-2 mb-1 border-b border-line select-none"
             >
               <span aria-hidden />
-              <span className="eyebrow relative">Date{columnGrip('date')}</span>
-              <span className="eyebrow">Payee</span>
-              <span className="eyebrow relative">Category{columnGrip('category')}</span>
-              <span className="eyebrow">Memo</span>
-              <span className="eyebrow text-right relative">Outflow{columnGrip('outflow')}</span>
-              <span className="eyebrow text-right relative">Inflow{columnGrip('inflow')}</span>
-              <span className="eyebrow text-right relative">Balance{columnGrip('balance')}</span>
+              <span className="eyebrow relative">Date{columnGrip('b1', 'right')}</span>
+              <span ref={payeeHeadRef} className="eyebrow">Payee</span>
+              <span className="eyebrow relative">
+                Category{columnGrip('b2', 'left')}{columnGrip('b3', 'right')}
+              </span>
+              <span ref={memoHeadRef} className="eyebrow">Memo</span>
+              <span className="eyebrow text-right relative">
+                Outflow{columnGrip('b4', 'left')}{columnGrip('b5', 'right')}
+              </span>
+              <span className="eyebrow text-right relative">Inflow{columnGrip('b6', 'right')}</span>
+              <span className="eyebrow text-right">Balance</span>
               <span aria-hidden />
             </div>
             {transactions.map(renderDesktopRow)}
