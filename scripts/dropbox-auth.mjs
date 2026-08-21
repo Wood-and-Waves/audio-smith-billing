@@ -116,7 +116,36 @@ async function authFlow() {
   const probe = await probeUpload(json.access_token)
   if (!probe.ok) {
     console.log(`\nThe test upload failed — not saving. Dropbox said: ${probe.detail}`)
-    console.log('Fix whatever it names, then run this again with a fresh code.')
+    console.log('\nDiagnostics (no secrets):')
+    // Which KIND of token did Dropbox issue? A team-scoped app's tokens are
+    // refused on user endpoints, which would explain every probe so far.
+    console.log('  token fields:', JSON.stringify({
+      token_type: json.token_type ?? null,
+      scope: json.scope ?? null,
+      has_account_id: 'account_id' in json,
+      has_team_id: 'team_id' in json,
+      has_uid: 'uid' in json,
+    }))
+    for (const [label, host, fn, body] of [
+      ['get_current_account', 'api.dropboxapi.com', '2/users/get_current_account', undefined],
+      ['list_folder', 'api.dropboxapi.com', '2/files/list_folder', JSON.stringify({ path: '' })],
+    ]) {
+      try {
+        const r = await fetch(`https://${host}/${fn}`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${json.access_token}`,
+            ...(body ? { 'Content-Type': 'application/json' } : {}),
+          },
+          ...(body ? { body } : {}),
+        })
+        const t = await r.text().catch(() => '')
+        console.log(`  ${label}: HTTP ${r.status} ${t.slice(0, 250).replace(/\s+/g, ' ')}`)
+      } catch (e) {
+        console.log(`  ${label}: threw ${e instanceof Error ? e.message : e}`)
+      }
+    }
+    console.log('\nSend the lines above back and the cause will be nameable.')
     process.exit(1)
   }
 
