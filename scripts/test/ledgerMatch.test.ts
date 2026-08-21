@@ -14,7 +14,7 @@ const row = (over: Partial<BankRow> = {}): BankRow => ({
 
 const invoice = (over: Partial<CandidateInvoice> = {}): CandidateInvoice => ({
   id: 'i1', number: 1001, client_id: 'c1', client_name: 'Clinique', total_cents: 240000,
-  sent_at: '2026-08-01T00:00:00Z', status: 'sent', linked: false, ...over,
+  sent_at: '2026-08-01T00:00:00Z', paid_at: null, status: 'sent', linked: false, ...over,
 })
 
 const dismissal = (over: Partial<Dismissal> = {}): Dismissal => ({
@@ -33,7 +33,7 @@ const expenseFixture = (over: Partial<CandidateExpense> = {}): CandidateExpense 
 
 test('an exact-amount deposit on or after the send date proposes the invoice', () => {
   const result = proposeMatches({ rows: [row()], invoices: [invoice()], expenses: [], dismissed: [] })
-  assert.deepEqual(result.income, [{ transactionId: 't1', invoiceIds: ['i1'], confidence: 'high' }])
+  assert.deepEqual(result.income, [{ transactionId: 't1', invoiceIds: ['i1'], confidence: 'high', payeeAgrees: true }])
   assert.deepEqual(result.expense, [])
 })
 
@@ -49,10 +49,55 @@ test('a deposit dated before sent_at proposes nothing — money cannot land befo
 test('an invoice already marked paid by hand is still proposed — the deposit still needs its date', () => {
   const result = proposeMatches({
     rows: [row()],
-    invoices: [invoice({ status: 'paid' })],
+    invoices: [invoice({ status: 'paid', paid_at: '2026-08-08' })],
     expenses: [], dismissed: [],
   })
-  assert.deepEqual(result.income, [{ transactionId: 't1', invoiceIds: ['i1'], confidence: 'high' }])
+  assert.deepEqual(result.income, [{ transactionId: 't1', invoiceIds: ['i1'], confidence: 'high', payeeAgrees: true }])
+})
+
+test('a paid invoice within forty-five days of the deposit is still offered — the mark-paid flow', () => {
+  const result = proposeMatches({
+    rows: [row({ date: '2026-08-10' })],
+    invoices: [invoice({ status: 'paid', sent_at: '2026-07-01T00:00:00Z', paid_at: '2026-08-01' })],
+    expenses: [], dismissed: [],
+  })
+  assert.deepEqual(result.income, [{ transactionId: 't1', invoiceIds: ['i1'], confidence: 'high', payeeAgrees: true }])
+})
+
+test('a paid invoice with no paid date is never offered — history is not a candidate', () => {
+  const result = proposeMatches({
+    rows: [row()],
+    invoices: [invoice({ status: 'paid', paid_at: null })],
+    expenses: [], dismissed: [],
+  })
+  assert.deepEqual(result.income, [])
+})
+
+test('a paid invoice forty-six days out is never offered — the boundary pair (45 in / 46 out)', () => {
+  // Day-of-year math (2026 is not a leap year): 2026-06-26 -> 2026-08-10 is
+  // exactly 45 days; 2026-06-25 -> 2026-08-10 is 46.
+  const fortyFive = proposeMatches({
+    rows: [row({ id: 't1', date: '2026-08-10' })],
+    invoices: [invoice({ id: 'i1', status: 'paid', sent_at: '2026-06-01T00:00:00Z', paid_at: '2026-06-26' })],
+    expenses: [], dismissed: [],
+  })
+  assert.deepEqual(fortyFive.income, [{ transactionId: 't1', invoiceIds: ['i1'], confidence: 'high', payeeAgrees: true }])
+
+  const fortySix = proposeMatches({
+    rows: [row({ id: 't2', date: '2026-08-10' })],
+    invoices: [invoice({ id: 'i2', status: 'paid', sent_at: '2026-06-01T00:00:00Z', paid_at: '2026-06-25' })],
+    expenses: [], dismissed: [],
+  })
+  assert.deepEqual(fortySix.income, [])
+})
+
+test('a sent invoice years old is still offered — unpaid debts never age out', () => {
+  const result = proposeMatches({
+    rows: [row({ date: '2026-08-10' })],
+    invoices: [invoice({ status: 'sent', sent_at: '2020-01-01T00:00:00Z' })],
+    expenses: [], dismissed: [],
+  })
+  assert.deepEqual(result.income, [{ transactionId: 't1', invoiceIds: ['i1'], confidence: 'high', payeeAgrees: true }])
 })
 
 test('a linked invoice is never proposed again', () => {
@@ -78,7 +123,7 @@ test('two same-client invoices summing to one deposit propose together — the S
     ],
     expenses: [], dismissed: [],
   })
-  assert.deepEqual(result.income, [{ transactionId: 't1', invoiceIds: ['i1', 'i2'], confidence: 'low' }])
+  assert.deepEqual(result.income, [{ transactionId: 't1', invoiceIds: ['i1', 'i2'], confidence: 'low', payeeAgrees: true }])
 })
 
 test('sum proposals never mix clients', () => {
@@ -117,8 +162,8 @@ test('two identical-value invoices both propose at low confidence — the matche
     expenses: [], dismissed: [],
   })
   assert.deepEqual(result.income, [
-    { transactionId: 't1', invoiceIds: ['i1'], confidence: 'low' },
-    { transactionId: 't1', invoiceIds: ['i2'], confidence: 'low' },
+    { transactionId: 't1', invoiceIds: ['i1'], confidence: 'low', payeeAgrees: true },
+    { transactionId: 't1', invoiceIds: ['i2'], confidence: 'low', payeeAgrees: true },
   ])
 })
 
@@ -137,7 +182,7 @@ test('payee similarity raises confidence but never creates a match', () => {
     invoices: [invoice({ id: 'i2', client_name: 'Clinique', total_cents: 240000 })],
     expenses: [], dismissed: [],
   })
-  assert.deepEqual(similarRight.income, [{ transactionId: 't2', invoiceIds: ['i2'], confidence: 'high' }])
+  assert.deepEqual(similarRight.income, [{ transactionId: 't2', invoiceIds: ['i2'], confidence: 'high', payeeAgrees: true }])
 
   // dissimilar payee + right amount -> low
   const dissimilarRight = proposeMatches({
@@ -145,7 +190,7 @@ test('payee similarity raises confidence but never creates a match', () => {
     invoices: [invoice({ id: 'i3', client_name: 'Clinique', total_cents: 240000 })],
     expenses: [], dismissed: [],
   })
-  assert.deepEqual(dissimilarRight.income, [{ transactionId: 't3', invoiceIds: ['i3'], confidence: 'low' }])
+  assert.deepEqual(dissimilarRight.income, [{ transactionId: 't3', invoiceIds: ['i3'], confidence: 'low', payeeAgrees: false }])
 })
 
 test('a dismissed pair suppresses its proposal', () => {
@@ -196,8 +241,8 @@ test('an invoice claimed by two different deposits keeps both proposals low', ()
     expenses: [], dismissed: [],
   })
   assert.deepEqual(result.income, [
-    { transactionId: 't1', invoiceIds: ['i1'], confidence: 'low' },
-    { transactionId: 't2', invoiceIds: ['i1'], confidence: 'low' },
+    { transactionId: 't1', invoiceIds: ['i1'], confidence: 'low', payeeAgrees: true },
+    { transactionId: 't2', invoiceIds: ['i1'], confidence: 'low', payeeAgrees: true },
   ])
 })
 
@@ -212,7 +257,7 @@ test('sum invoiceIds order ascending by sent_at then id when dates tie', () => {
     ],
     expenses: [], dismissed: [],
   })
-  assert.deepEqual(result.income, [{ transactionId: 't1', invoiceIds: ['i1', 'i2'], confidence: 'low' }])
+  assert.deepEqual(result.income, [{ transactionId: 't1', invoiceIds: ['i1', 'i2'], confidence: 'low', payeeAgrees: true }])
 })
 
 test('a two-letter shared token does not count toward payee similarity', () => {
@@ -221,7 +266,7 @@ test('a two-letter shared token does not count toward payee similarity', () => {
     invoices: [invoice({ client_name: 'AB Widgets' })],
     expenses: [], dismissed: [],
   })
-  assert.deepEqual(result.income, [{ transactionId: 't1', invoiceIds: ['i1'], confidence: 'low' }])
+  assert.deepEqual(result.income, [{ transactionId: 't1', invoiceIds: ['i1'], confidence: 'low', payeeAgrees: false }])
 })
 
 test('a client name with punctuation still reaches high confidence', () => {
@@ -230,7 +275,7 @@ test('a client name with punctuation still reaches high confidence', () => {
     invoices: [invoice({ client_name: 'Streamline, Inc.' })],
     expenses: [], dismissed: [],
   })
-  assert.deepEqual(result.income, [{ transactionId: 't1', invoiceIds: ['i1'], confidence: 'high' }])
+  assert.deepEqual(result.income, [{ transactionId: 't1', invoiceIds: ['i1'], confidence: 'high', payeeAgrees: true }])
 })
 
 test('proposals are sorted by transaction date ascending then transaction id', () => {
@@ -257,7 +302,7 @@ test('a deposit dated exactly on the send date proposes the invoice — the boun
     invoices: [invoice({ sent_at: '2026-08-01T00:00:00Z' })],
     expenses: [], dismissed: [],
   })
-  assert.deepEqual(single.income, [{ transactionId: 't1', invoiceIds: ['i1'], confidence: 'high' }])
+  assert.deepEqual(single.income, [{ transactionId: 't1', invoiceIds: ['i1'], confidence: 'high', payeeAgrees: true }])
 
   // Sum eligibility: an invoice whose sent_at date equals the row's date is
   // still eligible to combine — the same inclusive boundary, not an
@@ -270,7 +315,7 @@ test('a deposit dated exactly on the send date proposes the invoice — the boun
     ],
     expenses: [], dismissed: [],
   })
-  assert.deepEqual(sum.income, [{ transactionId: 't1', invoiceIds: ['i1', 'i2'], confidence: 'low' }])
+  assert.deepEqual(sum.income, [{ transactionId: 't1', invoiceIds: ['i1', 'i2'], confidence: 'low', payeeAgrees: true }])
 })
 
 test('exactly three sum combinations still propose — the cap is over three', () => {
@@ -318,6 +363,43 @@ test('a dismissed exact single does not fall back to sum matching', () => {
   assert.deepEqual(result.income, [])
 })
 
+test('payeeAgrees surfaces on proposals without changing confidence', () => {
+  // right amount + dissimilar payee -> still proposed, low, payeeAgrees false
+  const dissimilar = proposeMatches({
+    rows: [row({ id: 't1', payee: 'RANDOM XYZ CORP', amount_cents: 240000 })],
+    invoices: [invoice({ id: 'i1', client_name: 'Clinique', total_cents: 240000 })],
+    expenses: [], dismissed: [],
+  })
+  assert.deepEqual(dissimilar.income, [{ transactionId: 't1', invoiceIds: ['i1'], confidence: 'low', payeeAgrees: false }])
+
+  // right amount + similar payee -> payeeAgrees true (confidence still just reflects unambiguity)
+  const similar = proposeMatches({
+    rows: [row({ id: 't2', payee: 'CLINIQUE ACH', amount_cents: 240000 })],
+    invoices: [invoice({ id: 'i2', client_name: 'Clinique', total_cents: 240000 })],
+    expenses: [], dismissed: [],
+  })
+  assert.deepEqual(similar.income, [{ transactionId: 't2', invoiceIds: ['i2'], confidence: 'high', payeeAgrees: true }])
+})
+
+test('tied twins order the payee-agreeing card first', () => {
+  // Two equal-value invoices for the same deposit tie on date and
+  // transactionId (both are 't1') — the matcher never guesses between them,
+  // so both stay 'low', but the one whose client name the payee text agrees
+  // with sorts first.
+  const result = proposeMatches({
+    rows: [row({ amount_cents: 240000, payee: 'CLINIQUE ACH' })],
+    invoices: [
+      invoice({ id: 'iFar', client_id: 'c1', client_name: 'Random Corp', total_cents: 240000, sent_at: '2026-08-01T00:00:00Z' }),
+      invoice({ id: 'iNear', client_id: 'c2', client_name: 'Clinique', total_cents: 240000, sent_at: '2026-08-01T00:00:00Z' }),
+    ],
+    expenses: [], dismissed: [],
+  })
+  assert.deepEqual(result.income, [
+    { transactionId: 't1', invoiceIds: ['iNear'], confidence: 'low', payeeAgrees: true },
+    { transactionId: 't1', invoiceIds: ['iFar'], confidence: 'low', payeeAgrees: false },
+  ])
+})
+
 // ---------------------------------------------------------------------------
 // Expense half: the mirror image of income. Income sums combine multiple
 // invoices onto one deposit; expense sums combine multiple charges onto one
@@ -331,7 +413,7 @@ test('a charge matching an expense within ten days proposes it', () => {
     expenses: [expenseFixture({ spent_on: '2026-08-10', amount_cents: 5000 })],
     dismissed: [],
   })
-  assert.deepEqual(result.expense, [{ transactionIds: ['x1'], expenseId: 'e1', confidence: 'high' }])
+  assert.deepEqual(result.expense, [{ transactionIds: ['x1'], expenseId: 'e1', confidence: 'high', payeeAgrees: true }])
 })
 
 test('eleven days out proposes nothing — the boundary pair (10 days matches / 11 does not)', () => {
@@ -363,7 +445,7 @@ test('the Uber Eats case — order plus tip sum to one expense', () => {
     expenses: [expenseFixture({ id: 'e1', spent_on: '2026-08-10', amount_cents: 4025, where_spent: 'Uber Eats' })],
     dismissed: [],
   })
-  assert.deepEqual(result.expense, [{ transactionIds: ['x1', 'x2'], expenseId: 'e1', confidence: 'low' }])
+  assert.deepEqual(result.expense, [{ transactionIds: ['x1', 'x2'], expenseId: 'e1', confidence: 'low', payeeAgrees: true }])
 })
 
 test('rows with different leading tokens never group', () => {
@@ -403,7 +485,7 @@ test('a group is not proposed when a single row matches exactly', () => {
     expenses: [expenseFixture({ id: 'e1', spent_on: '2026-08-10', amount_cents: 5000 })],
     dismissed: [],
   })
-  assert.deepEqual(result.expense, [{ transactionIds: ['x1'], expenseId: 'e1', confidence: 'low' }])
+  assert.deepEqual(result.expense, [{ transactionIds: ['x1'], expenseId: 'e1', confidence: 'low', payeeAgrees: false }])
 })
 
 test('two identical-value expenses both propose at low confidence', () => {
@@ -417,8 +499,8 @@ test('two identical-value expenses both propose at low confidence', () => {
     dismissed: [],
   })
   assert.deepEqual(result.expense, [
-    { transactionIds: ['x1'], expenseId: 'e1', confidence: 'low' },
-    { transactionIds: ['x1'], expenseId: 'e2', confidence: 'low' },
+    { transactionIds: ['x1'], expenseId: 'e1', confidence: 'low', payeeAgrees: true },
+    { transactionIds: ['x1'], expenseId: 'e2', confidence: 'low', payeeAgrees: true },
   ])
 })
 
@@ -448,7 +530,7 @@ test('a dismissed single suppresses only that proposal, not unrelated ones', () 
     ],
     dismissed: [{ transaction_id: 'x1', invoice_id: null, expense_id: 'e1' }],
   })
-  assert.deepEqual(result.expense, [{ transactionIds: ['x2'], expenseId: 'e2', confidence: 'high' }])
+  assert.deepEqual(result.expense, [{ transactionIds: ['x2'], expenseId: 'e2', confidence: 'high', payeeAgrees: true }])
 })
 
 test('a linked expense is never proposed again', () => {
@@ -497,7 +579,7 @@ test('a three-row sum still proposes when every pair is within three days and wi
     expenses: [expenseFixture({ id: 'e1', spent_on: '2026-08-10', amount_cents: 5000 })],
     dismissed: [],
   })
-  assert.deepEqual(result.expense, [{ transactionIds: ['x1', 'x2', 'x3'], expenseId: 'e1', confidence: 'low' }])
+  assert.deepEqual(result.expense, [{ transactionIds: ['x1', 'x2', 'x3'], expenseId: 'e1', confidence: 'low', payeeAgrees: false }])
 })
 
 test('expense proposals are sorted by first transaction date ascending then transaction id', () => {
@@ -529,7 +611,7 @@ test('a charge dated before the expense day still matches — the window is symm
     expenses: [expenseFixture({ id: 'e1', spent_on: '2026-08-10', amount_cents: 5000 })],
     dismissed: [],
   })
-  assert.deepEqual(eightDaysBefore.expense, [{ transactionIds: ['x1'], expenseId: 'e1', confidence: 'high' }])
+  assert.deepEqual(eightDaysBefore.expense, [{ transactionIds: ['x1'], expenseId: 'e1', confidence: 'high', payeeAgrees: true }])
 
   const elevenDaysBefore = proposeMatches({
     rows: [expenseRow({ id: 'x2', date: '2026-07-30', amount_cents: -5000 })],
@@ -567,7 +649,7 @@ test('rows exactly three days apart still group — the pairwise boundary is inc
     expenses: [expenseFixture({ id: 'e1', spent_on: '2026-08-10', amount_cents: 5000 })],
     dismissed: [],
   })
-  assert.deepEqual(result.expense, [{ transactionIds: ['x1', 'x2'], expenseId: 'e1', confidence: 'low' }])
+  assert.deepEqual(result.expense, [{ transactionIds: ['x1', 'x2'], expenseId: 'e1', confidence: 'low', payeeAgrees: false }])
 })
 
 test('an unambiguous single without where_spent token overlap stays low', () => {
@@ -577,5 +659,23 @@ test('an unambiguous single without where_spent token overlap stays low', () => 
     expenses: [expenseFixture({ id: 'e1', spent_on: '2026-08-10', amount_cents: 5000, where_spent: 'Acme Supply' })],
     dismissed: [],
   })
-  assert.deepEqual(result.expense, [{ transactionIds: ['x1'], expenseId: 'e1', confidence: 'low' }])
+  assert.deepEqual(result.expense, [{ transactionIds: ['x1'], expenseId: 'e1', confidence: 'low', payeeAgrees: false }])
+})
+
+test('payeeAgrees surfaces on an expense proposal — where_spent overlap true/false', () => {
+  const dissimilar = proposeMatches({
+    rows: [expenseRow({ id: 'x1', payee: 'RANDOM XYZ CORP', amount_cents: -5000 })],
+    invoices: [],
+    expenses: [expenseFixture({ id: 'e1', where_spent: 'Acme Supply', amount_cents: 5000 })],
+    dismissed: [],
+  })
+  assert.deepEqual(dissimilar.expense, [{ transactionIds: ['x1'], expenseId: 'e1', confidence: 'low', payeeAgrees: false }])
+
+  const similar = proposeMatches({
+    rows: [expenseRow({ id: 'x2', payee: 'ACME SUPPLY', amount_cents: -5000 })],
+    invoices: [],
+    expenses: [expenseFixture({ id: 'e2', where_spent: 'Acme Supply', amount_cents: 5000 })],
+    dismissed: [],
+  })
+  assert.deepEqual(similar.expense, [{ transactionIds: ['x2'], expenseId: 'e2', confidence: 'high', payeeAgrees: true }])
 })

@@ -131,6 +131,7 @@ type RawCandidateInvoiceRow = {
   client_id: string
   total_cents: number
   sent_at: string | null
+  paid_at: string | null
   status: string
   // Many-to-one FK (invoices.client_id -> clients.id) embeds as a single
   // object at runtime, same cast app/money/actions.ts's BridgeInvoiceRow uses
@@ -151,7 +152,7 @@ async function fetchAllCandidateInvoices(
   for (;;) {
     const { data, error } = await supabase
       .from('invoices')
-      .select('id, number, client_id, total_cents, sent_at, status, clients(name)')
+      .select('id, number, client_id, total_cents, sent_at, paid_at, status, clients(name)')
       .in('status', ['sent', 'paid'])
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
@@ -292,6 +293,7 @@ export default async function MoneyMatchesPage() {
     client_name: i.clients?.name ?? '',
     total_cents: i.total_cents,
     sent_at: i.sent_at,
+    paid_at: i.paid_at,
     status: i.status as 'sent' | 'paid',
     linked: linkedInvoiceIds.has(i.id),
   }))
