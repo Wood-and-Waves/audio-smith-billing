@@ -184,5 +184,27 @@ function pushToVercel() {
   console.log('(Or push any commit — every deploy reads the fresh env.)')
 }
 
+// --probe: bisect tool. The console's "Generate access token" button mints a
+// token with no OAuth page involved — if an upload works with THAT, the app
+// and the account are healthy and the fault is in the authorize flow's
+// browser session; if it fails the same way, the account's API access is the
+// problem and the fix is a Dropbox support ticket, not more apps.
+async function probeFlow() {
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  const token = (await rl.question(
+    'Paste a token from the app console (Settings tab -> OAuth 2 -> Generate): ',
+  )).trim()
+  rl.close()
+  if (!token) { console.log('Nothing pasted.'); process.exit(1) }
+  const probe = await probeUpload(token)
+  if (probe.ok) {
+    console.log('\nUPLOAD WORKED. The app and account are fine — the authorize flow is the problem.')
+  } else {
+    console.log(`\nUpload failed the same way: ${probe.detail}`)
+    console.log('That means the ACCOUNT\'s API access is restricted — Dropbox support territory.')
+  }
+}
+
 if (process.argv.includes('--push')) pushToVercel()
+else if (process.argv.includes('--probe')) await probeFlow()
 else await authFlow()
