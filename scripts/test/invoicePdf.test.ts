@@ -368,6 +368,32 @@ test('a receipt image is height-capped so it cannot push itself onto a second pa
     'and must fit inside a LETTER page less its 40pt padding, with room for the caption')
 })
 
+test('a PDF-original expense gets no thumbnail page — its original rides the end', () => {
+  // With both, the first invoice that carried a 3-page Uber receipt showed a
+  // fuzzy rasterized twin of page 1 in the middle AND the crisp original at
+  // the end. The itemisation line stays either way; a photo receipt (no PDF
+  // original) keeps its page — that image is all it has.
+  const backup = {
+    show_hours: false,
+    shows: [],
+    total_net: 0, total_st: 0, total_ot: 0, total_dt: 0,
+    expenses: [
+      { category: 'meals' as const, where_spent: 'Uber Eats', amount_cents: 4200,
+        spent_on: '2026-08-18', receiptDataUri: 'data:image/jpeg;base64,AAAA',
+        receipt_original: 'u/s/x-original.pdf' },
+      { category: 'other' as const, where_spent: 'Menards', amount_cents: 4151,
+        spent_on: '2026-08-12', receiptDataUri: 'data:image/jpeg;base64,BBBB',
+        receipt_original: 'u/s/y-original.jpg' },
+    ],
+  }
+  const strings = textOf(buildInvoicePdf(PARTS, { ...INVOICE, backup }, ASSETS))
+  const captions = strings.filter((t) => typeof t === 'string' && t.includes(' · '))
+  assert.ok(captions.some((t) => (t as string).includes('Menards')),
+    'the photo receipt keeps its full-page caption')
+  assert.ok(!captions.some((t) => (t as string).includes('Uber Eats')),
+    'the PDF-original receipt renders no thumbnail page of its own')
+})
+
 test('the hours page prints only when the client opted in', () => {
   const withHours: DocumentData = {
     ...INVOICE,

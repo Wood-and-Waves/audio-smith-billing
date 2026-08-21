@@ -231,9 +231,13 @@ export function buildInvoicePdf(parts: PdfParts, data: DocumentData, assets: Pdf
     ),
 
     // One page per receipt: a receipt scaled to fit a shared page is unreadable,
-    // and unreadable backup is the same as none.
+    // and unreadable backup is the same as none. A PDF-original expense skips
+    // its page entirely — the original rides the end of this document at full
+    // fidelity (see lib/mergePdfAppendices.ts), and a fuzzy rasterized twin
+    // of it in the middle is clutter, not backup (Dan, on the first invoice
+    // that carried both).
     ...expenses
-      .filter((e) => e.receiptDataUri)
+      .filter((e) => e.receiptDataUri && !(e.receipt_original ?? '').endsWith('.pdf'))
       .map((e) =>
         h(Page, { size: 'LETTER', style: s.receiptPage },
           T(s.receiptCaption,

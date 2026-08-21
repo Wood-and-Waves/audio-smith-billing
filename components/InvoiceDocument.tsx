@@ -96,6 +96,9 @@ export type DocumentData = {
        * built server-side from its own fetch, never from this field.
        */
       receiptOriginalPdfUrl?: string | null
+      // The storage path of the untouched original — the builder keys the
+      // thumbnail-page skip on it ending '.pdf'. Never rendered.
+      receipt_original?: string | null
     }[]
   }
 }
