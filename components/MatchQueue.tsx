@@ -4,17 +4,33 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatUSD } from '@/lib/money'
 import { formatDateShort } from '@/lib/dates'
-import { acceptIncomeMatch, acceptExpenseMatch, dismissMatch } from '@/app/money/actions'
+import { acceptIncomeMatch, acceptExpenseMatch, dismissMatch, restoreDismissal } from '@/app/money/actions'
 
 export type IncomeCard = {
   txn: { id: string; date: string; amountCents: number; payee: string }
-  invoices: { id: string; number: number; clientName: string; totalCents: number; status: 'sent' | 'paid' }[]
+  invoices: {
+    id: string; number: number; clientName: string; totalCents: number; status: 'sent' | 'paid'
+    sent: string // sent_at's YYYY-MM-DD prefix — display only, next to the invoice on the card
+  }[]
   confidence: 'high' | 'low'
+  payeeAgrees: boolean // from the proposal — drives the "Payee matches" chip
 }
 export type ExpenseCard = {
   txns: { id: string; date: string; amountCents: number; payee: string }[]
   expense: { id: string; amountCents: number; spentOn: string; whereSpent: string; showName: string }
   confidence: 'high' | 'low'
+  payeeAgrees: boolean // from the proposal — drives the "Payee matches" chip
+}
+
+// A restorable row in the bottom "Dismissed" section — one dismissal, its
+// bank side, and a page-built display string for whatever it was dismissed
+// against (an invoice or an expense; the page already knows which and
+// collapses it to one string since MatchQueue only ever renders it, never
+// decides what it means).
+export type DismissedCard = {
+  id: string // ledger_match_dismissals row id — what restoreDismissal takes
+  txn: { date: string; payee: string; amountCents: number }
+  target: string // "#391 · Clinique · $2,400.00" or "Uber Eats · SHOW · $40.25"
 }
 
 // A card has no id of its own, and one bank row (or one expense) can
@@ -69,6 +85,32 @@ function DismissButton({ onClick, disabled }: { onClick: () => void; disabled: b
   )
 }
 
+/** Same muted underline idiom as DismissButton — its undo, in the Dismissed section. */
+function RestoreButton({ onClick, disabled }: { onClick: () => void; disabled: boolean }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
+    >
+      Restore
+    </button>
+  )
+}
+
+/** Small muted-surface chip, accent text — the register's show/invoice chip
+ *  idiom (see MoneyRegister.tsx), reused here for the one signal worth
+ *  calling out on a card: the bank row's payee shares a token with the
+ *  invoice client / expense where_spent. */
+function PayeeAgreesChip() {
+  return (
+    <span className="text-[11px] font-bold uppercase tracking-wider text-accent bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
+      Payee matches
+    </span>
+  )
+}
+
 /**
  * The `/money/matches` review queue: every proposal lib/ledgerMatch.ts's
  * proposeMatches came up with, for Dan to Accept or Dismiss by hand — never
@@ -81,9 +123,18 @@ function DismissButton({ onClick, disabled }: { onClick: () => void; disabled: b
  * sections get separate accept-all controls rather than one combined button:
  * income and expense accepts are different server actions with different
  * shapes, so a single sequential loop over both would have to branch on
- * every iteration anyway.
+ * every iteration anyway. A third, plain "Dismissed" section sits below
+ * both — every pair Dan already dismissed, greyed out, each with its own
+ * Restore control (restoreDismissal) since dismissMatch is otherwise a
+ * one-way door. Card order within Deposits/Charges comes straight from
+ * proposeMatches (payee-agreeing twins sort first) and is never re-sorted
+ * here.
  */
-export default function MatchQueue({ income, expense }: { income: IncomeCard[]; expense: ExpenseCard[] }) {
+export default function MatchQueue({ income, expense, dismissed }: {
+  income: IncomeCard[]
+  expense: ExpenseCard[]
+  dismissed: DismissedCard[]
+}) {
   const router = useRouter()
   const [pending, start] = useTransition()
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -178,7 +229,19 @@ export default function MatchQueue({ income, expense }: { income: IncomeCard[]; 
     })
   }
 
-  if (income.length === 0 && expense.length === 0) {
+  // Keyed by the dismissal's own id (unique on its own — unlike a card,
+  // which spans two rows and needs incomeKey/expenseKey to disambiguate
+  // twins), same error-slot pattern as every accept/dismiss above.
+  function restoreDismissed(card: DismissedCard) {
+    setError(card.id, null)
+    start(async () => {
+      const result = await restoreDismissal(card.id)
+      if ('error' in result) { setError(card.id, result.error); return }
+      router.refresh()
+    })
+  }
+
+  if (income.length === 0 && expense.length === 0 && dismissed.length === 0) {
     return <p className="text-sm text-muted">Nothing waiting.</p>
   }
 
@@ -208,13 +271,16 @@ export default function MatchQueue({ income, expense }: { income: IncomeCard[]; 
                       <div className="flex flex-wrap items-baseline gap-x-2">
                         <span className="tabular text-xs text-muted">{formatDateShort(card.txn.date)}</span>
                         <span className="font-medium truncate">{card.txn.payee || '—'}</span>
+                        {card.payeeAgrees && <PayeeAgreesChip />}
                         <span className="tabular font-semibold">{formatUSD(card.txn.amountCents)}</span>
                       </div>
                       <div className="mt-1 flex flex-wrap items-baseline gap-x-2 text-sm text-muted">
                         <span aria-hidden="true">→</span>
                         <span className="truncate">
                           {card.invoices
-                            .map((i) => `#${i.number} · ${i.clientName} · ${formatUSD(i.totalCents)}`)
+                            .map((i) => (
+                              `#${i.number} · ${i.clientName} · ${formatUSD(i.totalCents)} · sent ${formatDateShort(i.sent)}`
+                            ))
                             .join(', ')}
                         </span>
                       </div>
@@ -260,6 +326,7 @@ export default function MatchQueue({ income, expense }: { income: IncomeCard[]; 
                             <span className="tabular font-semibold">{formatUSD(-t.amountCents)}</span>
                           </span>
                         ))}
+                        {card.payeeAgrees && <PayeeAgreesChip />}
                       </div>
                       <div className="mt-1 flex flex-wrap items-baseline gap-x-2 text-sm text-muted">
                         <span aria-hidden="true">→</span>
@@ -278,6 +345,35 @@ export default function MatchQueue({ income, expense }: { income: IncomeCard[]; 
                 </li>
               )
             })}
+          </ul>
+        </section>
+      )}
+
+      {dismissed.length > 0 && (
+        <section>
+          <h2 className="eyebrow mb-3">Dismissed</h2>
+          <ul className="border-t border-line">
+            {dismissed.map((card) => (
+              <li key={card.id} className="border-b border-line py-4 pl-3 -ml-3 pr-3 text-muted">
+                <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
+                      <span className="tabular text-xs">{formatDateShort(card.txn.date)}</span>
+                      <span className="truncate">{card.txn.payee || '—'}</span>
+                      {/* Same sign convention as the Charges section above: a charge (negative
+                          amount_cents) displays as its absolute value, a deposit as-is. */}
+                      <span className="tabular">{formatUSD(Math.abs(card.txn.amountCents))}</span>
+                      <span aria-hidden="true">→</span>
+                      <span className="truncate">{card.target}</span>
+                    </div>
+                    {errors[card.id] && <p role="alert" className="mt-1 text-xs text-danger">{errors[card.id]}</p>}
+                  </div>
+                  <div className="shrink-0">
+                    <RestoreButton disabled={pending} onClick={() => restoreDismissed(card)} />
+                  </div>
+                </div>
+              </li>
+            ))}
           </ul>
         </section>
       )}

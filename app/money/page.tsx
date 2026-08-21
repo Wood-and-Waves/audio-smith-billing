@@ -168,6 +168,7 @@ type RawCandidateInvoiceRow = {
   client_id: string
   total_cents: number
   sent_at: string | null
+  paid_at: string | null
   status: string
   // Many-to-one FK (invoices.client_id -> clients.id) embeds as a single
   // object at runtime — same cast app/money/matches/page.tsx's identical
@@ -178,7 +179,8 @@ type RawCandidateInvoiceRow = {
 /** Every sent-or-paid invoice, owner-wide — mirrors
  *  app/money/matches/page.tsx's own fetchAllCandidateInvoices exactly (same
  *  `.in('status', ['sent','paid'])` filter: a paid-but-unlinked invoice still
- *  counts toward the badge, same reasoning as that page's own comment). */
+ *  counts toward the badge, same broad-query-narrow-per-row split that page's
+ *  own comment explains). */
 async function fetchAllCandidateInvoices(
   supabase: Awaited<ReturnType<typeof createClient>>,
 ): Promise<{ rows: RawCandidateInvoiceRow[]; error: string | null }> {
@@ -187,7 +189,7 @@ async function fetchAllCandidateInvoices(
   for (;;) {
     const { data, error } = await supabase
       .from('invoices')
-      .select('id, number, client_id, total_cents, sent_at, status, clients(name)')
+      .select('id, number, client_id, total_cents, sent_at, paid_at, status, clients(name)')
       .in('status', ['sent', 'paid'])
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
@@ -392,6 +394,7 @@ export default async function MoneyPage({
     client_name: i.clients?.name ?? '',
     total_cents: i.total_cents,
     sent_at: i.sent_at,
+    paid_at: i.paid_at,
     status: i.status as 'sent' | 'paid',
     linked: linkedInvoiceIds.has(i.id),
   }))

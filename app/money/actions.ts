@@ -1113,6 +1113,45 @@ export async function dismissMatch(
 }
 
 /**
+ * Undoes a dismissal — dismissMatch above is a one-way door on its own
+ * (nothing else in this file ever deletes a ledger_match_dismissals row), so
+ * this is the way back. lib/ledgerMatch.ts's proposeMatches is pure and
+ * stateless, recomputed fresh on every visit, so deleting the suppression
+ * row is the whole fix: the matcher re-proposes the pair on Dan's next visit
+ * to /money/matches, if the transaction/invoice/expense involved are still
+ * there and still eligible. Nothing here re-checks that eligibility — a
+ * restored dismissal for a target that's since been linked or deleted just
+ * won't resurface a proposal, which is fine.
+ */
+export async function restoreDismissal(id: string): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  // Fail-direction rule (see unlinkTransaction's own comment below): an
+  // ERROR here must not read as "no such dismissal" — that would silently
+  // no-op a restore instead of surfacing the real problem.
+  const { data: existing, error: existingError } = await supabase
+    .from('ledger_match_dismissals')
+    .select('id')
+    .eq('id', id)
+    .eq('owner_id', user.id)
+    .maybeSingle()
+  if (existingError) return { error: existingError.message }
+  if (!existing) return { error: 'That dismissal no longer exists.' }
+
+  const { error } = await supabase
+    .from('ledger_match_dismissals')
+    .delete()
+    .eq('id', id)
+    .eq('owner_id', user.id)
+  if (error) return { error: error.message }
+
+  revalidatePath('/money')
+  return { ok: true }
+}
+
+/**
  * Undoes a match — the only way to un-pay an invoice a deposit match paid,
  * since setInvoiceStatus refuses to move a linked invoice off 'paid' for
  * exactly this reason (see its own comment in app/invoices/actions.ts).
