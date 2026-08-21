@@ -283,6 +283,61 @@ export async function setInvoiceStatus(
 }
 
 /**
+ * Deletes an invoice that never left the building. Exists for the
+ * unlink-and-re-bill loop: fixing a draft before sending strands the old
+ * draft with no way out (Dan hit this with #391), and a never-sent draft is
+ * clutter, not a record.
+ *
+ * Guards, in order: only status 'draft', only sent_at null (a client may
+ * hold anything sent — those are voided, never deleted), only after every
+ * show is unlinked. Lines and payments cascade (0001).
+ *
+ * The number giveback: when the deleted draft holds the most recently
+ * allocated number, the counter steps back so the re-bill mints the SAME
+ * number — no gap in the sequence Dan's CPA sees. Conditional on
+ * next_invoice_number === number + 1, so it is a no-op the moment any newer
+ * invoice exists.
+ */
+export async function deleteDraftInvoice(
+  id: string,
+): Promise<{ error: string } | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const { data: inv } = await supabase
+    .from('invoices').select('number, status, sent_at').eq('id', id).maybeSingle()
+  if (!inv) return { error: 'That invoice no longer exists.' }
+  if (inv.status !== 'draft' || inv.sent_at !== null) {
+    return { error: 'Only a never-sent draft can be deleted. Void it instead.' }
+  }
+
+  const { data: linked, error: linkErr } = await supabase
+    .from('shows').select('id').eq('invoice_id', id).limit(1)
+  if (linkErr) return { error: linkErr.message }
+  if (linked && linked.length > 0) {
+    return { error: 'A show is still billed to this invoice. Unlink it first.' }
+  }
+
+  const { data: gone, error } = await supabase
+    .from('invoices').delete().eq('id', id).select('id')
+  if (error) return { error: error.message }
+  if (!gone || gone.length === 0) return { error: 'That invoice no longer exists.' }
+
+  // Best-effort by design: matching zero rows just means a newer invoice
+  // already claimed the next number, and a failure here still leaves a
+  // correct (merely gapped) sequence — not worth failing the delete over.
+  await supabase
+    .from('settings')
+    .update({ next_invoice_number: inv.number })
+    .eq('owner_id', user.id)
+    .eq('next_invoice_number', inv.number + 1)
+
+  revalidatePath('/invoices')
+  return { ok: true }
+}
+
+/**
  * Emails an invoice: PDF attached, plus a link to the public copy.
  *
  * ORDERING IS DELIBERATE. The status and sent_at are written only AFTER the
