@@ -58,6 +58,12 @@ Wanted: import MileIQ data to track reimbursable miles instead of retyping them.
 
 ## Small / cosmetic
 
+- Mixed hourly+day-rate invoice hours sheet (2026-08-20 review): the page-wide
+  DT column trigger isn't scoped to full-sheet shows (a day-rate show's DT can
+  add an empty DT column to an hourly show's table), and the ALL SHOWS total
+  row sums NET/ST from day-rate shows whose columns don't print. Cosmetic;
+  single-show invoices unaffected.
+
 - Register row memo could be more prominent (2026-08-20, Dan: "It isn't very
   obvious. But that is OK for now" — muted line under the payee today; a
   broader register-row UX pass is welcome when Money settles).
