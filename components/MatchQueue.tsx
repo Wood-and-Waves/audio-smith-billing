@@ -17,12 +17,16 @@ export type ExpenseCard = {
   confidence: 'high' | 'low'
 }
 
-// A card has no id of its own — income keys off its (single) bank row,
-// expense off its (single) expense — so these give every card in the queue a
-// stable key for both React and the per-card error/pending bookkeeping
-// below.
-const incomeKey = (card: IncomeCard) => `income:${card.txn.id}`
-const expenseKey = (card: ExpenseCard) => `expense:${card.expense.id}`
+// A card has no id of its own, and one bank row (or one expense) can
+// legitimately appear on TWO cards — the matcher surfaces ambiguity as
+// separate proposals instead of guessing between equals. So the key spans
+// both sides of the proposal: row + targets. Keying off the row alone made
+// twin cards share a React key and an error slot, so a failed Accept on one
+// showed its error under both.
+const incomeKey = (card: IncomeCard) =>
+  `income:${card.txn.id}:${card.invoices.map((i) => i.id).join(',')}`
+const expenseKey = (card: ExpenseCard) =>
+  `expense:${card.expense.id}:${card.txns.map((t) => t.id).join(',')}`
 
 /** "$33.25 + $7.00 = $40.25" — only for a card whose summed side has more
  *  than one row; a single-item card gets no evidence line because the target
