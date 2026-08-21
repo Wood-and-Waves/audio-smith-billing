@@ -747,6 +747,413 @@ export async function removeLedgerReceipt(
   return warning ? { ok: true, warning } : { ok: true }
 }
 
+// The invoice/expense bridge (migration 0032): lib/ledgerMatch.ts proposes
+// candidate links between bank rows and invoices/expenses, purely and
+// statelessly — it holds no memory of what Dan already decided, so the four
+// actions below are what turn a proposal into a fact (a link row, an
+// invoice's paid_at, a txn's show_id) or suppress/undo one. Same shape as
+// attachLedgerReceipt above: createClient -> auth guard -> RLS-scoped reads
+// -> explicit guards -> writes with owner_id on inserts -> one revalidate
+// block. Every guard re-verifies something the matcher already believed,
+// because a server action is a public POST endpoint — the matcher's own
+// read of the data is not binding here, only a fresh read is.
+
+type BridgeInvoiceRow = {
+  id: string
+  number: number
+  status: string
+  total_cents: number
+  client_id: string
+  // A many-to-one FK (invoices.client_id -> clients.id) embeds as a single
+  // object at runtime — same shape app/api/cron/reminders/route.ts casts to
+  // for the same embed — never an array, whatever the generated types might
+  // claim elsewhere.
+  clients: { name: string } | null
+}
+
+/**
+ * Links one deposit to the 1–3 invoices it paid — Streamline's habit of
+ * paying two invoices with a single check is the reason the cap is 3, not 1.
+ * Every check here re-verifies something lib/ledgerMatch.ts's proposal
+ * already believed: the transaction is still an unlinked deposit, the
+ * invoices still exist, are still billable, still belong to one client, and
+ * still sum to the deposit exactly. None of that is guaranteed to still be
+ * true by the time the accept button is clicked — another tab, another
+ * import, or a hand edit could have moved any of it in between.
+ */
+export async function acceptIncomeMatch(input: {
+  transactionId: string
+  invoiceIds: string[]
+}): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const invoiceIds = input.invoiceIds
+  if (invoiceIds.length < 1 || invoiceIds.length > 3) {
+    return { error: 'Pick between 1 and 3 invoices.' }
+  }
+  if (new Set(invoiceIds).size !== invoiceIds.length) {
+    return { error: 'The same invoice was picked twice.' }
+  }
+
+  const { data: txn } = await supabase
+    .from('ledger_transactions')
+    .select('id, date, amount_cents, kind, payee, show_id')
+    .eq('id', input.transactionId)
+    .maybeSingle()
+  if (!txn) return { error: 'That transaction no longer exists.' }
+  // Mirrors lib/ledgerMatch.ts's own candidate filter (kind === 'income' &&
+  // amount_cents > 0) — a deposit is the only shape of row an invoice can
+  // ever pay off.
+  if (txn.kind !== 'income' || txn.amount_cents <= 0) {
+    return { error: 'Only a deposit can be matched to an invoice.' }
+  }
+
+  // Neither link table may already name this transaction — a bank row is
+  // either an income link, an expense link, or unlinked, never two of those
+  // at once.
+  const { data: existingInvoiceLink } = await supabase
+    .from('ledger_transaction_invoices').select('id').eq('transaction_id', txn.id).limit(1)
+  if (existingInvoiceLink && existingInvoiceLink.length > 0) {
+    return { error: 'This transaction is already linked.' }
+  }
+  const { data: existingExpenseLink } = await supabase
+    .from('ledger_transaction_expenses').select('id').eq('transaction_id', txn.id).limit(1)
+  if (existingExpenseLink && existingExpenseLink.length > 0) {
+    return { error: 'This transaction is already linked.' }
+  }
+
+  const { data: invoicesRaw, error: invoicesError } = await supabase
+    .from('invoices')
+    .select('id, number, status, total_cents, client_id, clients(name)')
+    .in('id', invoiceIds)
+  if (invoicesError) return { error: invoicesError.message }
+  const invoices = (invoicesRaw ?? []) as unknown as BridgeInvoiceRow[]
+  if (invoices.length !== invoiceIds.length) return { error: 'That invoice no longer exists.' }
+  if (invoices.some((inv) => inv.status !== 'sent' && inv.status !== 'paid')) {
+    return { error: 'Only a sent or paid invoice can be linked.' }
+  }
+
+  // Scoped to invoice_id alone, not (transaction_id, invoice_id) — an
+  // invoice already linked to a DIFFERENT transaction is exactly as invalid
+  // a target as one linked to this one; a link means paid in full, and an
+  // invoice cannot be paid in full twice.
+  const { data: alreadyLinked } = await supabase
+    .from('ledger_transaction_invoices').select('invoice_id').in('invoice_id', invoiceIds)
+  if (alreadyLinked && alreadyLinked.length > 0) {
+    return { error: 'One of those invoices is already linked to a transaction.' }
+  }
+
+  if (new Set(invoices.map((inv) => inv.client_id)).size > 1) {
+    return { error: 'Those invoices belong to different clients.' }
+  }
+
+  const sumCents = invoices.reduce((t, inv) => t + inv.total_cents, 0)
+  if (sumCents !== txn.amount_cents) return { error: 'Those amounts do not add up.' }
+
+  const { error: insertError } = await supabase.from('ledger_transaction_invoices').insert(
+    invoiceIds.map((invoice_id) => ({ owner_id: user.id, transaction_id: txn.id, invoice_id })),
+  )
+  if (insertError) return { error: insertError.message }
+
+  // .select('id') so an id RLS quietly filtered to nothing — not actually
+  // possible here since the fetch above already proved ownership, but the
+  // same defensive shape every other bulk update in this file uses — is
+  // caught as a failure instead of a silent partial update.
+  const { data: paidInvoices, error: paidError } = await supabase
+    .from('invoices')
+    .update({ status: 'paid', paid_at: txn.date })
+    .in('id', invoiceIds)
+    .select('id')
+  if (paidError) return { error: paidError.message }
+  if (!paidInvoices || paidInvoices.length !== invoiceIds.length) {
+    return { error: 'Could not mark all invoices paid.' }
+  }
+
+  // Patched together as one update so a single-invoice accept on a showless,
+  // payee-less row costs one extra write instead of two.
+  const txnPatch: Record<string, unknown> = {}
+
+  // Show tag: only for a single-invoice accept on a txn with no show yet —
+  // a multi-invoice deposit spans more than one show by construction, so it
+  // has no single show to tag. The fail-safe app/shows/[id]/page.tsx:152-168
+  // already established for invoice coverage applies here too: an unknown
+  // or ambiguous show count (0 or >1 rows) must never resolve to "the sole
+  // show", so this only fires on an EXACT single row.
+  if (invoiceIds.length === 1 && txn.show_id === null) {
+    const { data: showRows } = await supabase
+      .from('shows').select('id').eq('invoice_id', invoiceIds[0])
+    if (showRows && showRows.length === 1) txnPatch.show_id = showRows[0].id
+  }
+
+  // Payee: only when the row still has none — never overwrite text Dan
+  // typed by hand, even if it disagrees with the client name on the invoice.
+  if (txn.payee.trim() === '') {
+    const clientName = invoices[0].clients?.name
+    if (clientName) txnPatch.payee = clientName
+  }
+
+  if (Object.keys(txnPatch).length > 0) {
+    const { error: patchError } = await supabase
+      .from('ledger_transactions').update(txnPatch).eq('id', txn.id)
+    if (patchError) return { error: patchError.message }
+  }
+
+  // NO cleared-state check anywhere above: linking is audit metadata, the
+  // third carve-out beside categorization (setTransactionCategory) and
+  // receipts (attachLedgerReceipt) — see unlinkTransaction's own comment
+  // below for the fuller reasoning, which applies symmetrically here.
+  revalidatePath('/money')
+  revalidatePath('/invoices')
+  for (const id of invoiceIds) revalidatePath(`/invoices/${id}`)
+  return { ok: true }
+}
+
+/**
+ * Links the 1–3 bank rows that together paid one expense — Chase splitting a
+ * single $40.25 Uber Eats charge into $33.25 + $7.00 across two statement
+ * lines is the reason the cap is 3, not 1, mirroring acceptIncomeMatch's own
+ * cap and re-verification reasoning above.
+ */
+export async function acceptExpenseMatch(input: {
+  expenseId: string
+  transactionIds: string[]
+}): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const transactionIds = input.transactionIds
+  if (transactionIds.length < 1 || transactionIds.length > 3) {
+    return { error: 'Pick between 1 and 3 transactions.' }
+  }
+  if (new Set(transactionIds).size !== transactionIds.length) {
+    return { error: 'The same transaction was picked twice.' }
+  }
+
+  const { data: expense } = await supabase
+    .from('expenses').select('id, show_id, amount_cents').eq('id', input.expenseId).maybeSingle()
+  if (!expense) return { error: 'That expense no longer exists.' }
+
+  const { data: existingExpenseLink } = await supabase
+    .from('ledger_transaction_expenses').select('id').eq('expense_id', expense.id).limit(1)
+  if (existingExpenseLink && existingExpenseLink.length > 0) {
+    return { error: 'This expense is already linked.' }
+  }
+
+  const { data: txnsRaw, error: txnsError } = await supabase
+    .from('ledger_transactions')
+    .select('id, kind, amount_cents')
+    .in('id', transactionIds)
+  if (txnsError) return { error: txnsError.message }
+  const txns = (txnsRaw ?? []) as { id: string; kind: string; amount_cents: number }[]
+  if (txns.length !== transactionIds.length) return { error: 'That transaction no longer exists.' }
+  // Mirrors lib/ledgerMatch.ts's own candidate filter (kind === 'expense' &&
+  // amount_cents < 0) — a charge is the only shape of row an expense can
+  // ever be reimbursed by.
+  if (txns.some((t) => t.kind !== 'expense' || t.amount_cents >= 0)) {
+    return { error: 'Only a payment can be matched to an expense.' }
+  }
+
+  // Neither link table may already name any of these transactions — same
+  // either-table exclusivity acceptIncomeMatch checks on the txn side.
+  const { data: linkedAsInvoice } = await supabase
+    .from('ledger_transaction_invoices').select('transaction_id').in('transaction_id', transactionIds)
+  if (linkedAsInvoice && linkedAsInvoice.length > 0) {
+    return { error: 'One of those transactions is already linked.' }
+  }
+  const { data: linkedAsExpense } = await supabase
+    .from('ledger_transaction_expenses').select('transaction_id').in('transaction_id', transactionIds)
+  if (linkedAsExpense && linkedAsExpense.length > 0) {
+    return { error: 'One of those transactions is already linked.' }
+  }
+
+  // The over-sum refusal IS this equality: amount_cents is negative on every
+  // txn (checked above) and positive on the expense (the DB's own
+  // amount_cents > 0 check), so -sum must land exactly on the expense's
+  // total, not merely cover it — a bank split that overshoots the expense by
+  // even a cent is refused the same as one that falls short.
+  const sumCents = txns.reduce((t, row) => t + row.amount_cents, 0)
+  if (-sumCents !== expense.amount_cents) return { error: 'Those amounts do not add up.' }
+
+  const { error: insertError } = await supabase.from('ledger_transaction_expenses').insert(
+    transactionIds.map((transaction_id) => (
+      { owner_id: user.id, transaction_id, expense_id: expense.id }
+    )),
+  )
+  if (insertError) return { error: insertError.message }
+
+  // The expense's own show is authoritative (expenses.show_id is not
+  // null — every expense belongs to exactly one show), so every txn in the
+  // group inherits it. Receipt columns are deliberately untouched: the
+  // expense's photo surfaces via a display-time join (a later task), and
+  // copying its path onto the txn would let removeLedgerReceipt delete the
+  // expense's own file out from under it.
+  const { data: taggedTxns, error: tagError } = await supabase
+    .from('ledger_transactions')
+    .update({ show_id: expense.show_id })
+    .in('id', transactionIds)
+    .select('id')
+  if (tagError) return { error: tagError.message }
+  if (!taggedTxns || taggedTxns.length !== transactionIds.length) {
+    return { error: 'Could not tag all transactions with the show.' }
+  }
+
+  revalidatePath('/money')
+  return { ok: true }
+}
+
+/**
+ * Suppresses one or more proposed matches so lib/ledgerMatch.ts — pure and
+ * stateless, recomputed fresh on every visit — stops re-offering them.
+ * Existence of every named transaction/invoice/expense is checked with its
+ * own RLS-scoped select BEFORE any insert, rather than trusting Postgres's
+ * own foreign-key constraint to catch a bad id: an FK check runs with
+ * elevated privilege and bypasses RLS, so an id belonging to another owner
+ * would otherwise insert cleanly and poison this owner's dismissal list with
+ * a foreign row's id.
+ */
+export async function dismissMatch(
+  pairs: { transactionId: string; invoiceId?: string; expenseId?: string }[],
+): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  if (pairs.length < 1 || pairs.length > 3) {
+    return { error: 'Pick between 1 and 3 matches to dismiss.' }
+  }
+  // Discriminated by migration 0032's own check (num_nonnulls(invoice_id,
+  // expense_id) = 1) — a dismissal names one target, never both and never
+  // neither.
+  for (const pair of pairs) {
+    const named = [pair.invoiceId, pair.expenseId].filter((v) => v !== undefined && v !== null)
+    if (named.length !== 1) {
+      return { error: 'Each dismissal names exactly one invoice or expense.' }
+    }
+  }
+
+  const transactionIds = [...new Set(pairs.map((p) => p.transactionId))]
+  const invoiceIds = [...new Set(pairs.map((p) => p.invoiceId).filter((v): v is string => v != null))]
+  const expenseIds = [...new Set(pairs.map((p) => p.expenseId).filter((v): v is string => v != null))]
+
+  const { data: txnRows } = await supabase.from('ledger_transactions').select('id').in('id', transactionIds)
+  if (!txnRows || txnRows.length !== transactionIds.length) {
+    return { error: 'That transaction no longer exists.' }
+  }
+  if (invoiceIds.length > 0) {
+    const { data: invoiceRows } = await supabase.from('invoices').select('id').in('id', invoiceIds)
+    if (!invoiceRows || invoiceRows.length !== invoiceIds.length) {
+      return { error: 'That invoice no longer exists.' }
+    }
+  }
+  if (expenseIds.length > 0) {
+    const { data: expenseRows } = await supabase.from('expenses').select('id').in('id', expenseIds)
+    if (!expenseRows || expenseRows.length !== expenseIds.length) {
+      return { error: 'That expense no longer exists.' }
+    }
+  }
+
+  // Two upsert calls, not one: migration 0032 gives ledger_match_dismissals
+  // two separate partial-unique indexes — (transaction_id, invoice_id) and
+  // (transaction_id, expense_id) — one per discriminant, so onConflict has
+  // to name whichever one this batch of rows actually populates.
+  const invoicePairs = pairs.filter((p) => p.invoiceId !== undefined && p.invoiceId !== null)
+  const expensePairs = pairs.filter((p) => p.expenseId !== undefined && p.expenseId !== null)
+
+  if (invoicePairs.length > 0) {
+    const { error } = await supabase.from('ledger_match_dismissals').upsert(
+      invoicePairs.map((p) => ({ owner_id: user.id, transaction_id: p.transactionId, invoice_id: p.invoiceId })),
+      { onConflict: 'transaction_id,invoice_id', ignoreDuplicates: true },
+    )
+    if (error) return { error: error.message }
+  }
+  if (expensePairs.length > 0) {
+    const { error } = await supabase.from('ledger_match_dismissals').upsert(
+      expensePairs.map((p) => ({ owner_id: user.id, transaction_id: p.transactionId, expense_id: p.expenseId })),
+      { onConflict: 'transaction_id,expense_id', ignoreDuplicates: true },
+    )
+    if (error) return { error: error.message }
+  }
+
+  revalidatePath('/money')
+  return { ok: true }
+}
+
+/**
+ * Undoes a match — the only way to un-pay an invoice a deposit match paid,
+ * since setInvoiceStatus refuses to move a linked invoice off 'paid' for
+ * exactly this reason (see its own comment in app/invoices/actions.ts).
+ *
+ * NO cleared-state check: linking a bank row to an invoice or expense is
+ * audit metadata, not a fact reconcileAccount's cleared-balance math reads —
+ * the third carve-out beside categorization (setTransactionCategory's own
+ * doc comment above) and receipts (attachLedgerReceipt's), so a reconciled
+ * row links and unlinks exactly as freely as an uncleared one. Nothing here
+ * touches amount_cents, date, or kind — the fields reconciliation actually
+ * locks — or show_id/payee, which stay put on every affected row: once
+ * written by an accept, they're Dan's data now, and clearing them is edit
+ * mode's job, not unlink's.
+ */
+export async function unlinkTransaction(txnId: string): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const { data: invoiceLinks } = await supabase
+    .from('ledger_transaction_invoices').select('id, invoice_id').eq('transaction_id', txnId)
+  const { data: expenseLinks } = await supabase
+    .from('ledger_transaction_expenses').select('id, expense_id').eq('transaction_id', txnId)
+
+  const hasInvoiceLinks = !!invoiceLinks && invoiceLinks.length > 0
+  const hasExpenseLinks = !!expenseLinks && expenseLinks.length > 0
+  if (!hasInvoiceLinks && !hasExpenseLinks) {
+    return { error: 'Nothing is linked to this transaction.' }
+  }
+
+  if (hasInvoiceLinks) {
+    const { error } = await supabase.from('ledger_transaction_invoices').delete().eq('transaction_id', txnId)
+    if (error) return { error: error.message }
+  }
+
+  // Expense groups dissolve whole: an expense split across N bank rows
+  // (Chase's $33.25 + $7.00 for one $40.25 Uber Eats charge) is either fully
+  // covered or not linked at all. Unlinking just THIS txn's own row and
+  // leaving the expense's other link rows in place would strand it "linked"
+  // to a lone $7.00 tip, breaking that invariant — so every link row for
+  // each expense this txn named is deleted, not just this txn's.
+  if (hasExpenseLinks) {
+    const expenseIds = [...new Set(expenseLinks!.map((l) => l.expense_id))]
+    const { error } = await supabase.from('ledger_transaction_expenses').delete().in('expense_id', expenseIds)
+    if (error) return { error: error.message }
+  }
+
+  // Restore each formerly-linked invoice to 'sent' — but only the ones no
+  // OTHER transaction still links (a second deposit's own, separate link on
+  // an invoice must not get silently undone by unlinking the first).
+  // Queried AFTER the delete above, so this row's own now-gone link never
+  // counts as "still linked" against itself.
+  if (hasInvoiceLinks) {
+    for (const link of invoiceLinks!) {
+      const { data: stillLinked } = await supabase
+        .from('ledger_transaction_invoices').select('id').eq('invoice_id', link.invoice_id).limit(1)
+      if (!stillLinked || stillLinked.length === 0) {
+        const { error } = await supabase
+          .from('invoices').update({ status: 'sent', paid_at: null }).eq('id', link.invoice_id)
+        if (error) return { error: error.message }
+      }
+    }
+  }
+
+  revalidatePath('/money')
+  revalidatePath('/invoices')
+  if (hasInvoiceLinks) {
+    for (const link of invoiceLinks!) revalidatePath(`/invoices/${link.invoice_id}`)
+  }
+  return { ok: true }
+}
+
 /**
  * Toggles the register checkmark. Never writes 'reconciled' — that state is
  * only ever reached through reconcileAccount below, which pairs it with a
