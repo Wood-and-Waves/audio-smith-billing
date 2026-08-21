@@ -45,6 +45,10 @@ Wanted: import MileIQ data to track reimbursable miles instead of retyping them.
   the bank feed via the existing adopt-on-import machinery. Also auto-feeds
   the Taxes envelope from each show's set-aside. Design in
   `docs/superpowers/specs/2026-08-18-bookkeeping-module-reference.md`.
+  **Matcher must handle 1 expense → N bank lines** (2026-08-21, Dan's real
+  case: one $40.25 Uber Eats show expense posted at Chase as $33.25 order +
+  $7.00 tip — same payee, sum matches within a short date window). The mirror
+  case (one bank line covering several expenses) deserves a look too.
 - **CPA year-end export**: category totals + income + per-show profit +
   MileIQ/home-office slots + receipts, shaped by the CPA's answers to the
   homework questions (in the reference doc).
