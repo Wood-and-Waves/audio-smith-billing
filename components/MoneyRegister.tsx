@@ -596,10 +596,13 @@ export default function MoneyRegister({
           setFlexWeights(flex)
           persistColumns(w, flex)
         }}
-        className={`group absolute ${side === 'right' ? '-right-1.5' : '-left-1.5'} top-0 bottom-0 w-3
+        // -top-0.5/-bottom-2 stretch the divider from just above the label
+        // down through the header's padding to its underline, so it reads as
+        // a real column boundary level with the text — not a floating tick.
+        className={`group absolute ${side === 'right' ? '-right-1.5' : '-left-1.5'} -top-0.5 -bottom-2 w-3
                    cursor-col-resize touch-none flex justify-center`}
       >
-        <span className="h-full w-px bg-line group-hover:w-0.5 group-hover:bg-accent" />
+        <span className="h-full w-[2px] rounded-pill bg-line group-hover:w-[3px] group-hover:bg-accent" />
       </span>
     )
   }
