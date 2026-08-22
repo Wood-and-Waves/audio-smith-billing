@@ -378,17 +378,28 @@ export async function setTravelLeg(
 
   // Walk the day's own foreign keys for the lock, the same way
   // setDayHalfDay/deletePunch do: show_days.show_id -> shows.status. Never
-  // trust a caller-supplied id for the lock decision.
+  // trust a caller-supplied id for the lock decision. Also read both legs'
+  // current values, needed below to detect when the last leg is clearing.
   const { data: day } = await supabase
-    .from('show_days').select('show_id, shows(status)').eq('id', showDayId).maybeSingle()
+    .from('show_days').select('show_id, travel_in, travel_out, shows(status)').eq('id', showDayId).maybeSingle()
   if (!day) return { error: 'That day no longer exists.' }
 
   const status = (day as unknown as { shows: { status: string } }).shows?.status
   if (status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
 
   const column = leg === 'in' ? 'travel_in' : 'travel_out'
+  const otherLeg = leg === 'in' ? 'travel_out' : 'travel_in'
+  const otherValue = (day as unknown as { travel_in: boolean; travel_out: boolean })[otherLeg]
+
+  // Clearing the last remaining travel leg also clears travel_works: a
+  // stale `true` would sit invisible on a non-travel day and silently
+  // change the forecast if travel were re-flagged later, without Dan ever
+  // having re-set it.
+  const update: Record<string, boolean> = { [column]: value }
+  if (value === false && otherValue === false) update.travel_works = false
+
   const { error } = await supabase.from('show_days')
-    .update({ [column]: value }).eq('id', showDayId)
+    .update(update).eq('id', showDayId)
   if (error) return { error: error.message }
 
   revalidatePath(`/shows/${(day as unknown as { show_id: string }).show_id}`)
@@ -974,6 +985,36 @@ export async function setDayHalfDay(showDayId: string, value: boolean): Promise<
 
   const { error } = await supabase.from('show_days')
     .update({ pay_as_half_day: value }).eq('id', showDayId)
+  if (error) return { error: error.message }
+
+  revalidatePath(`/shows/${(day as unknown as { show_id: string }).show_id}`)
+  return { ok: true }
+}
+
+/**
+ * Forecast-only: tells the projection a travel day will also be worked, so
+ * it can bill both a travel leg and a work day for that date (see
+ * lib/forecast.ts's ForecastShowDay). Billing already learns this from
+ * punches once they exist — this flag only carries the forecast before
+ * they do.
+ */
+export async function setDayTravelWorks(showDayId: string, value: boolean): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  // Walk the day's own foreign keys for the lock, the same way deletePunch
+  // does for a punch: show_days.show_id -> shows.status. Never trust a
+  // caller-supplied id for the lock decision.
+  const { data: day } = await supabase
+    .from('show_days').select('show_id, shows(status)').eq('id', showDayId).maybeSingle()
+  if (!day) return { error: 'That day no longer exists.' }
+
+  const status = (day as unknown as { shows: { status: string } }).shows?.status
+  if (status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
+
+  const { error } = await supabase.from('show_days')
+    .update({ travel_works: value }).eq('id', showDayId)
   if (error) return { error: error.message }
 
   revalidatePath(`/shows/${(day as unknown as { show_id: string }).show_id}`)
