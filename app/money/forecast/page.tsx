@@ -273,7 +273,9 @@ function BookedShowRow({ sp, lastRenderedMonth }: { sp: ShowProjection; lastRend
     : `${formatDateShort(sp.firstDay)}–${formatDateShort(sp.lastDay)}`
 
   const parts: { key: string; node: React.ReactNode }[] = []
-  if (sp.dayCount > 0) parts.push({ key: 'days', node: `${sp.dayCount} day${sp.dayCount === 1 ? '' : 's'}` })
+  if (sp.dayCount > 0 && sp.dayCents > 0) {
+    parts.push({ key: 'days', node: `${sp.dayCount} day${sp.dayCount === 1 ? '' : 's'}` })
+  }
   if (sp.travelDays > 0 && sp.travelCents > 0) {
     parts.push({
       key: 'travel',

@@ -144,7 +144,26 @@ test('the new partition invariant: dayCount + travelDays equals days.length plus
   })
   const result = buildForecast(baseInput({ shows: [s] }))
   const proj = result.showProjections[0]
-  const workedTravelDays = 1
+  const workedTravelDays = s.days.filter((d) => (d.travel_in || d.travel_out) && d.travel_works).length
+  assert.equal(proj.dayCount + proj.travelDays, s.days.length + workedTravelDays)
+})
+
+test('the same partition invariant holds at a different shape — a 5-day show with TWO worked '
+  + 'travel days (both the first and last leg also worked), not just one', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000,
+    days: [
+      day({ date: '2026-09-01', travel_in: true, travel_works: true }), // worked travel day
+      day({ date: '2026-09-02' }), // plain work day
+      day({ date: '2026-09-03' }), // plain work day
+      day({ date: '2026-09-04' }), // plain work day
+      day({ date: '2026-09-05', travel_out: true, travel_works: true }), // worked travel day
+    ],
+  })
+  const result = buildForecast(baseInput({ shows: [s] }))
+  const proj = result.showProjections[0]
+  const workedTravelDays = s.days.filter((d) => (d.travel_in || d.travel_out) && d.travel_works).length
+  assert.equal(workedTravelDays, 2)
   assert.equal(proj.dayCount + proj.travelDays, s.days.length + workedTravelDays)
 })
 

@@ -286,10 +286,16 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
                         d.travel_in && 'travel in',
                         d.travel_out && 'travel out',
                         d.pay_as_half_day && 'half day',
+                        // A travel day Dan also expects to work (travel_works,
+                        // migration 0036) bills a day rate on top of the leg —
+                        // say so, so the eyebrow agrees with the forecast.
+                        d.travel_works && 'also working',
                         // A day carrying a travel leg but no punches (e.g. a
                         // pure fly-in day) is intentional, not an unfinished
-                        // day someone forgot to punch — say so.
-                        d.punches.length === 0 && (d.travel_in || d.travel_out) && 'travel only',
+                        // day someone forgot to punch — say so. But not when
+                        // travel_works is set: the forecast prices that day as
+                        // travel + day rate, so "travel only" would contradict it.
+                        d.punches.length === 0 && (d.travel_in || d.travel_out) && !d.travel_works && 'travel only',
                       ].filter(Boolean).join(' · ')}
                     </span>
                     <RemoveDayButton showDayId={d.id} date={d.date} locked={locked} />

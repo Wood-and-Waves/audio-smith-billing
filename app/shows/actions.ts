@@ -378,28 +378,22 @@ export async function setTravelLeg(
 
   // Walk the day's own foreign keys for the lock, the same way
   // setDayHalfDay/deletePunch do: show_days.show_id -> shows.status. Never
-  // trust a caller-supplied id for the lock decision. Also read both legs'
-  // current values, needed below to detect when the last leg is clearing.
+  // trust a caller-supplied id for the lock decision.
   const { data: day } = await supabase
-    .from('show_days').select('show_id, travel_in, travel_out, shows(status)').eq('id', showDayId).maybeSingle()
+    .from('show_days').select('show_id, shows(status)').eq('id', showDayId).maybeSingle()
   if (!day) return { error: 'That day no longer exists.' }
 
   const status = (day as unknown as { shows: { status: string } }).shows?.status
   if (status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
 
   const column = leg === 'in' ? 'travel_in' : 'travel_out'
-  const otherLeg = leg === 'in' ? 'travel_out' : 'travel_in'
-  const otherValue = (day as unknown as { travel_in: boolean; travel_out: boolean })[otherLeg]
 
-  // Clearing the last remaining travel leg also clears travel_works: a
-  // stale `true` would sit invisible on a non-travel day and silently
-  // change the forecast if travel were re-flagged later, without Dan ever
-  // having re-set it.
-  const update: Record<string, boolean> = { [column]: value }
-  if (value === false && otherValue === false) update.travel_works = false
-
+  // travel_works requires a travel flag as a DATABASE invariant now
+  // (migration 0037's before-insert-or-update trigger) — clearing the last
+  // remaining leg here also clears travel_works, structurally, even if two
+  // legs are cleared in quick succession.
   const { error } = await supabase.from('show_days')
-    .update(update).eq('id', showDayId)
+    .update({ [column]: value }).eq('id', showDayId)
   if (error) return { error: error.message }
 
   revalidatePath(`/shows/${(day as unknown as { show_id: string }).show_id}`)

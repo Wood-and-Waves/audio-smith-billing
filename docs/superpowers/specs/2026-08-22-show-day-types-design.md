@@ -6,6 +6,14 @@
 > diverges from BILLING, where `computeShowLines` bills two legs on such a
 > day — pre-existing, conservative in the forecast's direction, and recorded
 > in docs/BACKLOG.md rather than changed here.
+>
+> Also: §Testing below claims "one existing test must change, deliberately."
+> That did not happen — all six partition assertions from the earlier wave
+> survived verbatim and pass unchanged; only the `day()` fixture line (which
+> gained `travel_works`) and a section comment moved. Better than the spec
+> prescribed (no test had to be rewritten to keep asserting a true thing),
+> but the sentence below now misdescribes what shipped — left as a record of
+> the gap, not corrected in place, since the code and tests are what ships.
 
 # Show day types — travel that is also worked
 

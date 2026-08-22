@@ -247,3 +247,13 @@ Still open from that design, deliberately deferred:
   Fine while nothing writes transfers — revisit when account pairing lands.
 - `ledger_reconciliations` is written but never surfaced anywhere (audit trail
   only).
+
+- Forecast per-show breakdown line is ambiguous once a travel day can also be
+  worked (2026-08-22, day-types final review): "3 days · 2 travel" can't
+  distinguish a fully-accounted 5-day block from one where a worked travel
+  day is counted in both the days figure and the travel figure — and unlike
+  `travelAssumed`, which gets its own "assumed" tag, the double-counted case
+  gets no marker at all. Fixing it needs a block-length field on
+  `ShowProjection` (`lib/forecast.ts`) so the line can say "5-day block" and
+  let "days" and "travel" both be sub-counts of it. Deliberate follow-up, not
+  shipped with day-types.
