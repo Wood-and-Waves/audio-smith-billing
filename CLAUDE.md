@@ -148,16 +148,25 @@ status.
   future bookings) and pairs the runway with the month booked work runs out.
   Projection is its own arithmetic, NOT `computeShowLines` — that earns the
   day rate from punched straight time, so a booked show projects $0 through
-  it. Every scheduled day is EITHER a travel day or a work day, never both —
-  travel days are part of the scheduled block, never added on top of it
+  it. Travel days are part of the scheduled block, never added on top of it
   (Dan: "for a 6 day show, 2 travel days and 4 working days. That is the most
   conservative."). A day flagged travel_in/out (either or both) IS a travel
-  day; with nothing flagged, an out-of-state show (location names a state
-  other than `settings.home_state`) that runs >1 day is assumed to need its
-  FIRST and LAST scheduled day as travel — flagged days always win over the
+  day, and counts ONCE at ONE travel rate even when both legs are flagged;
+  with nothing flagged, an out-of-state show (location names a state other
+  than `settings.home_state`) that runs >1 day is assumed to need its FIRST
+  and LAST scheduled day as travel — flagged days always win over the
   assumption. Every remaining day is a work day at the show's own rate (half
   days halved). A 2-day out-of-state show with nothing flagged is therefore 2
-  travel days and ZERO work days — deliberate, not special-cased. **PM** is a
+  travel days and ZERO work days — deliberate, not special-cased.
+  **`show_days.travel_works` (0036)** is the one way a day is both: on a
+  FLAGGED travel day it adds a day rate on top of the travel rate (half if
+  `pay_as_half_day`), so `dayCount + travelDays` exceeds the block by the
+  number of worked travel days. It is ignored on a day with no travel flags,
+  and never applies to an ASSUMED travel day (the assumption fires only when
+  nothing was marked, so nothing is known about working it). Forecast-only —
+  billing already gets worked travel days right, because `computeShowLines`
+  counts legs outside its punch gate. Clearing a day's last travel flag
+  clears `travel_works` with it. **PM** is a
   flat 4h at the show's PM rate when `shows.pm_role` is set (forecast-only;
   real PM still bills from `pm_entries`). No OT/DT/meal penalties/expenses
   are assumed — every omission understates EXCEPT an hourly show, the one

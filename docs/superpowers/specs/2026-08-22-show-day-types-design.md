@@ -1,3 +1,12 @@
+> **Postscript (2026-08-22, from planning):** the table below originally said
+> "travel rate × legs". That was loose prose, not the shipped rule — a day
+> carrying BOTH `travel_in` and `travel_out` counts as ONE travel day at ONE
+> travel rate (`isTravel` is a `||`), which is pinned by an existing test and
+> matches Dan's own "2 travel days" framing. Corrected in place. Note this
+> diverges from BILLING, where `computeShowLines` bills two legs on such a
+> day — pre-existing, conservative in the forecast's direction, and recorded
+> in docs/BACKLOG.md rather than changed here.
+
 # Show day types — travel that is also worked
 
 *Dan: "It would be good for forecasting to allow day types for first and last
@@ -61,9 +70,9 @@ day when `pay_as_half_day` is also set.
 | Day | Projects |
 |---|---|
 | No travel flags | day rate (half if `pay_as_half_day`) |
-| Travel flag(s), `travel_works` false | travel rate × legs |
-| Travel flag(s), `travel_works` true | travel rate × legs + day rate |
-| Travel + works + half day | travel rate × legs + half day rate |
+| Travel flag(s), `travel_works` false | one travel rate |
+| Travel flag(s), `travel_works` true | one travel rate + day rate |
+| Travel + works + half day | one travel rate + half day rate |
 
 **The assumption remains a fallback only.** As today, if ANY day on a show
 carries a travel flag, the out-of-state first/last-day assumption does not

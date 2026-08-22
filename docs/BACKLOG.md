@@ -208,6 +208,13 @@ Still open from that design, deliberately deferred:
 
 ## Small / cosmetic
 
+- Forecast vs invoice on a both-legs day (2026-08-22): a day flagged BOTH
+  `travel_in` and `travel_out` projects as ONE travel day at one travel rate
+  (`lib/forecast.ts`), while `computeShowLines` bills TWO legs for it. The
+  forecast is the conservative side, and the case is rare, so it was left
+  alone deliberately rather than reconciled. Decide which is right if it ever
+  comes up in a real show.
+
 - Bridge accepted trade-offs (2026-08-21 final review): dismissals are a
   one-way door (no UI lists or deletes `ledger_match_dismissals`; dismissing
   a sum also suppresses future singles on the same pair); a bank row whose
