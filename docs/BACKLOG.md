@@ -32,27 +32,21 @@ between `/money/budget` and the tool he actually knows.
   ledger stay the source of truth (it should) or gain a per-month budgeted
   table beside it.
 
-## Show day types — travel, work, or both (2026-08-22, Dan)
+## Show day types — SHIPPED 2026-08-22
 
-Dan: *"It would be good for forecasting to allow day types for first and
-last day. So travel + day rate or travel only. Most of the time I know this
-ahead of time."*
-
-- Today a `show_days` row is a work day with optional `travel_in`/
-  `travel_out` flags (0005), and the forecast ASSUMES the first and last day
-  of an out-of-state multi-day show are travel-only. This item replaces the
-  assumption with knowledge for the (common) case where Dan knows in advance.
-- Wanted: mark a day as **travel only** (travel rate, no day rate) or
-  **travel + work** (both — which is what the real billing engine already
-  does when a flagged day carries punches, and pays more).
-- **Supersedes** the deferred 2-day out-of-state case: Dan noted a 2-day
-  out-of-state block is really two travel days plus a show day, and the
-  forecast currently prices it as 2 travel + 0 work. Explicit day types make
-  that a non-question.
-- Note the asymmetry to preserve: the FORECAST is deliberately conservative
-  (travel day = no day rate); the INVOICE bills what actually happened from
-  punches. Day types should inform the forecast without changing how a
-  worked travel day bills.
+Built as `show_days.travel_works` (migration 0036; design:
+docs/superpowers/specs/2026-08-22-show-day-types-design.md). An "Also
+working" checkbox appears on any day flagged travelled in/out; ticking it
+adds a day rate on top of the travel rate in the forecast. Forecast-only —
+billing already handled worked travel days correctly, because
+`computeShowLines` counts legs outside its punch gate.
+Still open from that design:
+- Marking day types at show creation (Dan had travel options removed from
+  the create screen deliberately; the out-of-state assumption covers
+  unmarked shows).
+- The 2-day out-of-state fallback still prices as 2 travel + 0 work when
+  nothing is marked. Explicit marks now answer it per-show; the fallback
+  itself is unchanged.
 
 ## Snap-a-receipt button on mobile (2026-08-22, Dan)
 
