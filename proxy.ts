@@ -16,7 +16,11 @@ import { NextResponse, type NextRequest } from 'next/server'
 // unguessable token and nothing else — anon holds no table privileges.
 // /api/cron is the reminder sweep. Vercel calls it with no session, so it has
 // to be allowlisted here; it guards itself with CRON_SECRET.
-const PUBLIC_PREFIXES = ['/login', '/auth', '/api/dev', '/i', '/api/cron']
+// /cal is the calendar feed — one security-definer function keyed by
+// unguessable token (0033), mirroring /i. The /calendar PAGE stays private:
+// the matching below requires an exact match or prefix + '/', and
+// '/calendar' is neither '/cal' nor '/cal/...'.
+const PUBLIC_PREFIXES = ['/login', '/auth', '/api/dev', '/i', '/api/cron', '/cal']
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request })
