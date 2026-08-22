@@ -17,7 +17,8 @@ import type {
 const HOME_STATE = 'IL'
 
 const day = (over: Partial<ForecastShowDay> = {}): ForecastShowDay => ({
-  date: '2026-09-01', travel_in: false, travel_out: false, pay_as_half_day: false, ...over,
+  date: '2026-09-01', travel_in: false, travel_out: false, pay_as_half_day: false,
+  travel_works: false, ...over,
 })
 
 const show = (over: Partial<ForecastShow> = {}): ForecastShow => ({
@@ -125,9 +126,27 @@ test('a show with no scheduled days projects zero, no crash', () => {
 
 // ---------------------------------------------------------------------------
 // projectedShowCents — travel days are part of the scheduled block (out-of-
-// state assumption + flagged days), never added on top of it. Every
-// scheduled day is EITHER a travel day or a work day, never both, so
-// dayCount + travelDays always equals the show's total scheduled days.
+// state assumption + flagged days), never added on top of it. A travel day
+// is no longer necessarily separate from a work day, though: a FLAGGED
+// (never assumed) travel day that also has `travel_works` set is BOTH a
+// travel day and a work day. So dayCount + travelDays is no longer a strict
+// partition of the scheduled block — it equals the show's total scheduled
+// days PLUS the number of worked travel days (zero when none are marked).
+
+test('the new partition invariant: dayCount + travelDays equals days.length plus the number of '
+  + 'worked travel days — the guard that would catch a day counted in neither bucket', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000,
+    days: [
+      day({ date: '2026-09-01', travel_in: true, travel_works: true }), // worked travel day
+      day({ date: '2026-09-02' }), // plain work day
+    ],
+  })
+  const result = buildForecast(baseInput({ shows: [s] }))
+  const proj = result.showProjections[0]
+  const workedTravelDays = 1
+  assert.equal(proj.dayCount + proj.travelDays, s.days.length + workedTravelDays)
+})
 
 test('a 2-day out-of-state show with no flags is 2 travel days and ZERO work days — the '
   + 'literal, deliberate consequence of "first and last scheduled day are travel," not '
@@ -324,6 +343,121 @@ test('a show that is BOTH out-of-state AND has a flagged travel day uses the fla
   assert.equal(proj.dayCount, 2)
   assert.equal(proj.travelDays, 1)
   assert.equal(proj.travelAssumed, false)
+})
+
+// ---------------------------------------------------------------------------
+// projectedShowCents — travel_works: a travel day Dan explicitly marks as
+// also worked. "Sometimes we travel and work the same day which would be
+// more money." Only ever fires on a FLAGGED travel day — never on one that
+// came from the out-of-state assumption, since the assumption only fires
+// when nothing was marked at all, so nothing is known about whether it was
+// worked.
+
+test('a flagged travel day with travel_works also bills a full work day on top of the '
+  + 'travel rate', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 20000,
+    days: [day({ date: '2026-09-01', travel_in: true, travel_works: true })],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 100000 + 20000)
+  const result = buildForecast(baseInput({ shows: [s] }))
+  const proj = result.showProjections[0]
+  assert.equal(proj.dayCount, 1)
+  assert.equal(proj.travelDays, 1)
+  assert.equal(proj.dayCents, 100000)
+  assert.equal(proj.travelCents, 20000)
+})
+
+test('a flagged travel day WITHOUT travel_works still bills travel only — unchanged from '
+  + 'before travel_works existed', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 20000,
+    days: [day({ date: '2026-09-01', travel_in: true })],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 20000)
+  const result = buildForecast(baseInput({ shows: [s] }))
+  const proj = result.showProjections[0]
+  assert.equal(proj.dayCount, 0)
+  assert.equal(proj.travelDays, 1)
+})
+
+test('a worked travel day that is also flagged pay_as_half_day bills the travel rate plus a '
+  + 'half day rate, not a full one', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 20000,
+    days: [day({ date: '2026-09-01', travel_in: true, travel_works: true, pay_as_half_day: true })],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 20000 + 50000) // travel + half of 100000
+  const result = buildForecast(baseInput({ shows: [s] }))
+  const proj = result.showProjections[0]
+  assert.equal(proj.dayCount, 0.5)
+  assert.equal(proj.travelDays, 1)
+  assert.equal(proj.dayCents, 50000)
+  assert.equal(proj.travelCents, 20000)
+})
+
+test('a day flagged BOTH travel_in and travel_out, with travel_works, still counts as ONE '
+  + 'travel day plus ONE work day — never two travel legs', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 20000,
+    days: [day({ date: '2026-09-01', travel_in: true, travel_out: true, travel_works: true })],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 100000 + 20000)
+  const result = buildForecast(baseInput({ shows: [s] }))
+  const proj = result.showProjections[0]
+  assert.equal(proj.dayCount, 1)
+  assert.equal(proj.travelDays, 1)
+})
+
+test('travel_works on a day with no travel flags at all is ignored entirely — it only means '
+  + 'something on an actual travel day', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 20000,
+    days: [day({ date: '2026-09-01', travel_works: true })],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 100000)
+  const result = buildForecast(baseInput({ shows: [s] }))
+  const proj = result.showProjections[0]
+  assert.equal(proj.dayCount, 1)
+  assert.equal(proj.travelDays, 0)
+})
+
+test('an ASSUMED travel day is never treated as worked, even if travel_works is somehow true '
+  + 'on it (defensive) — the assumption fires only when nothing was marked, so nothing is '
+  + 'known about whether that day was worked', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Orlando, FL',
+    days: [
+      day({ date: '2026-09-01', travel_works: true }),
+      day({ date: '2026-09-02', travel_works: true }),
+    ],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 2 * 25000)
+  const result = buildForecast(baseInput({ shows: [s] }))
+  const proj = result.showProjections[0]
+  assert.equal(proj.dayCount, 0)
+  assert.equal(proj.travelDays, 2)
+  assert.equal(proj.travelAssumed, true)
+})
+
+test('a single flagged, worked travel day still suppresses the out-of-state assumption for '
+  + 'the rest of an otherwise-unmarked show, and is itself both a travel day and a work day', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000,
+    location: 'Orlando, FL', // out of state — would independently justify a 2-day assumption
+    days: [
+      day({ date: '2026-09-01', travel_in: true, travel_works: true }), // flagged, worked travel day
+      day({ date: '2026-09-02' }), // plain work day
+      day({ date: '2026-09-03' }), // plain work day — NOT auto-marked travel by the assumption
+    ],
+  })
+  const result = buildForecast(baseInput({ shows: [s] }))
+  const proj = result.showProjections[0]
+  assert.equal(proj.travelAssumed, false)
+  assert.equal(proj.travelDays, 1)
+  assert.equal(proj.dayCount, 3) // worked 09-01 + plain 09-02 + plain 09-03
+  assert.equal(proj.travelCents, 25000)
+  assert.equal(proj.dayCents, 3 * 100000)
 })
 
 // ---------------------------------------------------------------------------
