@@ -32,27 +32,21 @@ between `/money/budget` and the tool he actually knows.
   ledger stay the source of truth (it should) or gain a per-month budgeted
   table beside it.
 
-## Show day types — travel, work, or both (2026-08-22, Dan)
+## Show day types — SHIPPED 2026-08-22
 
-Dan: *"It would be good for forecasting to allow day types for first and
-last day. So travel + day rate or travel only. Most of the time I know this
-ahead of time."*
-
-- Today a `show_days` row is a work day with optional `travel_in`/
-  `travel_out` flags (0005), and the forecast ASSUMES the first and last day
-  of an out-of-state multi-day show are travel-only. This item replaces the
-  assumption with knowledge for the (common) case where Dan knows in advance.
-- Wanted: mark a day as **travel only** (travel rate, no day rate) or
-  **travel + work** (both — which is what the real billing engine already
-  does when a flagged day carries punches, and pays more).
-- **Supersedes** the deferred 2-day out-of-state case: Dan noted a 2-day
-  out-of-state block is really two travel days plus a show day, and the
-  forecast currently prices it as 2 travel + 0 work. Explicit day types make
-  that a non-question.
-- Note the asymmetry to preserve: the FORECAST is deliberately conservative
-  (travel day = no day rate); the INVOICE bills what actually happened from
-  punches. Day types should inform the forecast without changing how a
-  worked travel day bills.
+Built as `show_days.travel_works` (migration 0036; design:
+docs/superpowers/specs/2026-08-22-show-day-types-design.md). An "Also
+working" checkbox appears on any day flagged travelled in/out; ticking it
+adds a day rate on top of the travel rate in the forecast. Forecast-only —
+billing already handled worked travel days correctly, because
+`computeShowLines` counts legs outside its punch gate.
+Still open from that design:
+- Marking day types at show creation (Dan had travel options removed from
+  the create screen deliberately; the out-of-state assumption covers
+  unmarked shows).
+- The 2-day out-of-state fallback still prices as 2 travel + 0 work when
+  nothing is marked. Explicit marks now answer it per-show; the fallback
+  itself is unchanged.
 
 ## Snap-a-receipt button on mobile (2026-08-22, Dan)
 
@@ -208,6 +202,13 @@ Still open from that design, deliberately deferred:
 
 ## Small / cosmetic
 
+- Forecast vs invoice on a both-legs day (2026-08-22): a day flagged BOTH
+  `travel_in` and `travel_out` projects as ONE travel day at one travel rate
+  (`lib/forecast.ts`), while `computeShowLines` bills TWO legs for it. The
+  forecast is the conservative side, and the case is rare, so it was left
+  alone deliberately rather than reconciled. Decide which is right if it ever
+  comes up in a real show.
+
 - Bridge accepted trade-offs (2026-08-21 final review): dismissals are a
   one-way door (no UI lists or deletes `ledger_match_dismissals`; dismissing
   a sum also suppresses future singles on the same pair); a bank row whose
@@ -246,3 +247,13 @@ Still open from that design, deliberately deferred:
   Fine while nothing writes transfers — revisit when account pairing lands.
 - `ledger_reconciliations` is written but never surfaced anywhere (audit trail
   only).
+
+- Forecast per-show breakdown line is ambiguous once a travel day can also be
+  worked (2026-08-22, day-types final review): "3 days · 2 travel" can't
+  distinguish a fully-accounted 5-day block from one where a worked travel
+  day is counted in both the days figure and the travel figure — and unlike
+  `travelAssumed`, which gets its own "assumed" tag, the double-counted case
+  gets no marker at all. Fixing it needs a block-length field on
+  `ShowProjection` (`lib/forecast.ts`) so the line can say "5-day block" and
+  let "days" and "travel" both be sub-counts of it. Deliberate follow-up, not
+  shipped with day-types.

@@ -387,6 +387,11 @@ export async function setTravelLeg(
   if (status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
 
   const column = leg === 'in' ? 'travel_in' : 'travel_out'
+
+  // travel_works requires a travel flag as a DATABASE invariant now
+  // (migration 0037's before-insert-or-update trigger) — clearing the last
+  // remaining leg here also clears travel_works, structurally, even if two
+  // legs are cleared in quick succession.
   const { error } = await supabase.from('show_days')
     .update({ [column]: value }).eq('id', showDayId)
   if (error) return { error: error.message }
@@ -974,6 +979,36 @@ export async function setDayHalfDay(showDayId: string, value: boolean): Promise<
 
   const { error } = await supabase.from('show_days')
     .update({ pay_as_half_day: value }).eq('id', showDayId)
+  if (error) return { error: error.message }
+
+  revalidatePath(`/shows/${(day as unknown as { show_id: string }).show_id}`)
+  return { ok: true }
+}
+
+/**
+ * Forecast-only: tells the projection a travel day will also be worked, so
+ * it can bill both a travel leg and a work day for that date (see
+ * lib/forecast.ts's ForecastShowDay). Billing already learns this from
+ * punches once they exist — this flag only carries the forecast before
+ * they do.
+ */
+export async function setDayTravelWorks(showDayId: string, value: boolean): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  // Walk the day's own foreign keys for the lock, the same way deletePunch
+  // does for a punch: show_days.show_id -> shows.status. Never trust a
+  // caller-supplied id for the lock decision.
+  const { data: day } = await supabase
+    .from('show_days').select('show_id, shows(status)').eq('id', showDayId).maybeSingle()
+  if (!day) return { error: 'That day no longer exists.' }
+
+  const status = (day as unknown as { shows: { status: string } }).shows?.status
+  if (status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
+
+  const { error } = await supabase.from('show_days')
+    .update({ travel_works: value }).eq('id', showDayId)
   if (error) return { error: error.message }
 
   revalidatePath(`/shows/${(day as unknown as { show_id: string }).show_id}`)

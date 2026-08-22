@@ -84,7 +84,10 @@ type RawShowRow = {
   pm_role: boolean
   location: string | null
   invoice_id: string | null
-  show_days: { date: string; travel_in: boolean; travel_out: boolean; pay_as_half_day: boolean }[]
+  show_days: {
+    date: string; travel_in: boolean; travel_out: boolean
+    pay_as_half_day: boolean; travel_works: boolean
+  }[]
 }
 
 // Both 'open' and 'billed' shows, unfiltered — a billed show still needs to
@@ -101,7 +104,7 @@ async function fetchAllForecastShows(
       .from('shows')
       .select(`id, name, client_id, status, day_rate_cents, travel_rate_cents,
                 pm_rate_cents, pm_role, location, invoice_id,
-                show_days(date, travel_in, travel_out, pay_as_half_day)`)
+                show_days(date, travel_in, travel_out, pay_as_half_day, travel_works)`)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
       .range(from, from + PAGE_SIZE - 1)
@@ -247,10 +250,11 @@ function AssumptionRow({
  *  the non-zero COUNTS (`dayCount`/`travelDays`/`pmHours`), not dollars — the
  *  row's own total (`totalCents`) already carries the money, so a second
  *  dollar figure per component just repeated it in smaller type. `dayCount`
- *  (work days) and `travelDays` partition the scheduled block — they never
- *  overlap and always sum to the show's total scheduled days, so "3 days ·
- *  2 travel" on a 5-day show reads as the whole block, not extra days
- *  bolted on. The counts come straight off `ShowProjection`, sourced from
+ *  (work days) and `travelDays` no longer strictly partition the scheduled
+ *  block: a flagged travel day with `travel_works` set counts in BOTH, so
+ *  "3 days · 2 travel" on a 5-day show can mean a worked travel day is
+ *  counted twice, not that the block is exactly 5. The counts come straight
+ *  off `ShowProjection`, sourced from
  *  the same computation as `dayCents`/`travelCents`/`pmCents` (see its doc
  *  comment in lib/forecast.ts) — but a count can be positive while its own
  *  dollars are exactly zero (a $0 travel or PM rate), so each part below is
@@ -269,7 +273,9 @@ function BookedShowRow({ sp, lastRenderedMonth }: { sp: ShowProjection; lastRend
     : `${formatDateShort(sp.firstDay)}–${formatDateShort(sp.lastDay)}`
 
   const parts: { key: string; node: React.ReactNode }[] = []
-  if (sp.dayCount > 0) parts.push({ key: 'days', node: `${sp.dayCount} day${sp.dayCount === 1 ? '' : 's'}` })
+  if (sp.dayCount > 0 && sp.dayCents > 0) {
+    parts.push({ key: 'days', node: `${sp.dayCount} day${sp.dayCount === 1 ? '' : 's'}` })
+  }
   if (sp.travelDays > 0 && sp.travelCents > 0) {
     parts.push({
       key: 'travel',
@@ -422,7 +428,8 @@ export default async function MoneyForecastPage() {
       pm_role: s.pm_role,
       location: s.location,
       days: (s.show_days ?? []).map((d) => ({
-        date: d.date, travel_in: d.travel_in, travel_out: d.travel_out, pay_as_half_day: d.pay_as_half_day,
+        date: d.date, travel_in: d.travel_in, travel_out: d.travel_out,
+        pay_as_half_day: d.pay_as_half_day, travel_works: d.travel_works,
       })),
     }
   })

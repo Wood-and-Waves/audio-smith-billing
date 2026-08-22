@@ -29,21 +29,26 @@
 // time when the show data doesn't say so explicitly. Travel days are part of
 // the scheduled block, never added on top of it (Dan: "the standard practice
 // is to have for a 6 day show, 2 travel days and 4 working days. That is the
-// most conservative.") — every scheduled day is EITHER a travel day or a
-// work day, never both. A day flagged `travel_in` or `travel_out` (either or
-// both) IS a travel day; with nothing flagged at all, an out-of-state show
-// (see `stateOf`) that runs more than one day is assumed to need its FIRST
-// and LAST scheduled day as travel (see the travel-day rule in
-// `computeShowBreakdown`) — a one-day out-of-town gig is flown in and out
-// the same day, not billed as travel, so a one-day show never gets the
-// assumption, and a 2-day out-of-state show with no flags is 2 travel days
-// and ZERO work days, deliberately not special-cased. Dan sometimes travels
-// and works the same day, which pays more — but the forecast always plans
-// the cheaper, more conservative case. A show with `pm_role` set gets a flat
-// `PM_FORECAST_HOURS` of PM time billed once, never per day. Both are
-// reported per-show in `showProjections`, which lists exactly the shows that
-// fed `inflows` — the two are computed from the same pass over `shows` so
-// they can never drift apart.
+// most conservative.") — every scheduled day is a travel day, a work day, or
+// (when Dan explicitly marks it) both. A day flagged `travel_in` or
+// `travel_out` (either or both) IS a travel day; with nothing flagged at
+// all, an out-of-state show (see `stateOf`) that runs more than one day is
+// assumed to need its FIRST and LAST scheduled day as travel (see the
+// travel-day rule in `computeShowBreakdown`) — a one-day out-of-town gig is
+// flown in and out the same day, not billed as travel, so a one-day show
+// never gets the assumption, and a 2-day out-of-state show with no flags is
+// 2 travel days and ZERO work days, deliberately not special-cased. Dan
+// sometimes travels and works the same day, which pays more — a FLAGGED
+// travel day that ALSO has `travel_works` set bills both a travel rate and a
+// work day (the work half still respects `pay_as_half_day`), but an ASSUMED
+// travel day is never worked: the assumption only fires when nothing was
+// marked at all, so nothing is known about whether it was worked, and the
+// forecast still plans the cheaper, more conservative case whenever it's
+// guessing rather than reading an explicit mark. A show with `pm_role` set
+// gets a flat `PM_FORECAST_HOURS` of PM time billed once, never per day.
+// Both are reported per-show in `showProjections`, which lists exactly the
+// shows that fed `inflows` — the two are computed from the same pass over
+// `shows` so they can never drift apart.
 //
 // `today` is always a parameter, never read from a clock in here — see
 // lib/dates.ts and lib/status.ts, which insist on the same thing for the
@@ -61,6 +66,7 @@ export type ForecastShowDay = {
   travel_in: boolean
   travel_out: boolean
   pay_as_half_day: boolean
+  travel_works: boolean // Dan explicitly marks this travel day as also worked
 }
 
 /** Flat PM time billed once per show (not per day) when `pm_role` is set. */
@@ -147,9 +153,13 @@ export type ShowProjection = {
   // dollar figure is exactly zero, though — a $0 travel or PM rate prices a
   // real day/hour count at $0 — so a UI rendering these counts must also
   // check the matching cents field before claiming the work as paid-for.
-  // dayCount and travelDays partition the scheduled block, never overlap —
-  // dayCount + travelDays always equals the show's total scheduled days.
-  dayCount: number // WORK days only; a half day counts as 0.5
+  // dayCount and travelDays no longer strictly partition the scheduled
+  // block: a FLAGGED (never assumed) travel day with `travel_works` set
+  // counts in BOTH — it's a travel day (travelDays) that's ALSO a work day
+  // (dayCount). An assumed travel day is never worked, so dayCount +
+  // travelDays equals the show's total scheduled days PLUS the number of
+  // worked travel days (zero when none are marked).
+  dayCount: number // WORK days only; a half day counts as 0.5; includes worked travel days
   travelDays: number // flagged travel days, or 2 when travelAssumed
   pmHours: number // 0 or PM_FORECAST_HOURS
   travelAssumed: boolean // true when the days came from the out-of-state rule, not flagged days
@@ -211,17 +221,17 @@ type ShowBreakdown = {
   travelCents: number
   pmCents: number
   totalCents: number
-  dayCount: number // WORK days only; fullDays + halfDays * 0.5
+  dayCount: number // WORK days only; fullDays + halfDays * 0.5 (includes worked travel days)
   travelDays: number // same value that priced travelCents
   pmHours: number // same value that priced pmCents
   travelAssumed: boolean
 }
 
-/** Every scheduled day is EITHER a travel day or a work day, never both —
- *  travel days are part of the scheduled block (the owner's "most
- *  conservative" reading of standard practice), not added on top of it.
- *  Travel days come from flagged days when any are flagged (a day counts
- *  once even if it carries both `travel_in` and `travel_out` — the
+/** A scheduled day is a travel day, a work day, or — when Dan explicitly
+ *  marks it — both; travel days are part of the scheduled block (the
+ *  owner's "most conservative" reading of standard practice), not added on
+ *  top of it. Travel days come from flagged days when any are flagged (a day
+ *  counts once even if it carries both `travel_in` and `travel_out` — the
  *  double-count guard); otherwise an out-of-state show (per `stateOf` vs the
  *  normalized `homeState`) that has MORE THAN ONE scheduled day is assumed
  *  to need exactly 2 travel days — its FIRST and LAST scheduled day by
@@ -229,19 +239,30 @@ type ShowBreakdown = {
  *  billed as travel, so a one-day show never picks up the assumption.
  *  Flagged days always win over the assumption in every case, including on a
  *  one-day show — if Dan flags travel on a single-day show, that flag is
- *  honored regardless. Every day that isn't a travel day is a work day: full
- *  rate, or half (rounded) when `pay_as_half_day` — a travel day's own
- *  `pay_as_half_day` flag is irrelevant, since it isn't a work day at all. A
- *  literal, deliberate consequence: a 2-day out-of-state show with no flags
- *  is 2 travel days and ZERO work days — not special-cased. Dan reviewed
- *  this exact case: a short out-of-state trip is really two travel days
- *  plus a show day (a 3-day block, not 2), but teaching this function to
- *  guess "day 2 is probably also a work day" is a judgment call he
- *  deliberately deferred rather than asked for — so this is NOT a bug to
- *  "fix" unasked; it's the literal, intended output of the rule above until
- *  he asks for the short-trip case specifically. PM is `pm_role`'s flat
- *  `PM_FORECAST_HOURS * pm_rate_cents`, once per show regardless of day
- *  count. */
+ *  honored regardless. A travel day ALSO becomes a work day when that same
+ *  day's `travel_works` is true — Dan sometimes travels and works the same
+ *  day, which pays more — but only when the day's travel status came from an
+ *  explicit flag: an ASSUMED travel day is never worked, no matter what
+ *  `travel_works` says on it, because the assumption fires only when nothing
+ *  was marked at all, so nothing is actually known about whether it was
+ *  worked. A worked travel day still bills exactly ONE travel rate (the
+ *  double-count guard applies here too) plus ONE work day, and that work day
+ *  respects `pay_as_half_day` like any other day; an unworked travel day's
+ *  own `pay_as_half_day` remains irrelevant, since it isn't a work day at
+ *  all. Every day that isn't a travel day is plainly a work day: full rate,
+ *  or half (rounded) when `pay_as_half_day`. A literal consequence: a 2-day
+ *  out-of-state show with NO flags at all is still 2 travel days and ZERO
+ *  work days — not special-cased, and not upgraded to a worked day just
+ *  because that would be plausible, since nothing on either day says it was
+ *  worked. Dan reviewed this exact case once: a short out-of-state trip is
+ *  often really two travel days plus a show day, but teaching this function
+ *  to GUESS "day 2 is probably also a work day" was a judgment call he
+ *  deliberately deferred rather than asked for. `travel_works` is that
+ *  judgment call made explicit instead of guessed: if Dan knows a travel day
+ *  was worked, he marks it, and this function honors the mark — it still
+ *  never invents the answer on its own when nothing is marked. PM is
+ *  `pm_role`'s flat `PM_FORECAST_HOURS * pm_rate_cents`, once per show
+ *  regardless of day count. */
 function computeShowBreakdown(show: ForecastShow, homeState: string): ShowBreakdown {
   // Same bad-data clamping doctrine as the rate guards just below: `stateOf`
   // already trims+uppercases the show's own location before comparing, but
@@ -291,7 +312,14 @@ function computeShowBreakdown(show: ForecastShow, homeState: string): ShowBreakd
   let halfDays = 0
   let travelDays = 0
   for (let i = 0; i < show.days.length; i++) {
-    if (isTravel[i]) { travelDays += 1; continue } // a travel day is never also a work day
+    if (isTravel[i]) {
+      travelDays += 1
+      // A travel day is ALSO a work day only when Dan explicitly marked it
+      // worked AND that mark came from a flag, not the out-of-state
+      // assumption — the assumption fires only when nothing was marked at
+      // all, so nothing is known about whether the day was worked.
+      if (!show.days[i].travel_works || travelAssumed) continue
+    }
     if (show.days[i].pay_as_half_day) halfDays += 1
     else fullDays += 1
   }

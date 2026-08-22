@@ -19,6 +19,7 @@ import ShowSettings from '@/components/ShowSettings'
 import HalfDayToggle from '@/components/HalfDayToggle'
 import RemoveDayButton from '@/components/RemoveDayButton'
 import TravelLegToggle from '@/components/TravelLegToggle'
+import TravelWorksToggle from '@/components/TravelWorksToggle'
 import PmLog from '@/components/PmLog'
 import ExpenseLog from '@/components/ExpenseLog'
 import DeleteShowButton from '@/components/DeleteShowButton'
@@ -28,7 +29,7 @@ export const dynamic = 'force-dynamic'
 type Punch = { id: string; punch_type: string; punched_at: string }
 type Day = {
   id: string; date: string; travel_in: boolean; travel_out: boolean
-  pay_as_half_day: boolean; punches: Punch[]
+  pay_as_half_day: boolean; travel_works: boolean; punches: Punch[]
 }
 type PmEntry = { id: string; worked_on: string; minutes: number; note: string | null }
 type Expense = {
@@ -72,7 +73,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
              continuous_time_enabled, bill_hourly, rate_card_name,
              clients(name),
              invoices(number, status, subtotal_cents),
-             show_days(id, date, travel_in, travel_out, pay_as_half_day,
+             show_days(id, date, travel_in, travel_out, pay_as_half_day, travel_works,
                        punches(id, punch_type, punched_at)),
              pm_entries(id, worked_on, minutes, note),
              expenses(id, category, where_spent, amount_cents, spent_on, receipt_path,
@@ -285,10 +286,16 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
                         d.travel_in && 'travel in',
                         d.travel_out && 'travel out',
                         d.pay_as_half_day && 'half day',
+                        // A travel day Dan also expects to work (travel_works,
+                        // migration 0036) bills a day rate on top of the leg —
+                        // say so, so the eyebrow agrees with the forecast.
+                        d.travel_works && 'also working',
                         // A day carrying a travel leg but no punches (e.g. a
                         // pure fly-in day) is intentional, not an unfinished
-                        // day someone forgot to punch — say so.
-                        d.punches.length === 0 && (d.travel_in || d.travel_out) && 'travel only',
+                        // day someone forgot to punch — say so. But not when
+                        // travel_works is set: the forecast prices that day as
+                        // travel + day rate, so "travel only" would contradict it.
+                        d.punches.length === 0 && (d.travel_in || d.travel_out) && !d.travel_works && 'travel only',
                       ].filter(Boolean).join(' · ')}
                     </span>
                     <RemoveDayButton showDayId={d.id} date={d.date} locked={locked} />
@@ -318,6 +325,17 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
                   <span className="flex flex-wrap items-center gap-3">
                     <TravelLegToggle showDayId={d.id} leg="in" checked={d.travel_in} locked={locked} />
                     <TravelLegToggle showDayId={d.id} leg="out" checked={d.travel_out} locked={locked} />
+                    {
+                      // Only offered once a leg is actually flagged — a day
+                      // with no travel has nothing for "also working" to
+                      // qualify. Hiding it is safe because a legless day can
+                      // never HOLD travel_works: migration 0037's trigger
+                      // forces it false on write, so this gate can't strand a
+                      // stale value out of reach of the only control for it.
+                      (d.travel_in || d.travel_out) && (
+                        <TravelWorksToggle showDayId={d.id} checked={d.travel_works} locked={locked} />
+                      )
+                    }
                   </span>
                   {
                     // The toggle only appears under 5 net hours — a half
