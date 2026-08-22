@@ -252,12 +252,12 @@ function AssumptionRow({
 
 /** One row in the "Booked shows" list — the per-show breakdown backing each
  *  show's contribution to `inflows`. The muted line under the name states
- *  only the non-zero money components (`dayCents`/`travelCents`/`pmCents`),
- *  never a day or leg COUNT: `ShowProjection` doesn't expose one, and
- *  reverse-deriving a count from cents ÷ rate would be re-deriving show
- *  arithmetic in the page — exactly the duplicate-computation risk
- *  `ShowProjection`'s own doc comment (lib/forecast.ts) warns against, since
- *  a page-side recomputation could silently drift from what buildForecast
+ *  the non-zero COUNTS (`dayCount`/`travelLegs`/`pmHours`), not dollars — the
+ *  row's own total (`totalCents`) already carries the money, so a second
+ *  dollar figure per component just repeated it in smaller type. The counts
+ *  come straight off `ShowProjection`, sourced from the same computation as
+ *  `dayCents`/`travelCents`/`pmCents` (see its doc comment in
+ *  lib/forecast.ts), so they can never drift from what buildForecast
  *  actually charged. `travelAssumed` gets its own quiet marker (matching the
  *  "Short" / "Booked work ends" tag idiom in ForecastTable) rather than
  *  folding into the travel figure itself, so an assumed leg reads distinctly
@@ -268,13 +268,13 @@ function BookedShowRow({ sp }: { sp: ShowProjection }) {
     : `${formatDateShort(sp.firstDay)}–${formatDateShort(sp.lastDay)}`
 
   const parts: { key: string; node: React.ReactNode }[] = []
-  if (sp.dayCents > 0) parts.push({ key: 'days', node: `${formatUSD(sp.dayCents)} days` })
-  if (sp.travelCents > 0) {
+  if (sp.dayCount > 0) parts.push({ key: 'days', node: `${sp.dayCount} day${sp.dayCount === 1 ? '' : 's'}` })
+  if (sp.travelLegs > 0) {
     parts.push({
       key: 'travel',
       node: (
         <>
-          {formatUSD(sp.travelCents)} travel
+          {sp.travelLegs} travel
           {sp.travelAssumed && (
             <span className="ml-1 text-[10px] font-semibold uppercase tracking-wider text-muted">assumed</span>
           )}
@@ -282,7 +282,7 @@ function BookedShowRow({ sp }: { sp: ShowProjection }) {
       ),
     })
   }
-  if (sp.pmCents > 0) parts.push({ key: 'pm', node: `${formatUSD(sp.pmCents)} PM` })
+  if (sp.pmHours > 0) parts.push({ key: 'pm', node: `${sp.pmHours}h PM` })
 
   return (
     <li>

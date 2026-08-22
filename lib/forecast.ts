@@ -134,6 +134,12 @@ export type ShowProjection = {
   travelCents: number
   pmCents: number
   totalCents: number
+  // Counts backing the money above, for the forecast screen's breakdown
+  // line — same loop in computeShowBreakdown as dayCents/travelCents/pmCents,
+  // never a second computation, so a count can never drift from its dollars.
+  dayCount: number // scheduled days; a half day counts as 0.5
+  travelLegs: number // flagged legs, or 2 when travelAssumed
+  pmHours: number // 0 or PM_FORECAST_HOURS
   travelAssumed: boolean // true when the legs came from the out-of-state rule, not flagged days
   landsMonth: string // YYYY-MM the cash is expected
 }
@@ -193,6 +199,9 @@ type ShowBreakdown = {
   travelCents: number
   pmCents: number
   totalCents: number
+  dayCount: number // fullDays + halfDays * 0.5
+  travelLegs: number // same value that priced travelCents
+  pmHours: number // same value that priced pmCents
   travelAssumed: boolean
 }
 
@@ -244,10 +253,12 @@ function computeShowBreakdown(show: ForecastShow, homeState: string): ShowBreakd
   }
   const travelCents = legs * travelRate
 
-  const pmCents = show.pm_role ? PM_FORECAST_HOURS * pmRate : 0
+  const pmHours = show.pm_role ? PM_FORECAST_HOURS : 0
+  const pmCents = pmHours * pmRate
 
   return {
-    firstDay, lastDay, dayCents, travelCents, pmCents, totalCents: dayCents + travelCents + pmCents, travelAssumed,
+    firstDay, lastDay, dayCents, travelCents, pmCents, totalCents: dayCents + travelCents + pmCents,
+    dayCount: fullDays + halfDays * 0.5, travelLegs: legs, pmHours, travelAssumed,
   }
 }
 
@@ -373,6 +384,9 @@ export function buildForecast(input: {
       travelCents: breakdown.travelCents,
       pmCents: breakdown.pmCents,
       totalCents: breakdown.totalCents,
+      dayCount: breakdown.dayCount,
+      travelLegs: breakdown.travelLegs,
+      pmHours: breakdown.pmHours,
       travelAssumed: breakdown.travelAssumed,
       landsMonth: month,
     })

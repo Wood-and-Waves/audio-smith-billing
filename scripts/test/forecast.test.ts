@@ -791,3 +791,54 @@ test('a multi-day PM show contributes one showProjections row with pmCents count
   assert.equal(proj.pmCents, PM_FORECAST_HOURS * 7500)
   assert.equal(proj.totalCents, 4 * 100000 + PM_FORECAST_HOURS * 7500)
 })
+
+test('showProjections count fields (dayCount/travelLegs/pmHours) reconcile with the money fields '
+  + 'on a mixed out-of-state, multi-day, PM show with one half day', () => {
+  const mixedShow = show({
+    id: 's1', name: 'Mixed Show', client_id: 'c1',
+    day_rate_cents: 100000, travel_rate_cents: 20000, pm_rate_cents: 7500, pm_role: true,
+    location: 'Orlando, FL', // out of state vs HOME_STATE 'IL' — the travel assumption fires
+    days: [
+      day({ date: '2026-09-01' }),
+      day({ date: '2026-09-02' }),
+      day({ date: '2026-09-03' }),
+      day({ date: '2026-09-04', pay_as_half_day: true }), // 4 scheduled days, one half
+    ],
+  })
+  const result = buildForecast(baseInput({ shows: [mixedShow] }))
+  assert.equal(result.showProjections.length, 1)
+  const proj = result.showProjections[0]
+
+  // 3 full days + 1 half day = 3.5
+  assert.equal(proj.dayCount, 3.5)
+  // no flagged legs, but >1 scheduled day and out-of-state -> the 2-leg assumption
+  assert.equal(proj.travelLegs, 2)
+  assert.equal(proj.travelAssumed, true)
+  // pm_role set -> the flat PM_FORECAST_HOURS, once
+  assert.equal(proj.pmHours, PM_FORECAST_HOURS)
+
+  // Same computation as the money fields, not a second pass — these must reconcile exactly.
+  const halfRate = Math.round(100000 / 2)
+  assert.equal(proj.dayCents, 3 * 100000 + halfRate)
+  assert.equal(proj.travelCents, proj.travelLegs * 20000)
+  assert.equal(proj.pmCents, proj.pmHours * 7500)
+})
+
+test('showProjections count fields on a plain one-day local show: 1 day, no travel, no PM', () => {
+  const localShow = show({
+    id: 's2', name: 'Local Show', client_id: 'c1',
+    day_rate_cents: 80000, travel_rate_cents: 15000, pm_rate_cents: 0, pm_role: false,
+    location: 'Chicago, IL', // same as HOME_STATE, and only one day anyway
+    days: [day({ date: '2026-09-10' })],
+  })
+  const result = buildForecast(baseInput({ shows: [localShow] }))
+  assert.equal(result.showProjections.length, 1)
+  const proj = result.showProjections[0]
+  assert.equal(proj.dayCount, 1)
+  assert.equal(proj.travelLegs, 0)
+  assert.equal(proj.travelAssumed, false)
+  assert.equal(proj.pmHours, 0)
+  assert.equal(proj.dayCents, 80000)
+  assert.equal(proj.travelCents, 0)
+  assert.equal(proj.pmCents, 0)
+})
