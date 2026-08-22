@@ -186,7 +186,17 @@ status.
   (0032: /money/matches review queue — nothing applies without a click;
   register shows #invoice chips + linked-expense receipts + Unlink; invoice
   page shows Paid date + its deposit; Matches count badge on /money; cards
-  carry sent dates + a "Payee matches" badge, agreeing twin sorts first).
+  carry sent dates + a "Payee matches" badge, agreeing twin sorts first);
+  the /calendar month grid + flights + public ICS feed (0033: `flights`
+  table — schedule entries, no show link, only number+date required;
+  `settings.calendar_token` uuid; feed at /cal/{token}.ics reads through
+  the security-definer `public_calendar_feed` RPC like /i does — NEVER
+  service-role, and it carries SCHEDULE FACTS ONLY (it joins the
+  client-facing chokepoint list); '/cal' is a PUBLIC_PREFIX, the /calendar
+  page is not; flight lookup = AeroDataBox via RapidAPI (`FLIGHT_API_KEY`,
+  server-only; parser in lib/flightLookup.ts, canned-fixture tested;
+  everything but lookup works keyless); month-grid helpers live in
+  lib/dates.ts under its UTC-pinning doctrine; nav is SIX items).
 - **The ledger is Dan's live books**: YNAB Register backfilled to prod
   2026-08-20 — 328 txns in "Chase Checking" (opening $585.75 @ 2026-01-01,
   ending verified against the bank). Monthly OFX imports adopt the manual
