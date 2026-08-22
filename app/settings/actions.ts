@@ -22,6 +22,13 @@ export type SettingsInput = {
   // Basis points, 3000 = 30%. Estimate-only — the rate is Dan's/his CPA's
   // number, never computed by this app.
   tax_setaside_bp: number
+  // The three assumptions the cash-flow forecast reads from Settings.
+  // Integer cents, like every other money field in this app.
+  monthly_take_home_cents: number
+  // null = use the trailing 3-month average computed by the forecast;
+  // a number here overrides it. Meaningfully different from 0.
+  monthly_overhead_cents: number | null
+  billing_lag_days: number
 }
 
 type Fail = { error: string }
@@ -49,6 +56,24 @@ export async function saveSettings(input: SettingsInput): Promise<Fail | { ok: t
     return { error: 'Tax set-aside must be between 0% and 100%.' }
   }
 
+  if (!Number.isInteger(input.monthly_take_home_cents) || input.monthly_take_home_cents < 0) {
+    return { error: 'Monthly take-home must be zero or more.' }
+  }
+
+  if (
+    input.monthly_overhead_cents !== null &&
+    (!Number.isInteger(input.monthly_overhead_cents) || input.monthly_overhead_cents < 0)
+  ) {
+    return { error: 'Monthly overhead must be zero or more, or left blank to use the average.' }
+  }
+
+  if (
+    !Number.isInteger(input.billing_lag_days) ||
+    input.billing_lag_days < 0 || input.billing_lag_days > 120
+  ) {
+    return { error: 'Billing lag must be between 0 and 120 days.' }
+  }
+
   // Lowering this would hand out an invoice number that already exists, and
   // the unique index on (owner_id, number) would reject the next invoice
   // with a database error the user cannot interpret. Refuse it here, clearly.
@@ -74,6 +99,9 @@ export async function saveSettings(input: SettingsInput): Promise<Fail | { ok: t
     default_terms_days: input.default_terms_days,
     next_invoice_number: input.next_invoice_number,
     tax_setaside_bp: input.tax_setaside_bp,
+    monthly_take_home_cents: input.monthly_take_home_cents,
+    monthly_overhead_cents: input.monthly_overhead_cents,
+    billing_lag_days: input.billing_lag_days,
   }
 
   // owner_id, not `id = 1`. This is a WRITE: keyed on the singleton row it
