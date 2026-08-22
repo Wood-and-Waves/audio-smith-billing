@@ -124,10 +124,28 @@ test('a show with no scheduled days projects zero, no crash', () => {
 // ---------------------------------------------------------------------------
 // projectedShowCents — assumed travel legs (out-of-state rule + double-count guard)
 
-test('an out-of-state show with no flagged legs assumes 2 legs at its own travel rate', () => {
+test('a multi-day out-of-state show with no flagged legs assumes 2 legs at its own travel rate', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Orlando, FL',
+    days: [day({ date: '2026-09-01' }), day({ date: '2026-09-02' })],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 2 * 100000 + 2 * 25000)
+})
+
+test('a one-day out-of-state show assumes NO travel legs — flown in and out the same day, '
+  + 'not billed as travel days', () => {
   const s = show({
     day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Orlando, FL',
     days: [day({ date: '2026-09-01' })],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 100000)
+})
+
+test('a one-day out-of-state show WITH flagged legs still uses the flags, not the (absent) '
+  + 'assumption', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Orlando, FL',
+    days: [day({ date: '2026-09-01', travel_in: true, travel_out: true })],
   })
   assert.equal(projectedShowCents(s, HOME_STATE), 100000 + 2 * 25000)
 })
@@ -729,7 +747,7 @@ test('travelAssumed is true only when legs came from the out-of-state rule, neve
     id: 's-out', name: 'OutOfState Show', client_id: 'c1',
     day_rate_cents: 100000, travel_rate_cents: 20000,
     location: 'Orlando, FL',
-    days: [day({ date: '2026-09-01' })],
+    days: [day({ date: '2026-09-01' }), day({ date: '2026-09-02' })], // >1 day so the assumption fires
   })
   const flagged = show({
     id: 's-flag', name: 'Flagged Show', client_id: 'c1',

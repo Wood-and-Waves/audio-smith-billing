@@ -813,9 +813,6 @@ export type UpdateShowInput = {
   day_rate: string             // raw USD input, e.g. "780" or "$780.00"
   travel_rate: string          // raw USD input
   pm_rate: string               // raw USD input
-  // Dan is PM on this show. Forecast-only (migration 0035) — see the billed
-  // branch below for why this one field is not behind the billed lock that
-  // guards everything else in this type.
   pm_role: boolean
   ot_after_hours: number
   // Raw string, not a number: an empty box must become NULL ("no double
@@ -854,21 +851,7 @@ export async function updateShow(input: UpdateShowInput): Promise<Fail | { ok: t
   // Derive the lock from the row being touched, never trust a caller flag.
   const { data: show } = await supabase.from('shows').select('status').eq('id', input.id).maybeSingle()
   if (!show) return { error: 'That show no longer exists.' }
-
-  // pm_role is forecast-only and affects no invoice — lib/forecast.ts skips
-  // every billed show outright (its invoice already covers it), so flipping
-  // this flag after billing changes nothing downstream. Unlike every field
-  // below, it is written and returned here, BEFORE the billed lock that
-  // guards the rest of this function. Do not "fix" this into matching its
-  // neighbours: that would only make the checkbox pointlessly frozen on an
-  // old show for no correctness reason.
-  if (show.status === 'billed') {
-    const { error } = await supabase.from('shows').update({ pm_role: input.pm_role }).eq('id', input.id)
-    if (error) return { error: error.message }
-    revalidatePath(`/shows/${input.id}`)
-    revalidatePath('/shows')
-    return { ok: true }
-  }
+  if (show.status === 'billed') return { error: 'This show is billed. Unlink it before editing.' }
 
   if (!input.name.trim()) return { error: 'Give the show a name.' }
 

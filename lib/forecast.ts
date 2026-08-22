@@ -27,8 +27,11 @@
 //
 // A show's cash also includes what the model ASSUMES about travel and PM
 // time when the show data doesn't say so explicitly: an out-of-state show
-// with no travel legs flagged on any of its days is assumed to need two (see
-// `stateOf` and the travel-leg rule in `projectedShowCents`), and a show
+// that runs more than one day, with no travel legs flagged on any of its
+// days, is assumed to need two (see `stateOf` and the travel-leg rule in
+// `projectedShowCents`) — a one-day out-of-town gig is flown in and out the
+// same day, not billed as travel days, so a one-day show never gets the
+// assumption. A show
 // with `pm_role` set gets a flat `PM_FORECAST_HOURS` of PM time billed once,
 // never per day. Both are reported per-show in `showProjections`, which
 // lists exactly the shows that fed `inflows` — the two are computed from the
@@ -195,10 +198,14 @@ type ShowBreakdown = {
 
 /** Every scheduled day is a work day (migration 0005). Travel legs come from
  *  flagged days when any are flagged; otherwise an out-of-state show (per
- *  `stateOf` vs `homeState`) is assumed to need exactly 2 legs — flagged
- *  legs always win so the two rules never both fire (the double-count
- *  guard). PM is `pm_role`'s flat `PM_FORECAST_HOURS * pm_rate_cents`, once
- *  per show regardless of day count. */
+ *  `stateOf` vs `homeState`) that has MORE THAN ONE scheduled day is assumed
+ *  to need exactly 2 legs — a single-day out-of-town gig is flown in and out
+ *  the same day, not billed as travel days, so a one-day show never picks up
+ *  the assumption. Flagged legs always win over the assumption in every
+ *  case, including on a one-day show (the double-count guard) — if Dan
+ *  flags travel on a single-day show, that flag is honored regardless. PM is
+ *  `pm_role`'s flat `PM_FORECAST_HOURS * pm_rate_cents`, once per show
+ *  regardless of day count. */
 function computeShowBreakdown(show: ForecastShow, homeState: string): ShowBreakdown {
   // Guard against nonsense input without throwing: a negative rate would
   // otherwise subtract from the projection instead of contributing nothing.
@@ -228,7 +235,7 @@ function computeShowBreakdown(show: ForecastShow, homeState: string): ShowBreakd
   let travelAssumed = false
   if (flaggedLegs > 0) {
     legs = flaggedLegs
-  } else {
+  } else if (show.days.length > 1) {
     const showState = stateOf(show.location)
     if (showState !== null && showState !== homeState) {
       legs = 2
