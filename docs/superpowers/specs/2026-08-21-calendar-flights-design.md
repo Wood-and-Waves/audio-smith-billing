@@ -1,3 +1,13 @@
+> **Postscript (2026-08-21, from planning/build):** three corrections to the
+> text below, discovered against the codebase. (1) The feed handler does NOT
+> use a service-role read — that would break the house invariant that
+> SUPABASE_SERVICE_ROLE_KEY lives in exactly two files; it reads through a
+> `security definer` RPC (`public_calendar_feed`, 0033) granted to anon,
+> mirroring `public_invoice`. (2) The token is a plain `uuid` minted with
+> `crypto.randomUUID()` (the invoices idiom), not "32 bytes" — inheriting the
+> UUID shape guard. (3) The route strips a trailing `.ics` before validating.
+> Provider chosen: AeroDataBox via RapidAPI (free tier, 600 units/mo).
+
 # Calendar page, flights, and the ICS feed — design
 
 *"This system drives my calendar" (Dan, 2026-08-21). Every booked show

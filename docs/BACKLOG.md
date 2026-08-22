@@ -38,18 +38,15 @@ Wanted: import MileIQ data to track reimbursable miles instead of retyping them.
 - Rate: use MileIQ's own computed value column rather than hardcoding the IRS
   rate (it changes yearly and MileIQ already applies the right one per drive).
 
-## Calendar from shows (2026-08-21, Dan)
+## Calendar from shows — SHIPPED 2026-08-21 (deferred bits below)
 
-"This system drives my calendar" — every booked show already carries the
-dates, venue, location and notes that could fill and update his calendar.
-- Sketch: a tokenized read-only **ICS feed** (the public-invoice-token
-  pattern): `/calendar/{token}.ics` serving every show day as an event —
-  title = show name, location = venue + city, all-day (or in/out times once
-  punches exist), description = client + rate-card name. Google/Apple
-  Calendar subscribe once and auto-refresh. No OAuth or push API needed for
-  a first pass.
-- Brainstorm openers: which calendar app; what belongs in the event body;
-  should travel days render differently; prep/lead-time events?
+Built as /calendar (month grid + flights + public ICS feed, migration 0033;
+design: docs/superpowers/specs/2026-08-21-calendar-flights-design.md).
+Still open from that design, deliberately deferred:
+- Travel-flagged show days rendering differently (grid and feed).
+- Punch in/out times inside feed events (all show days are all-day today).
+- Show↔flight linkage; personal-vs-work flight separation.
+- Live flight delay tracking / airline pushes (lookup is once, at entry).
 
 ## Show revenue projection + cash-flow forecast (2026-08-21, Dan)
 
