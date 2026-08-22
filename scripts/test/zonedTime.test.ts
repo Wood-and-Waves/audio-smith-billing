@@ -6,7 +6,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  wallToInstant, instantToWall, nearest15, friendlyTime,
+  wallToInstant, instantToWall, nearest15, friendlyTime, elapsedLabel,
 } from '../../lib/zonedTime.ts'
 
 test('a wall time is anchored to the show zone, not the machine zone', () => {
@@ -103,4 +103,34 @@ test('the readback is in the 12-hour form Dan reads on the floor', () => {
   assert.equal(friendlyTime('12:00'), '12:00 PM', 'noon is 12 PM, not 0 PM')
   assert.equal(friendlyTime('09:05'), '9:05 AM')
   assert.equal(friendlyTime('23:59'), '11:59 PM')
+})
+
+// elapsedLabel — the figure that reconciles two airport-local times.
+
+test('a flight across a timezone reads shorter than its clock times suggest', () => {
+  // 8:30 AM Central -> 12:10 PM Eastern is 2h40m, not the 3h40m the clocks imply.
+  const dep = wallToInstant('2026-09-12', '08:30', 'America/Chicago')
+  const arr = wallToInstant('2026-09-12', '12:10', 'America/New_York')
+  assert.equal(elapsedLabel(dep, arr), '2h 40m')
+})
+
+test('a whole number of hours drops the minutes', () => {
+  assert.equal(elapsedLabel('2026-09-12T14:00:00Z', '2026-09-12T17:00:00Z'), '3h')
+})
+
+test('under an hour reads as minutes alone', () => {
+  assert.equal(elapsedLabel('2026-09-12T14:00:00Z', '2026-09-12T14:45:00Z'), '45m')
+})
+
+test('arrival before departure returns null — a wrong duration is worse than none', () => {
+  assert.equal(elapsedLabel('2026-09-12T17:00:00Z', '2026-09-12T14:00:00Z'), null)
+})
+
+test('an unparseable instant returns null rather than NaN', () => {
+  assert.equal(elapsedLabel('not a date', '2026-09-12T14:00:00Z'), null)
+  assert.equal(elapsedLabel('2026-09-12T14:00:00Z', ''), null)
+})
+
+test('equal instants are zero minutes, not null', () => {
+  assert.equal(elapsedLabel('2026-09-12T14:00:00Z', '2026-09-12T14:00:00Z'), '0m')
 })

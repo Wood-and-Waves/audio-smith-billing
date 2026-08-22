@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { WEEKDAYS, formatDateLong } from '@/lib/dates'
-import { instantToWall, friendlyTime } from '@/lib/zonedTime'
+import { instantToWall, friendlyTime, elapsedLabel } from '@/lib/zonedTime'
 import { timezoneShortLabel } from '@/lib/timezones'
 import { deleteFlight } from '@/app/calendar/actions'
 import AddFlightDialog from '@/components/AddFlightDialog'
@@ -38,14 +38,24 @@ export type FlightEntry = {
 // the detail dialog is the real reader either way, this is just a preview.
 const MAX_VISIBLE = 3
 
-/** One leg's time, read back in its own zone — falls back to Chicago the
- *  same way the DB column comment (migration 0033) says display should. */
+/**
+ * One leg's time, read back in ITS OWN airport's zone — never converted to a
+ * single zone. That is the boarding-pass convention and the only one that
+ * answers the question a traveller actually has: be at this gate at this
+ * local time, land at that one.
+ *
+ * The zone LABEL is only shown when the zone is known. A flight typed by
+ * hand carries no zone (the lookup is what supplies them), and its instants
+ * were stored as Chicago wall time — so printing "Central" beside a time Dan
+ * typed meaning Eastern would assert a fact the app does not have. Bare time
+ * is honest; a wrong label is not.
+ */
 function FlightTime({ at, tz }: { at: string | null; tz: string | null }) {
   if (!at) return null
   const wall = instantToWall(at, tz ?? 'America/Chicago')
   return (
     <span className="tabular">
-      {friendlyTime(wall.time)} {timezoneShortLabel(tz ?? 'America/Chicago')}
+      {friendlyTime(wall.time)}{tz ? ` ${timezoneShortLabel(tz)}` : ''}
     </span>
   )
 }
@@ -217,12 +227,30 @@ export default function CalendarMonth({
                         </span>
                       )}
                     </p>
-                    {(f.depAt || f.arrAt) && (
+                    {(f.depAt || f.arrAt) ? (
                       <p className="text-sm text-muted">
                         <FlightTime at={f.depAt} tz={f.depTz} />
                         {f.depAt && f.arrAt && ' → '}
                         <FlightTime at={f.arrAt} tz={f.arrTz} />
+                        {
+                          // Elapsed only when BOTH zones are known, i.e. the
+                          // times came from a lookup. Hand-typed times were
+                          // both stored as Chicago wall time, so subtracting
+                          // them would silently report the clock difference
+                          // as a duration — the exact error this figure
+                          // exists to correct.
+                          f.depAt && f.arrAt && f.depTz && f.arrTz && (() => {
+                            const elapsed = elapsedLabel(f.depAt, f.arrAt)
+                            return elapsed ? <span> · {elapsed}</span> : null
+                          })()
+                        }
                       </p>
+                    ) : (
+                      // A flight saved with no times at all (the lookup was
+                      // unavailable and none were typed) would otherwise
+                      // render as a bare number and read as broken. Say what
+                      // is missing, next to the Edit that fixes it.
+                      <p className="text-sm text-muted">No times yet</p>
                     )}
                     {f.note && <p className="text-sm text-muted mt-1">{f.note}</p>}
                     <div className="flex items-center gap-3 mt-2">

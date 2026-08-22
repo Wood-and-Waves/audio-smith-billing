@@ -103,3 +103,28 @@ export function friendlyTime(time: string): string {
   const h12 = hh % 12 === 0 ? 12 : hh % 12
   return `${h12}:${String(mm).padStart(2, '0')} ${suffix}`
 }
+
+/**
+ * `2h 40m` between two instants — the number that makes a flight across
+ * timezones readable.
+ *
+ * A Chicago→Orlando flight leaves at 8:30 AM Central and lands at 12:10 PM
+ * Eastern. Read as clock times that looks like 3h40m; it is 2h40m. Neither
+ * end is wrong and neither should be converted — a traveller needs each
+ * airport's own local time — so the elapsed figure is what reconciles them.
+ *
+ * Null when either instant is unparseable or the arrival precedes the
+ * departure: a wrong duration is worse than none, and the caller renders
+ * nothing rather than a negative.
+ */
+export function elapsedLabel(fromIso: string, toIso: string): string | null {
+  const from = Date.parse(fromIso)
+  const to = Date.parse(toIso)
+  if (Number.isNaN(from) || Number.isNaN(to) || to < from) return null
+  const minutes = Math.round((to - from) / 60000)
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  if (h === 0) return `${m}m`
+  if (m === 0) return `${h}h`
+  return `${h}h ${m}m`
+}
