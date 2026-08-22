@@ -52,7 +52,12 @@ status.
 - **Fail-direction rule:** flags read from hand-written select strings the
   compiler can't check use `=== false` / `!== false` so a dropped column fails
   toward *visible* old behavior, never silent omission (see
-  `lib/expenses.ts`'s comment).
+  `lib/expenses.ts`'s comment). Same rule for **guard reads that gate money
+  writes**: `const { data } = await …; if (data && data.length > 0) refuse`
+  fails OPEN on a query error (data=null reads as "nothing found", the write
+  proceeds) — always destructure `error` and return before the presence
+  test. The bridge shipped with nine such fail-open guards; the final
+  review caught them (2026-08-21).
 - **Owner-scoping:** RLS everywhere + explicit `.eq('owner_id', ...)` on
   sensitive reads/writes + `belongsToCaller` FK checks (Postgres FK checks
   bypass RLS). Security-definer functions for public reads (`public_invoice`,
@@ -127,6 +132,16 @@ status.
   copy receipt paths onto ledger rows (removeLedgerReceipt deletes storage
   objects; a copied path would delete the expense's file). Unlink dissolves
   expense groups whole. Link data never reaches any client-facing surface.
+  Matching goes by EXACT amount + date sanity ONLY; payee similarity ranks
+  confidence and badges cards but never creates a match; same-amount ties
+  surface EVERY combination at low confidence (the matcher never guesses —
+  accepting the right pair collapses the wrong cards). Paid invoices age
+  out of the candidate pool 45 days after `paid_at` (null = never a
+  candidate — keeps the 94 imported historical invoices out; unpaid 'sent'
+  never ages out). Dismissals are reversible (Dismissed section + Restore
+  on /money/matches); `paid_at` is a Postgres `date` on purpose — a
+  timestamptz would NaN the matcher's daysApart and silently exclude every
+  paid candidate.
 - **Register order and balances**: `lib/ledgerBalance.ts` is the single
   source — `compareLedgerOrder` (date asc, created_at asc, id asc; display =
   exact reverse) and `runningBalances` (pinned invariant: top rendered row's
@@ -170,11 +185,17 @@ status.
   Settings; punch tiles 6-across from sm:; the invoice/expense auto-bridge
   (0032: /money/matches review queue — nothing applies without a click;
   register shows #invoice chips + linked-expense receipts + Unlink; invoice
-  page shows Paid date + its deposit; Matches count badge on /money).
+  page shows Paid date + its deposit; Matches count badge on /money; cards
+  carry sent dates + a "Payee matches" badge, agreeing twin sorts first).
 - **The ledger is Dan's live books**: YNAB Register backfilled to prod
   2026-08-20 — 328 txns in "Chase Checking" (opening $585.75 @ 2026-01-01,
   ending verified against the bank). Monthly OFX imports adopt the manual
-  rows. Dropbox archive LIVE (nightly cron; helper: `npm run dropbox:auth`,
+  rows. Bridge links re-run by Dan 2026-08-21 after a full reset (his first
+  pass hit the same-amount-tie blind spot): 11 deposit→invoice links + 2
+  expense links live, all bank-dated and audit-verified; 11 dismissals on
+  file. Hand-marked paids from that cleanup carry paid_at = that day, NOT
+  a real payment date — the forecast must learn pay-lag only from
+  deposit-LINKED invoices (pinned in BACKLOG). Dropbox archive LIVE (nightly cron; helper: `npm run dropbox:auth`,
   with `--push` to Vercel and `--probe` diagnostics; secrets never printed).
 - **Backlog:** `docs/BACKLOG.md` (canonical). Module design reference:
   `docs/superpowers/specs/2026-08-18-bookkeeping-module-reference.md` (incl.
