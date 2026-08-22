@@ -84,23 +84,28 @@ a breakdown per day."*
   instead of one all-day event per show day) — currently deliberately
   per-day; changing it changes every subscriber's calendar.
 
-## Flights: arrival time missing, and timezone changes (2026-08-22, Dan)
+## Flights: arrival-time display — FIXED 2026-08-22 (lookup key still open)
 
-Dan: *"Flights are linked, but the arrival time does not show. We also need
-to calculate for time zone changes during flights."*
-
-- **Bug first:** arrival time not displaying. `flights.arr_at`/`arr_tz` are
-  stored (0033) and the ICS feed uses `arr_at` as `DTEND`, so check the
-  detail dialog in `components/CalendarMonth.tsx` and the day-cell rendering
-  before assuming the data is missing — verify against a real saved flight.
-- **Timezone handling:** times are stored as instants with the airport's
-  IANA zone alongside (`dep_tz`/`arr_tz`), which is the right model — a
-  Chicago→Orlando flight departs 8:30 Central and arrives 12:10 Eastern, and
-  both should render in their OWN zone with the zone named, never silently
-  converted to one. Confirm the display uses `arr_tz` (falling back to
-  America/Chicago) rather than the departure zone for the arrival.
-- Worth showing elapsed flight time, which is the number that makes a
-  timezone change legible ("8:30 AM CT → 12:10 PM ET · 2h40m").
+The reported "arrival time does not show" was NOT a display bug: Dan's one
+flight (UA660) had no times, airports, or zones stored at all. `FLIGHT_API_KEY`
+was never added to prod, so Look up returned "not set up yet" and the flight
+saved with just its number and date. Fixed what was actually wrong:
+- A flight with no times now says "No times yet" beside its Edit, instead of
+  rendering as a bare number that reads as broken.
+- Both ends keep their OWN airport zone (never converted — the boarding-pass
+  convention), and a flight with both zones known now shows elapsed time:
+  "8:30 AM Central → 12:10 PM Eastern · 2h 40m". That figure is what makes a
+  timezone change legible; the clocks alone imply 3h40m.
+- The zone LABEL now prints only when the zone is known. Hand-typed times
+  carry no zone and are stored as Chicago wall time, so labelling them
+  "Central" asserted a fact the app does not have.
+Still open:
+- **`FLIGHT_API_KEY` is not set on prod** — Dan's RapidAPI signup step
+  (AeroDataBox Basic, free, 600 lookups/month). Until then every flight is
+  hand-entered, which also means no zones, which also means no elapsed time.
+- Hand-entered times have no way to say which zone they are in; they are
+  assumed Chicago. A zone picker beside the time fields would fix it, and
+  would make elapsed time work without the API.
 
 ## W-9 on file + attach-to-invoice checkbox + annual refresh reminder (2026-08-19, Dan)
 
