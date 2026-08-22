@@ -234,9 +234,16 @@ status.
   service-role, and it carries SCHEDULE FACTS ONLY (it joins the
   client-facing chokepoint list); '/cal' is a PUBLIC_PREFIX, the /calendar
   page is not; flight lookup = AeroDataBox via RapidAPI (`FLIGHT_API_KEY`,
-  server-only; parser in lib/flightLookup.ts, canned-fixture tested;
-  everything but lookup works keyless); month-grid helpers live in
-  lib/dates.ts under its UTC-pinning doctrine; nav is SIX items).
+  server-only, LIVE on prod since 2026-08-22; parser in lib/flightLookup.ts,
+  canned-fixture tested; everything but lookup works keyless); month-grid
+  helpers live in lib/dates.ts under its UTC-pinning doctrine; nav is SIX
+  items). **The feed link lives in SETTINGS, not /calendar** (moved
+  2026-08-22): Regenerate IS revocation with no undo, and Dan has shared his
+  feed with his wife, so an accidental click on a daily page would break her
+  subscription too. Flight times render in EACH airport's own zone, never
+  converted (the boarding-pass convention), with `elapsedLabel` reconciling
+  them — the zone LABEL prints only when the zone is known, because
+  hand-typed times carry none and were stored as Chicago wall time.
 - **The ledger is Dan's live books**: YNAB Register backfilled to prod
   2026-08-20 — 328 txns in "Chase Checking" (opening $585.75 @ 2026-01-01,
   ending verified against the bank). Monthly OFX imports adopt the manual

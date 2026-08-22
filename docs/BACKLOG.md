@@ -84,28 +84,21 @@ a breakdown per day."*
   instead of one all-day event per show day) — currently deliberately
   per-day; changing it changes every subscriber's calendar.
 
-## Flights: arrival-time display — FIXED 2026-08-22 (lookup key still open)
+## Flights — display FIXED and lookup LIVE 2026-08-22 (one gap left)
 
-The reported "arrival time does not show" was NOT a display bug: Dan's one
-flight (UA660) had no times, airports, or zones stored at all. `FLIGHT_API_KEY`
-was never added to prod, so Look up returned "not set up yet" and the flight
-saved with just its number and date. Fixed what was actually wrong:
-- A flight with no times now says "No times yet" beside its Edit, instead of
-  rendering as a bare number that reads as broken.
-- Both ends keep their OWN airport zone (never converted — the boarding-pass
-  convention), and a flight with both zones known now shows elapsed time:
-  "8:30 AM Central → 12:10 PM Eastern · 2h 40m". That figure is what makes a
-  timezone change legible; the clocks alone imply 3h40m.
-- The zone LABEL now prints only when the zone is known. Hand-typed times
-  carry no zone and are stored as Chicago wall time, so labelling them
-  "Central" asserted a fact the app does not have.
+The reported "arrival time does not show" was not a display bug: the flight
+had no times stored at all, because `FLIGHT_API_KEY` was not yet set. Both
+halves are now resolved — Dan added the key (verified: UA1016 came back
+SAN→ORD with both times and both zones), and the display was fixed to show
+elapsed time, honest zone labels, and a visible "No times yet" state.
 Still open:
-- **`FLIGHT_API_KEY` is not set on prod** — Dan's RapidAPI signup step
-  (AeroDataBox Basic, free, 600 lookups/month). Until then every flight is
-  hand-entered, which also means no zones, which also means no elapsed time.
-- Hand-entered times have no way to say which zone they are in; they are
-  assumed Chicago. A zone picker beside the time fields would fix it, and
-  would make elapsed time work without the API.
+- **Hand-entered flights have no way to say which zone the times are in.**
+  They are assumed Chicago and stored as Chicago wall time, so a time typed
+  meaning Eastern is stored an hour off. The display no longer LIES about it
+  (no zone label, no elapsed figure when zones are unknown), but the data is
+  still wrong. A zone picker beside the time fields would fix it, and would
+  make elapsed time work without a lookup at all. Matters whenever the API
+  misses a flight — a charter, a codeshare, a very new schedule.
 
 ## W-9 on file + attach-to-invoice checkbox + annual refresh reminder (2026-08-19, Dan)
 
@@ -206,6 +199,13 @@ Still open from that design, deliberately deferred:
   rules.
 
 ## Small / cosmetic
+
+- Calendar feed link moved to Settings (2026-08-22, Dan: "I don't want to
+  accidentally hit the refresh button" — he has shared his feed with his
+  wife). `/calendar` keeps only Add flight. Considered and not done: an
+  arm-then-confirm on Regenerate in place. If the link is ever re-shared
+  often enough that the Settings trip grates, a read-only copy control could
+  come back to /calendar with Regenerate staying put.
 
 - Forecast vs invoice on a both-legs day (2026-08-22): a day flagged BOTH
   `travel_in` and `travel_out` projects as ONE travel day at one travel rate
