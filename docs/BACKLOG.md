@@ -3,6 +3,111 @@
 The canonical list of deferred work. Each item carries just enough design that a
 future session can build it without re-discovery. Dated when added.
 
+## Per-month budgeting with month navigation (2026-08-22, Dan)
+
+Dan: *"I want to be able to budget per month and move between the months. My
+plan is to go back to January and set the budgets the same as YNAB to prove
+how they work."* This is the real YNAB Rule-1 model and the biggest gap
+between `/money/budget` and the tool he actually knows.
+
+- **What exists today:** `ledger_envelopes` + an immutable
+  `ledger_envelope_moves` ledger (0030). Allocation is a single running
+  total — there is no notion of "August's budget" vs "September's", so
+  there is nothing to navigate between and no month-over-month carryover.
+- **What YNAB does:** each envelope gets an *amount budgeted this month*;
+  a month's leftover rolls into the same envelope next month; overspend
+  is handled per category. Available-to-allocate is computed per month
+  from income received that month plus last month's leftover.
+- **Likely shape:** moves already carry dates, so a per-month view can be
+  derived rather than stored — bucket moves by month and show budgeted /
+  activity / available per envelope per month, with ‹ › navigation like
+  `/calendar`'s. Storing a per-month budgeted figure explicitly may still
+  be needed for "budgeted but not yet moved."
+- **His proof plan matters for design:** he intends to backfill January
+  onward and compare against YNAB's own numbers, so the arithmetic has to
+  match YNAB's definitions closely enough to reconcile, and entering a
+  past month's budget must be as easy as the current month's.
+- Brainstorm openers: does a month's leftover roll forward automatically or
+  on a click; how is overspend shown; does the existing immutable-move
+  ledger stay the source of truth (it should) or gain a per-month budgeted
+  table beside it.
+
+## Show day types — travel, work, or both (2026-08-22, Dan)
+
+Dan: *"It would be good for forecasting to allow day types for first and
+last day. So travel + day rate or travel only. Most of the time I know this
+ahead of time."*
+
+- Today a `show_days` row is a work day with optional `travel_in`/
+  `travel_out` flags (0005), and the forecast ASSUMES the first and last day
+  of an out-of-state multi-day show are travel-only. This item replaces the
+  assumption with knowledge for the (common) case where Dan knows in advance.
+- Wanted: mark a day as **travel only** (travel rate, no day rate) or
+  **travel + work** (both — which is what the real billing engine already
+  does when a flagged day carries punches, and pays more).
+- **Supersedes** the deferred 2-day out-of-state case: Dan noted a 2-day
+  out-of-state block is really two travel days plus a show day, and the
+  forecast currently prices it as 2 travel + 0 work. Explicit day types make
+  that a non-question.
+- Note the asymmetry to preserve: the FORECAST is deliberately conservative
+  (travel day = no day rate); the INVOICE bills what actually happened from
+  punches. Day types should inform the forecast without changing how a
+  worked travel day bills.
+
+## Snap-a-receipt button on mobile (2026-08-22, Dan)
+
+Dan: *"I would like a snap receipt button at the top of the mobile view. If
+I'm not in a show, there should be a Popup or something that lists all the
+shows. After choosing the show, it will go straight to the camera to take a
+photo. We will need to work out what happens after."*
+
+- The point is capture speed on a show floor: today a receipt costs several
+  taps to reach the right show's expense form.
+- Sketch: a persistent control in the mobile header (`AppShell`'s `sm:hidden`
+  region). On a show page it targets that show; anywhere else it opens a
+  show picker first, then goes straight to the camera.
+- Everything downstream already exists: `components/receiptCapture.ts` is the
+  ONE capture pipeline (corner detect → flatten → enhance → upload pair) and
+  `extractReceipt` can read vendor/amount/date.
+- **Open (Dan's own words, "we will need to work out what happens after"):**
+  does the photo create the expense immediately with OCR-guessed fields and
+  let him fix them later, or land in a pending tray to be completed? What
+  happens offline mid-show, and what does the confirmation look like when
+  the answer must be readable one-handed in a dark room?
+
+## Calendar: one bar per show, not a chip per day (2026-08-22, Dan)
+
+Dan: *"I would like the calendar to show one big bar for each show instead of
+a breakdown per day."*
+
+- `/calendar`'s month grid currently renders one chip per `show_days` row, so
+  a 9-day Orlando run reads as nine separate marks instead of one booking.
+- Wanted: a single spanning bar per show across its date range.
+- The hard part is layout, not data: a bar spanning a week boundary has to
+  break across grid rows, and overlapping shows need stacking lanes within a
+  cell's height. Flights stay per-day marks.
+- Consider whether the ICS feed should follow (one multi-day VEVENT per show
+  instead of one all-day event per show day) — currently deliberately
+  per-day; changing it changes every subscriber's calendar.
+
+## Flights: arrival time missing, and timezone changes (2026-08-22, Dan)
+
+Dan: *"Flights are linked, but the arrival time does not show. We also need
+to calculate for time zone changes during flights."*
+
+- **Bug first:** arrival time not displaying. `flights.arr_at`/`arr_tz` are
+  stored (0033) and the ICS feed uses `arr_at` as `DTEND`, so check the
+  detail dialog in `components/CalendarMonth.tsx` and the day-cell rendering
+  before assuming the data is missing — verify against a real saved flight.
+- **Timezone handling:** times are stored as instants with the airport's
+  IANA zone alongside (`dep_tz`/`arr_tz`), which is the right model — a
+  Chicago→Orlando flight departs 8:30 Central and arrives 12:10 Eastern, and
+  both should render in their OWN zone with the zone named, never silently
+  converted to one. Confirm the display uses `arr_tz` (falling back to
+  America/Chicago) rather than the departure zone for the arrival.
+- Worth showing elapsed flight time, which is the number that makes a
+  timezone change legible ("8:30 AM CT → 12:10 PM ET · 2h40m").
+
 ## W-9 on file + attach-to-invoice checkbox + annual refresh reminder (2026-08-19, Dan)
 
 New clients ask for a W-9. Wanted: upload one to the app; a checkbox on the

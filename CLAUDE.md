@@ -240,7 +240,17 @@ status.
   with `--push` to Vercel and `--probe` diagnostics; secrets never printed).
 - **Backlog:** `docs/BACKLOG.md` (canonical). Module design reference:
   `docs/superpowers/specs/2026-08-18-bookkeeping-module-reference.md` (incl.
-  Dan's CPA homework questions). Next big pieces: CPA year-end export
-  (awaits the CPA's answers — which also unblock reconciling the three
-  charts of accounts), income-by-payee report, per-show profit on the show
-  page, W-9, MileIQ, SimpleFIN.
+  Dan's CPA homework questions). Next big pieces, filed by Dan 2026-08-22,
+  NONE started: **per-month budgeting with month navigation** — the real
+  YNAB Rule-1 model; he plans to backfill from January and reconcile against
+  YNAB to prove it, so the arithmetic must match YNAB's definitions;
+  **show day types** (travel-only vs travel+work, replacing the forecast's
+  first/last-day assumption and superseding the deferred 2-day out-of-state
+  case); **snap-a-receipt on mobile** (header button → show picker →
+  straight to camera; the post-capture flow is explicitly unresolved);
+  **calendar one bar per show** instead of a chip per day; **flight arrival
+  time not displaying** (verify the dialog before assuming data loss —
+  `arr_at`/`arr_tz` are stored) plus rendering each end in its own zone.
+  Then: CPA year-end export (awaits the CPA's answers — which also unblock
+  reconciling the three charts of accounts), income-by-payee report,
+  per-show profit on the show page, W-9, MileIQ, SimpleFIN.
