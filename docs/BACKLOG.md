@@ -77,6 +77,11 @@ forecasting."
   that earns more than the need funds the next one). The headline figure
   is "covered through <month>", not a chart. A month that comes up short
   after the carry-forward is the first uncovered month.
+- **Pay-lag learning must trust only deposit-linked dates** (2026-08-21):
+  a `paid_at` from an accepted bank match is the real payment date; one from
+  Mark Paid is "today," which on a backfilled old invoice is noise. Learn
+  per-client lag only from invoices with a `ledger_transaction_invoices`
+  row; fall back to terms_days otherwise.
 - **Assumptions to surface (and let Dan tweak)**: monthly take-home need,
   all scheduled days worked, no cancellations, per-client pay lag
   (fallback terms_days), recurring bills at trailing-3-month average.
