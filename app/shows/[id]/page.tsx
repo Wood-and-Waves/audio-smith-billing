@@ -328,9 +328,10 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
                     {
                       // Only offered once a leg is actually flagged — a day
                       // with no travel has nothing for "also working" to
-                      // qualify, and setTravelLeg itself clears travel_works
-                      // the moment the last leg is cleared, so this stays
-                      // consistent with what can actually be stored.
+                      // qualify. Hiding it is safe because a legless day can
+                      // never HOLD travel_works: migration 0037's trigger
+                      // forces it false on write, so this gate can't strand a
+                      // stale value out of reach of the only control for it.
                       (d.travel_in || d.travel_out) && (
                         <TravelWorksToggle showDayId={d.id} checked={d.travel_works} locked={locked} />
                       )
