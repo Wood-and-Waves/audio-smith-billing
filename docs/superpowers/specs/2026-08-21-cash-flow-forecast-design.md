@@ -57,16 +57,22 @@ in the current month and is flagged in the table — never silently spread
 forward, never dropped.
 
 **Booked, unbilled shows.** Projected revenue from the show's own frozen
-columns, reusing `computeShowLines` (`lib/showBuckets.ts`) with a synthetic
-"standard day" per scheduled date rather than real punches:
-- a normal show day → one straight-time day at `day_rate_cents`
-- `pay_as_half_day` → half
-- a day flagged `travel_in`/`travel_out` with no other work → `travel_rate_cents`
-- **no overtime, no double time, no meal penalties** — a projection assumes
-  the day goes as planned
-- an **hourly** show (`bill_hourly`) has no day rate to lean on, so it
-  projects its own straight-time threshold (`ot_after_hours`) as the assumed
-  day length at its hourly rate
+rate columns. Note it does **not** run through `computeShowLines`: that
+function earns the day rate from straight-time hours (`st > 0`), so a booked
+show with no punches yet projects $0 through it, and synthesizing punches to
+work around that would drag in meal-penalty and short-turnaround rules a
+projection must not assume. The projection is its own explicit arithmetic
+over the same frozen rates — migration 0005's rule that *every `show_days`
+row is a work day* is what makes it simple:
+- every scheduled day → one day at `day_rate_cents`, halved when
+  `pay_as_half_day`
+- each `travel_in`/`travel_out` flag → one leg at `travel_rate_cents`, added
+  on top of that day (which is how the real engine bills them)
+- **no overtime, no double time, no meal penalties, no PM hours** — a
+  projection assumes the day goes as planned
+- an **hourly** show (`bill_hourly`) needs no special case: its hourly rate
+  is derived as `day_rate_cents / ot_after_hours`, so a full standard day
+  bills the identical amount either way
 
 Expected invoice date = last show day + the **billing lag** (default 7 days,
 adjustable). Expected payment = that + the client's pay lag.
