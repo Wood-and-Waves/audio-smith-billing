@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { saveSettings } from '@/app/settings/actions'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select, { type SelectOption } from '@/components/ui/Select'
+import CalendarSubscribe from '@/components/CalendarSubscribe'
 
 type Appearance = 'system' | 'light' | 'dark'
 
@@ -32,7 +33,15 @@ export type EditorSettings = {
   home_state: string
 }
 
-export default function SettingsEditor({ initial }: { initial: EditorSettings }) {
+export default function SettingsEditor({
+  initial, feedUrl = null, hasCalendarFeed = false,
+}: {
+  initial: EditorSettings
+  /** Full subscribe URL, or null when no feed exists OR APP_URL is unset. */
+  feedUrl?: string | null
+  /** A token exists — distinct from having a usable URL. See the page. */
+  hasCalendarFeed?: boolean
+}) {
   const router = useRouter()
   const [pending, start] = useTransition()
   const [error, setError] = useState<string | null>(null)
@@ -261,6 +270,20 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
                  placeholder="IL" onChange={(e) => setHomeState(e.target.value)} />
           <p className="text-xs text-muted mt-1.5">Shows outside it forecast two travel days.</p>
         </div>
+      </div>
+
+      {/* The calendar feed lives here rather than on /calendar: Regenerate IS
+          revocation, there is no undo, and the link has been shared — so an
+          accidental click breaks someone else's subscription too. It belongs
+          with the settings you touch once, not on a page opened daily. */}
+      <h2 className="eyebrow mb-3">Calendar feed</h2>
+      <div className="mb-8">
+        <CalendarSubscribe feedUrl={feedUrl} hasToken={hasCalendarFeed} />
+        <p className="text-xs text-muted mt-1.5">
+          Subscribe to this in Google or Apple Calendar and your show days and
+          flights keep themselves current. Anyone with the link can read your
+          schedule.
+        </p>
       </div>
 
       <h2 className="eyebrow mb-3">Payment</h2>

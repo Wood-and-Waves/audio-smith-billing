@@ -27,7 +27,8 @@ export default async function SettingsPage() {
     .select(
       `business_name, legal_name, address_line1, address_line2, phone, email,
        remit_to, ach_details, default_terms_days, next_invoice_number, tax_setaside_bp,
-       monthly_take_home_cents, monthly_overhead_cents, billing_lag_days, home_state`,
+       monthly_take_home_cents, monthly_overhead_cents, billing_lag_days, home_state,
+       calendar_token`,
     )
     // owner_id, not `id = 1`. This screen is the one that EDITS the letterhead
     // every invoice prints, so loading a row that is not the signed-in owner's
@@ -57,9 +58,25 @@ export default async function SettingsPage() {
     )
   }
 
+  // Composed here, not in the client component: the same source invoices'
+  // public links read from (app/invoices/actions.ts), trailing slash stripped.
+  // With APP_URL unset there is no usable subscribe URL — a relative
+  // `/cal/{token}.ics` is not something a calendar app can subscribe to — so
+  // feedUrl stays null and CalendarSubscribe is told a token exists anyway,
+  // which is a different state from having no feed at all.
+  const row = s as unknown as EditorSettings & { calendar_token: string | null }
+  const appUrl = (process.env.APP_URL ?? '').replace(/\/+$/, '')
+  const feedUrl = row.calendar_token && appUrl
+    ? `${appUrl}/cal/${row.calendar_token}.ics`
+    : null
+
   return (
     <AppShell current="settings">
-      <SettingsEditor initial={s as unknown as EditorSettings} />
+      <SettingsEditor
+        initial={s as unknown as EditorSettings}
+        feedUrl={feedUrl}
+        hasCalendarFeed={row.calendar_token !== null}
+      />
     </AppShell>
   )
 }

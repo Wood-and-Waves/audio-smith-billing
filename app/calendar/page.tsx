@@ -4,7 +4,6 @@ import { todayInChicago, monthGrid, monthLabel, addMonths } from '@/lib/dates'
 import AppShell from '@/components/AppShell'
 import CalendarMonth, { type DayEntry, type FlightEntry } from '@/components/CalendarMonth'
 import AddFlightDialog from '@/components/AddFlightDialog'
-import CalendarSubscribe from '@/components/CalendarSubscribe'
 
 export const dynamic = 'force-dynamic'
 
@@ -87,7 +86,6 @@ export default async function CalendarPage({
   const [
     { data: dayRows, error: dayError },
     { data: flightRows, error: flightError },
-    { data: settingsRow, error: settingsError },
   ] = await Promise.all([
     supabase
       .from('show_days')
@@ -104,14 +102,10 @@ export default async function CalendarPage({
       .gte('flight_date', first)
       .lte('flight_date', last)
       .order('flight_date'),
-    // Explicit columns, never widen — the same rule every settings read in
-    // this app follows.
-    supabase.from('settings').select('calendar_token').eq('owner_id', user.id).maybeSingle(),
   ])
 
   if (dayError) return <LoadError message={dayError.message} />
   if (flightError) return <LoadError message={flightError.message} />
-  if (settingsError) return <LoadError message={settingsError.message} />
 
   const dayRowsTyped = (dayRows ?? []) as unknown as ShowDayRow[]
   const flightRowsTyped = (flightRows ?? []) as unknown as FlightRow[]
@@ -153,17 +147,6 @@ export default async function CalendarPage({
     ;(flightsByDate[f.flight_date] ??= []).push(entry)
   }
 
-  // Same source invoices' own public links read from (app/invoices/actions.ts
-  // ~line 854): APP_URL, trailing slash stripped. No token yet -> no URL to
-  // hand CalendarSubscribe; it renders the Generate button instead. And if
-  // APP_URL itself isn't configured, feedUrl must stay null rather than
-  // silently compose a relative `/cal/{token}.ics` — that string is not a
-  // usable subscribe URL in any calendar app, so CalendarSubscribe gets told
-  // a token exists (hasToken) but has nothing clickable/copyable to show.
-  const appUrl = (process.env.APP_URL ?? '').replace(/\/+$/, '')
-  const token = settingsRow?.calendar_token ?? null
-  const feedUrl = token && appUrl ? `${appUrl}/cal/${token}.ics` : null
-
   const today = todayInChicago()
 
   return (
@@ -186,10 +169,12 @@ export default async function CalendarPage({
             ›
           </Link>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <AddFlightDialog mode="create" defaultDate={today} />
-          <CalendarSubscribe feedUrl={feedUrl} hasToken={token !== null} />
-        </div>
+        {/* The feed link and its Regenerate live in Settings, not here.
+            Regenerating IS revocation and has no undo — and once the link has
+            been shared (Dan sent his to his wife), an accidental click breaks
+            her calendar too. A button like that does not belong on a page
+            opened every day; one-time setup belongs with setup. */}
+        <AddFlightDialog mode="create" defaultDate={today} />
       </header>
 
       <CalendarMonth
