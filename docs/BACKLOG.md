@@ -48,26 +48,25 @@ Still open from that design:
   nothing is marked. Explicit marks now answer it per-show; the fallback
   itself is unchanged.
 
-## Snap-a-receipt button on mobile (2026-08-22, Dan)
+## Snap-a-receipt — SHIPPED 2026-08-22
 
-Dan: *"I would like a snap receipt button at the top of the mobile view. If
-I'm not in a show, there should be a Popup or something that lists all the
-shows. After choosing the show, it will go straight to the camera to take a
-photo. We will need to work out what happens after."*
-
-- The point is capture speed on a show floor: today a receipt costs several
-  taps to reach the right show's expense form.
-- Sketch: a persistent control in the mobile header (`AppShell`'s `sm:hidden`
-  region). On a show page it targets that show; anywhere else it opens a
-  show picker first, then goes straight to the camera.
-- Everything downstream already exists: `components/receiptCapture.ts` is the
-  ONE capture pipeline (corner detect → flatten → enhance → upload pair) and
-  `extractReceipt` can read vendor/amount/date.
-- **Open (Dan's own words, "we will need to work out what happens after"):**
-  does the photo create the expense immediately with OCR-guessed fields and
-  let him fix them later, or land in a pending tray to be completed? What
-  happens offline mid-show, and what does the confirmation look like when
-  the answer must be readable one-handed in a dark room?
+Camera button in the mobile header (`components/SnapReceipt.tsx`); the show
+is inferred (show page → today's show → picker) and always named on the
+confirm screen with a Change control; the existing capture pipeline and OCR
+run unchanged; nothing is written until Add. Design:
+docs/superpowers/specs/2026-08-22-snap-receipt-design.md.
+Worth knowing for anyone touching it:
+- **The camera must open from live user activation.** iOS Safari refuses a
+  programmatic `.click()` on a file input once the originating gesture has
+  expired, so nothing may `await` between the tap and the open. That is why
+  AppShell fetches shows on every render (bounded to OPEN shows) instead of
+  lazily, and why "Add + another" shows a `saved` screen with a Take another
+  button rather than reopening the camera itself.
+Still open:
+- No offline queue and no pending tray, deliberately — both create a place
+  receipts pile up unseen. Revisit only if a real show floor proves the
+  online path unreliable.
+- The in-form picker in ExpenseLog stays for batches and emailed PDFs.
 
 ## Calendar: one bar per show, not a chip per day (2026-08-22, Dan)
 
