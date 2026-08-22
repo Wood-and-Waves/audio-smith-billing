@@ -24,6 +24,7 @@
 // No '@/' imports and no JSX — exercised by node --test.
 
 import { addDays, addMonths } from './dates.ts'
+import { instantToWall } from './zonedTime.ts'
 
 // ---- inputs (DB-shaped, snake_case where they come from rows) ----
 
@@ -85,13 +86,23 @@ export type ForecastMonth = {
   covered: boolean // endingBalance >= 0
 }
 
+// A show the projection couldn't price or date, so it was left out of
+// inflows rather than silently contributing nothing. See the show loop in
+// buildForecast below for how each reason is detected.
+export type NotProjectedShow = {
+  showId: string
+  name: string
+  reason: 'no days' | 'no rate'
+}
+
 export type Forecast = {
   months: ForecastMonth[]
   coveredThrough: string | null // YYYY-MM; null = not even this month
   beyondHorizon: boolean // never went negative within 24 months
-  bookedThrough: string | null // last month carrying booked work
+  bookedThrough: string | null // last month carrying booked WORK (not cash landing)
   inflows: ExpectedInflow[] // for the table's detail + overdue flags
   payLags: PayLag[]
+  notProjected: NotProjectedShow[]
 }
 
 export const HORIZON_MONTHS = 24
@@ -118,6 +129,23 @@ function toUtcMs(iso: string): number {
 
 function diffDays(fromIso: string, toIso: string): number {
   return Math.round((toUtcMs(toIso) - toUtcMs(fromIso)) / MS_PER_DAY)
+}
+
+// `sent_at` is stamped `new Date().toISOString()` (sendInvoice) — a UTC
+// instant, not a plain date. Slicing its first 10 characters reads the UTC
+// calendar day, which for an evening-Chicago send is already tomorrow (or,
+// near a month boundary, already next month) — the exact bug this file used
+// to have. Every place that needs "what day did Dan send this, on his own
+// clock" goes through here instead of a raw slice.
+function sentAtChicagoDate(iso: string): string {
+  return instantToWall(iso, 'America/Chicago').date
+}
+
+// Same doctrine as lib/dates.ts's monthGrid: day 0 of next month = last day
+// of this one, entirely in UTC calendar-math space.
+function daysInMonth(ym: string): number {
+  const [y, m] = ym.split('-').map(Number)
+  return new Date(Date.UTC(y, m, 0)).getUTCDate()
 }
 
 /** Even count -> average the two middle values, rounded to a whole day. */
@@ -245,9 +273,9 @@ export function buildForecast(input: {
     if (inv.status === 'paid' || inv.status === 'void') continue
 
     // A 'sent' invoice with a null sent_at shouldn't happen, but dating it
-    // like a draft (rather than crashing on a null slice) is the safe read.
+    // like a draft (rather than crashing on a null read) is the safe read.
     const baseDate = inv.status === 'sent' && inv.sent_at !== null
-      ? inv.sent_at.slice(0, 10)
+      ? sentAtChicagoDate(inv.sent_at)
       : addDays(today, assumptions.billingLagDays)
 
     const expectedDate = addDays(baseDate, lagDaysFor(inv.client_id))
@@ -256,9 +284,27 @@ export function buildForecast(input: {
     inflows.push({ month, amountCents: inv.total_cents, label: `#${inv.number} ${clientName}`, overdue })
   }
 
+  const notProjected: NotProjectedShow[] = []
+
   for (const show of shows) {
     if (show.status === 'billed') continue // its invoice already covers it, counted above
-    if (show.days.length === 0) continue // nothing to date the projection from
+
+    if (show.days.length === 0) {
+      // Nothing to date the projection from — previously dropped with no
+      // trace; now surfaced so it doesn't vanish silently (design doc's
+      // promise that these are listed).
+      notProjected.push({ showId: show.id, name: show.name, reason: 'no days' })
+      continue
+    }
+
+    const amountCents = projectedShowCents(show)
+    if (amountCents === 0) {
+      // No rate card, no rates, or both clamped from negative — a real $0
+      // projection the page never surfaced. List it instead of adding a
+      // silent no-op inflow row.
+      notProjected.push({ showId: show.id, name: show.name, reason: 'no rate' })
+      continue
+    }
 
     let lastDay = show.days[0].date
     for (const d of show.days) if (d.date > lastDay) lastDay = d.date
@@ -266,7 +312,7 @@ export function buildForecast(input: {
     const baseDate = addDays(lastDay, assumptions.billingLagDays)
     const expectedDate = addDays(baseDate, lagDaysFor(show.client_id))
     const { month, overdue } = bucket(expectedDate, today)
-    inflows.push({ month, amountCents: projectedShowCents(show), label: `${show.name} (projected)`, overdue })
+    inflows.push({ month, amountCents, label: `${show.name} (projected)`, overdue })
   }
 
   inflows.sort((a, b) => {
@@ -275,8 +321,31 @@ export function buildForecast(input: {
     return 0
   })
 
+  // bookedThrough names the month WORK ends, not the month cash lands. Cash
+  // is pushed 1-2 months out by billing lag + pay lag, which would flatten
+  // this into the most flattering number on the page — the exact line meant
+  // to tell Dan his calendar is thin. So this is computed independently of
+  // `inflows` (which is dated to the money) from the underlying work dates:
+  // the last scheduled day of every counted open show, and the send/draft
+  // date of every unpaid invoice.
   let bookedThrough: string | null = null
-  for (const f of inflows) if (bookedThrough === null || f.month > bookedThrough) bookedThrough = f.month
+  const considerForBookedThrough = (month: string) => {
+    if (bookedThrough === null || month > bookedThrough) bookedThrough = month
+  }
+  for (const show of shows) {
+    if (show.status !== 'open') continue
+    if (show.days.length === 0) continue // nothing to count — same case notProjected lists above
+    let lastDay = show.days[0].date
+    for (const d of show.days) if (d.date > lastDay) lastDay = d.date
+    considerForBookedThrough(lastDay.slice(0, 7))
+  }
+  for (const inv of invoices) {
+    if (inv.status !== 'draft' && inv.status !== 'sent') continue
+    const month = inv.status === 'sent' && inv.sent_at !== null
+      ? sentAtChicagoDate(inv.sent_at).slice(0, 7)
+      : today.slice(0, 7) // drafts (and a malformed null-sent_at 'sent' row) date to today
+    considerForBookedThrough(month)
+  }
 
   const incomeByMonth = new Map<string, number>()
   for (const f of inflows) incomeByMonth.set(f.month, (incomeByMonth.get(f.month) ?? 0) + f.amountCents)
@@ -290,9 +359,28 @@ export function buildForecast(input: {
   for (let i = 0; i < HORIZON_MONTHS; i++) {
     const month = addMonths(startMonth, i)
     const incomeCents = incomeByMonth.get(month) ?? 0
-    const overheadCents = assumptions.overheadCents
+
+    // Month 0 is a partial month. Its income is already only "what's left
+    // to land" — every inflow is dated to an expected FUTURE landing date,
+    // so nothing before today ever accrues into it. Overhead and the draw
+    // must be pro-rated the same way, or month 0 charges a full month's
+    // costs against a starting balance that, per the design doc, already
+    // paid its share of both up through yesterday — overstating what this
+    // month still owes. `today` itself counts as remaining (a forecast run
+    // on the 1st owes the whole month; run on the last day, it owes ~1 day
+    // of it). Tax is computed from incomeCents/overheadCents below either
+    // way, so it needs no separate pro-ration — it already follows suit.
+    let overheadCents = assumptions.overheadCents
+    let drawCents = assumptions.takeHomeCents
+    if (i === 0) {
+      const totalDays = daysInMonth(month)
+      const dayOfMonth = Number(today.slice(8, 10))
+      const remainingFraction = (totalDays - dayOfMonth + 1) / totalDays
+      overheadCents = Math.round(assumptions.overheadCents * remainingFraction)
+      drawCents = Math.round(assumptions.takeHomeCents * remainingFraction)
+    }
+
     const taxCents = Math.round(Math.max(0, incomeCents - overheadCents) * assumptions.taxRateBp / 10000)
-    const drawCents = assumptions.takeHomeCents
     balance += incomeCents - overheadCents - taxCents - drawCents
     const covered = balance >= 0
 
@@ -312,5 +400,5 @@ export function buildForecast(input: {
     a.clientId < b.clientId ? -1 : a.clientId > b.clientId ? 1 : 0
   ))
 
-  return { months, coveredThrough, beyondHorizon, bookedThrough, inflows, payLags }
+  return { months, coveredThrough, beyondHorizon, bookedThrough, inflows, payLags, notProjected }
 }

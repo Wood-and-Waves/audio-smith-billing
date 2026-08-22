@@ -21,6 +21,15 @@ export default function ForecastTable({
   // no separate search needed.
   const lastIndex = months.length - 1
 
+  // bookedThrough now names the month WORK ends (lib/forecast.ts), which is
+  // computed independently of the walk and can fall on a month past the
+  // last rendered row when the walk broke early on an uncovered month first
+  // (a thin balance biting before the calendar does). The check below
+  // (`m.month === bookedThrough`) simply never matches in that case, so the
+  // marker is silently omitted rather than mismarking some other row or
+  // needing a fallback — the headline's own "Booked work runs out after…"
+  // line still names the month correctly either way, so nothing is lost.
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full border-collapse text-sm">
@@ -29,7 +38,7 @@ export default function ForecastTable({
             <th className="eyebrow pb-2 pr-3 text-left font-semibold">Month</th>
             <th className="eyebrow px-3 pb-2 text-right font-semibold">In</th>
             <th className="eyebrow px-3 pb-2 text-right font-semibold">Overhead</th>
-            <th className="eyebrow px-3 pb-2 text-right font-semibold">Tax</th>
+            <th className="eyebrow px-3 pb-2 text-right font-semibold">Tax set-aside</th>
             <th className="eyebrow px-3 pb-2 text-right font-semibold">Draw</th>
             <th className="eyebrow pb-2 pl-3 text-right font-semibold">Ending balance</th>
           </tr>

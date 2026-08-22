@@ -72,7 +72,13 @@ row is a work day* is what makes it simple:
   projection assumes the day goes as planned
 - an **hourly** show (`bill_hourly`) needs no special case: its hourly rate
   is derived as `day_rate_cents / ot_after_hours`, so a full standard day
-  bills the identical amount either way
+  bills the identical amount either way. This is the ONE place the
+  projection can be optimistic rather than conservative — `bill_hourly`
+  exists precisely to divert a day that comes in under the day-rate
+  threshold to hourly billing, and the projection has no punches yet to
+  know that will happen, so it always assumes the full day. Every other gap
+  in this model (overtime, meal penalties, reimbursable overhead above)
+  understates what Dan will actually make; this one can overstate it.
 
 Expected invoice date = last show day + the **billing lag** (default 7 days,
 adjustable). Expected payment = that + the client's pay lag.
@@ -112,7 +118,13 @@ to the number that caused it.
 - **Overhead**: mean of the last three complete calendar months of ledger
   spending, excluding `owner_pay` (paying yourself is not overhead) and
   excluding `transfer`. Overridable; the override is stored, and the computed
-  value stays visible beside it.
+  value stays visible beside it. This total includes billable show expenses
+  Dan fronts (a flight, a hotel, per diem he pays out of pocket and bills
+  back to the client) — the projection has no way to net a later
+  reimbursement out of a past month's spend, so those dollars are counted as
+  overhead and never earned back here. Conservative and deliberate: it means
+  the forecast is quietly harder on Dan than his real cash flow, never
+  softer.
 - **Tax set-aside**: `max(0, projected income − overhead) × tax_setaside_bp`
   for that month. Profit-based, per the module reference's original intent.
 - **Take-home draw**: a flat monthly figure Dan sets (new setting). Seeded

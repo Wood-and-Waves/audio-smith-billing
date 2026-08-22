@@ -67,10 +67,14 @@ export async function saveSettings(input: SettingsInput): Promise<Fail | { ok: t
     return { error: 'Monthly overhead must be zero or more, or left blank to use the average.' }
   }
 
-  if (
-    !Number.isInteger(input.billing_lag_days) ||
-    input.billing_lag_days < 0 || input.billing_lag_days > 120
-  ) {
+  // Split from the range check below: a fractional value like 7.5 fails for
+  // a different reason than an out-of-range one, and reporting the range
+  // message for it ("must be between 0 and 120 days") is true but not why
+  // it was actually rejected — 7.5 IS in that range.
+  if (!Number.isInteger(input.billing_lag_days)) {
+    return { error: 'Billing lag must be a whole number of days.' }
+  }
+  if (input.billing_lag_days < 0 || input.billing_lag_days > 120) {
     return { error: 'Billing lag must be between 0 and 120 days.' }
   }
 

@@ -311,10 +311,14 @@ test('surplus carries forward into the next month\'s balance rather than resetti
     invoices: [bigInvoice],
     assumptions: assumptions({ overheadCents: 100000, takeHomeCents: 100000, taxRateBp: 0, billingLagDays: 0 }),
   }))
-  // client() terms_days=30, no learned lag -> sent_at + 30 days = 2026-09-13 -> month 2026-09 (index 1)
-  assert.equal(result.months[0].endingBalanceCents, 300000) // 500000 + 0 income - 100000 - 100000
-  assert.equal(result.months[1].endingBalanceCents, 5100000) // 300000 + 5000000 - 100000 - 100000
-  assert.equal(result.months[2].endingBalanceCents, 4900000) // 5100000 + 0 income - 200000, carried forward
+  // client() terms_days=30, no learned lag -> sent_at (Chicago date 2026-08-13)
+  // + 30 days = 2026-09-12 -> month 2026-09 (index 1).
+  // Month 0 (today 2026-08-21) is partial: August has 31 days, 11 remain
+  // counting today -> fraction 11/31. overhead0 = round(100000*11/31) =
+  // 35484; draw0 = same = 35484.
+  assert.equal(result.months[0].endingBalanceCents, 429032) // 500000 + 0 income - 35484 - 35484
+  assert.equal(result.months[1].endingBalanceCents, 5229032) // 429032 + 5000000 - 100000 - 100000 (full month)
+  assert.equal(result.months[2].endingBalanceCents, 5029032) // 5229032 + 0 income - 200000, carried forward
   assert.ok(result.months.every((m) => m.covered))
 })
 
@@ -323,10 +327,13 @@ test('the first uncovered month is identified exactly, and coveredThrough is the
     startingBalanceCents: 250000,
     assumptions: assumptions({ overheadCents: 100000, takeHomeCents: 100000, taxRateBp: 0 }),
   }))
-  // no income at all: balance drops 200000/month. 250000 -> 50000 (covered) -> -150000 (uncovered)
-  assert.equal(result.months[0].endingBalanceCents, 50000)
+  // no income at all. Month 0 (today 2026-08-21) is partial: 11 of August's
+  // 31 days remain counting today, so overhead/draw are pro-rated to 11/31
+  // -> round(100000*11/31) = 35484 each, not the full 100000.
+  // 250000 -> 179032 (covered) -> -20968 (uncovered, full month now)
+  assert.equal(result.months[0].endingBalanceCents, 179032)
   assert.equal(result.months[0].covered, true)
-  assert.equal(result.months[1].endingBalanceCents, -150000)
+  assert.equal(result.months[1].endingBalanceCents, -20968)
   assert.equal(result.months[1].covered, false)
   assert.equal(result.months.length, 2)
   assert.equal(result.coveredThrough, '2026-08')
@@ -343,9 +350,12 @@ test('coveredThrough is null when the very first month is already uncovered', ()
 })
 
 test('a balance of exactly zero counts as covered, and the walk continues', () => {
+  // Overhead/take-home chosen as multiples of 31 so month 0's 11/31
+  // pro-ration (today is 2026-08-21, 11 of August's 31 days remain) divides
+  // evenly, keeping this test's arithmetic exact rather than rounded.
   const result = buildForecast(baseInput({
-    startingBalanceCents: 200000,
-    assumptions: assumptions({ overheadCents: 100000, takeHomeCents: 100000, taxRateBp: 0 }),
+    startingBalanceCents: 22000, // 11000 overhead0 + 11000 draw0
+    assumptions: assumptions({ overheadCents: 31000, takeHomeCents: 31000, taxRateBp: 0 }),
   }))
   assert.equal(result.months[0].endingBalanceCents, 0)
   assert.equal(result.months[0].covered, true)
@@ -364,7 +374,46 @@ test('income comfortably exceeding costs for the whole horizon reports beyond-ho
   assert.ok(result.months.every((m) => m.covered))
 })
 
-test('bookedThrough is the latest month among all inflows, and null when there are none', () => {
+// ---------------------------------------------------------------------------
+// Month 0 pro-ration (M2). Month 0's income is already only "what's left to
+// land" — every inflow is dated to a future expected landing date, so
+// nothing before today ever accrues into it. Overhead and the draw must be
+// pro-rated the same way, or month 0 charges a full month's costs against a
+// starting balance that already covered its share of both up through
+// yesterday.
+
+test('a mid-month start pro-rates both overhead and the draw by the days remaining, today included', () => {
+  // today (baseInput) is 2026-08-21. August has 31 days; 11 remain counting
+  // today itself (21st through 31st). Overhead/take-home chosen as multiples
+  // of 31 so 11/31 divides evenly.
+  const result = buildForecast(baseInput({
+    assumptions: assumptions({ overheadCents: 310000, takeHomeCents: 620000, taxRateBp: 0 }),
+  }))
+  assert.equal(result.months[0].overheadCents, 110000) // 310000 * 11/31
+  assert.equal(result.months[0].drawCents, 220000) // 620000 * 11/31
+})
+
+test('a forecast run on the 1st of the month charges the full month\'s overhead and draw', () => {
+  const result = buildForecast(baseInput({
+    today: '2026-08-01',
+    assumptions: assumptions({ overheadCents: 500000, takeHomeCents: 760000, taxRateBp: 0 }),
+  }))
+  // All 31 days remain, today included -> fraction is 31/31 = 1.
+  assert.equal(result.months[0].overheadCents, 500000)
+  assert.equal(result.months[0].drawCents, 760000)
+})
+
+test('a forecast run on the last day of the month charges roughly one day\'s worth', () => {
+  const result = buildForecast(baseInput({
+    today: '2026-08-31',
+    assumptions: assumptions({ overheadCents: 310000, takeHomeCents: 620000, taxRateBp: 0 }),
+  }))
+  // Only today itself remains -> fraction is 1/31.
+  assert.equal(result.months[0].overheadCents, 10000) // 310000 / 31
+  assert.equal(result.months[0].drawCents, 20000) // 620000 / 31
+})
+
+test('bookedThrough is the latest month of booked WORK, never a lag-shifted cash-landing date', () => {
   const empty = buildForecast(baseInput())
   assert.equal(empty.bookedThrough, null)
   assert.equal(empty.inflows.length, 0)
@@ -377,8 +426,58 @@ test('bookedThrough is the latest month among all inflows, and null when there a
     days: [day({ date: '2027-01-10' })],
   })
   const result = buildForecast(baseInput({ invoices: [nearInvoice], shows: [farShow] }))
-  // farShow: last day 2027-01-10 + billingLag(7) + payLag(terms 30) = 2027-02-16 -> month 2027-02
-  assert.equal(result.bookedThrough, '2027-02')
+  // farShow's own last scheduled day is 2027-01-10 -> month 2027-01. Unlike
+  // its cash-landing inflow (last day + billingLag(7) + payLag(terms 30) =
+  // 2027-02-16, month 2027-02), bookedThrough is never lag-shifted — it's
+  // the month Dan's calendar actually goes quiet, not the month the money
+  // from that quiet calendar finally lands.
+  assert.equal(result.bookedThrough, '2027-01')
+})
+
+test('bookedThrough: a draft invoice dates to today\'s month — it has no sent_at yet to date it by', () => {
+  const draft = invoice({ id: 'i1', status: 'draft', sent_at: null, total_cents: 50000 })
+  const result = buildForecast(baseInput({ invoices: [draft] }))
+  assert.equal(result.bookedThrough, '2026-08') // today (baseInput) is 2026-08-21
+})
+
+test('bookedThrough: a sent invoice dates to the Chicago-calendar month it was actually sent, '
+  + 'not the month its cash is expected', () => {
+  const sent = invoice({ id: 'i1', status: 'sent', sent_at: '2026-05-01T00:00:00Z', total_cents: 50000 })
+  const result = buildForecast(baseInput({ invoices: [sent] }))
+  // sent_at midnight UTC May 1 reads back as April 30, 7pm in Chicago (CDT)
+  // -> month 2026-04. Its cash (terms 30) lands 2026-05-31, a different
+  // month entirely, which bookedThrough must not report.
+  assert.equal(result.bookedThrough, '2026-04')
+})
+
+test('bookedThrough counts only open shows and unpaid (draft/sent) invoices — '
+  + 'billed shows and paid/void invoices contribute nothing', () => {
+  const billed = show({ id: 's1', status: 'billed', days: [day({ date: '2027-06-01' })] })
+  const paidInv = invoice({
+    id: 'i1', status: 'paid', sent_at: '2027-06-01T00:00:00Z', paid_at: '2027-06-15', linked: true,
+  })
+  const voidInv = invoice({ id: 'i2', status: 'void', sent_at: '2027-06-01T00:00:00Z' })
+  const result = buildForecast(baseInput({ shows: [billed], invoices: [paidInv, voidInv] }))
+  assert.equal(result.bookedThrough, null)
+  assert.equal(result.inflows.length, 0)
+})
+
+test('m1 — a late-evening-Chicago sent_at is bucketed by the Chicago calendar day, not the UTC one', () => {
+  // Sent 8pm Chicago on Aug 31 (CDT, UTC-5) is 2026-09-01T01:00:00Z. A raw
+  // .slice(0, 10) of that ISO string reads '2026-09-01' — a whole month
+  // later than the invoice was actually sent, which used to push its
+  // expected payment (and thus the inflow's month) a month late too.
+  const lateInvoice = invoice({
+    id: 'i1', status: 'sent', sent_at: '2026-09-01T01:00:00Z', total_cents: 100000,
+  })
+  const result = buildForecast(baseInput({
+    invoices: [lateInvoice],
+    clients: [client({ terms_days: 0 })],
+    assumptions: assumptions({ billingLagDays: 0 }),
+  }))
+  assert.equal(result.inflows.length, 1)
+  // Chicago date is 2026-08-31; +0 lag, +0 terms = 2026-08-31 -> month 2026-08.
+  assert.equal(result.inflows[0].month, '2026-08')
 })
 
 test('inflows are sorted by month ascending, then label', () => {
@@ -425,6 +524,29 @@ test('a show with no scheduled days contributes no inflow and does not crash the
   assert.equal(result.bookedThrough, null)
 })
 
+// ---------------------------------------------------------------------------
+// notProjected — a show the projection can't price or date used to vanish
+// with no trace (no inflow, no mention anywhere on the page). It's listed
+// instead, with a reason.
+
+test('a show with no scheduled days is listed in notProjected instead of vanishing silently', () => {
+  const emptyShow = show({ id: 's1', name: 'Willow Creek', status: 'open', days: [] })
+  const result = buildForecast(baseInput({ shows: [emptyShow] }))
+  assert.equal(result.inflows.length, 0)
+  assert.deepEqual(result.notProjected, [{ showId: 's1', name: 'Willow Creek', reason: 'no days' }])
+})
+
+test('a show with days but a zero projection (no rate card, no rates) is listed in notProjected '
+  + 'instead of a silent $0 inflow', () => {
+  const zeroRateShow = show({
+    id: 's1', name: 'Willow Creek', status: 'open',
+    day_rate_cents: 0, travel_rate_cents: 0, days: [day({ date: '2026-09-01' })],
+  })
+  const result = buildForecast(baseInput({ shows: [zeroRateShow] }))
+  assert.equal(result.inflows.length, 0)
+  assert.deepEqual(result.notProjected, [{ showId: 's1', name: 'Willow Creek', reason: 'no rate' }])
+})
+
 test('an empty forecast (no shows, no invoices) still walks the months on overhead/draw alone', () => {
   const result = buildForecast(baseInput({
     startingBalanceCents: 5000000,
@@ -444,6 +566,32 @@ test('the pay-lag list only covers clients with actual booked work in this forec
   assert.deepEqual(result.payLags.map((p) => p.clientId), ['c1'])
 })
 
+// ---------------------------------------------------------------------------
+// M1 — reachable learned pay lags. The page's invoice fetch used to filter
+// to .in('status', ['draft','sent']) only, so no invoice it ever supplied
+// to buildForecast could carry a paid_at (only written alongside
+// status='paid') — payLagFor's `linked && paid_at !== null` condition was
+// unreachable from the page, and every client silently fell back to
+// terms_days no matter how many times they'd actually paid. This test is
+// page-shaped on purpose — it supplies 'paid' rows the way the FIXED page's
+// .in('status', ['draft','sent','paid']) fetch now does — to lock in the
+// contract buildForecast has always honored (it never filtered its own
+// input by status for pay-lag learning) so that fetch can't silently regress.
+test('a page-shaped invoice set that includes paid+linked invoices produces a learned pay lag', () => {
+  const settled1 = invoice({
+    id: 'i1', status: 'paid', linked: true, sent_at: '2026-06-01T00:00:00Z', paid_at: '2026-06-28', // 27
+  })
+  const settled2 = invoice({
+    id: 'i2', status: 'paid', linked: true, sent_at: '2026-06-05T00:00:00Z', paid_at: '2026-07-07', // 32
+  })
+  const stillOpen = invoice({ id: 'i3', status: 'sent', sent_at: '2026-08-14T00:00:00Z', total_cents: 100000 })
+  const result = buildForecast(baseInput({ invoices: [settled1, settled2, stillOpen] }))
+  const lag = result.payLags.find((p) => p.clientId === 'c1')
+  assert.ok(lag)
+  assert.equal(lag!.source, 'learned')
+  assert.equal(lag!.sampleSize, 2)
+})
+
 test('tax is computed on profit, never below zero, at the configured basis points', () => {
   const invA = invoice({
     id: 'i1', status: 'sent', sent_at: '2026-08-14T00:00:00Z', total_cents: 1000000,
@@ -453,7 +601,8 @@ test('tax is computed on profit, never below zero, at the configured basis point
     invoices: [invA],
     assumptions: assumptions({ overheadCents: 100000, takeHomeCents: 0, taxRateBp: 1500, billingLagDays: 0 }),
   }))
-  // income lands in month it's expected (sent_at 2026-08-14 + terms 30 = 2026-09-13 -> month 2026-09)
+  // income lands in the month it's expected: sent_at 2026-08-14T00:00:00Z
+  // reads as 2026-08-13 in Chicago, + terms 30 = 2026-09-12 -> month 2026-09
   const septMonth = result.months.find((m) => m.month === '2026-09')
   assert.ok(septMonth)
   assert.equal(septMonth!.incomeCents, 1000000)

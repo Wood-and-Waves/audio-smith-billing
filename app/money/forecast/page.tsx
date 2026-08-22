@@ -2,8 +2,8 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { todayInChicago, monthLabel } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
-import { workingBalance, type BalanceLike } from '@/lib/ledgerBalance'
-import { netAllocated, type EnvelopeMoveLike } from '@/lib/envelopes'
+import { workingBalance } from '@/lib/ledgerBalance'
+import { availableToAllocate, type EnvelopeMoveLike } from '@/lib/envelopes'
 import {
   buildForecast, computeOverheadCents,
   type ForecastShow, type ForecastInvoice, type ForecastClient,
@@ -126,11 +126,20 @@ async function fetchAllForecastInvoices(
   const rows: RawInvoiceRow[] = []
   let from = 0
   for (;;) {
+    // Includes 'paid' alongside 'draft'/'sent' — NOT just the unpaid ones.
+    // payLagFor (lib/forecast.ts) can only learn a client's pay lag from a
+    // linked invoice that has both sent_at AND paid_at, and paid_at is only
+    // ever written alongside status='paid' (markInvoicePaid). Fetching only
+    // draft/sent, as this used to, meant no invoice this page supplied could
+    // ever have a paid_at — every client silently fell back to terms_days,
+    // and "learned" pay lags were unreachable. buildForecast still excludes
+    // 'paid' invoices from inflows (see its own status check), so this adds
+    // nothing to projected income — it only makes the learning data reachable.
     const { data, error } = await supabase
       .from('invoices')
       .select(`id, number, client_id, status, total_cents, sent_at, paid_at,
                 ledger_transaction_invoices(transaction_id)`)
-      .in('status', ['draft', 'sent'])
+      .in('status', ['draft', 'sent', 'paid'])
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
       .range(from, from + PAGE_SIZE - 1)
@@ -216,15 +225,18 @@ const BackLink = () => (
   </Link>
 )
 
-/** One assumptions row — the whole row links to Settings, where every figure
- *  here (take-home, overhead override, tax rate, billing lag) actually lives
- *  and is edited. Per-client pay lag rows reuse it too: the days themselves
- *  aren't a Settings field, but billing lag (which feeds every pay-lag
- *  estimate below it) is, so the same destination applies. */
-function AssumptionRow({ label, value }: { label: string; value: React.ReactNode }) {
+/** One assumptions row — by default the whole row links to Settings, where
+ *  every figure here (take-home, overhead override, tax rate, billing lag)
+ *  actually lives and is edited. Per-client pay-lag rows pass their own
+ *  `href` instead: `terms_days` lives on the CLIENT record, not Settings, so
+ *  linking those to Settings would send Dan somewhere he can't change the
+ *  number that's actually driving the row. */
+function AssumptionRow({
+  label, value, href = '/settings',
+}: { label: string; value: React.ReactNode; href?: string }) {
   return (
     <Link
-      href="/settings"
+      href={href}
       className="flex items-center justify-between gap-3 py-2.5 border-b border-line text-sm
                  text-ink hover:text-accent transition-colors"
     >
@@ -308,16 +320,13 @@ export default async function MoneyForecastPage() {
 
   const today = todayInChicago()
 
-  // workingBalance (lib/ledgerBalance.ts) only ever reads amount_cents — see
-  // its own reduce — so `cleared` in BalanceLike's declared type is dead
-  // weight for this call. Widening the txn fetch above to include a column
-  // this page has no other use for, just to satisfy that unused field,
-  // would cost more clarity than this narrow assertion does.
-  const workingBalanceCents = workingBalance(
-    accountRow.opening_balance_cents,
-    txnRows as unknown as BalanceLike[],
-  )
-  const availableCents = workingBalanceCents - netAllocated(moveRows as EnvelopeMoveLike[])
+  const workingBalanceCents = workingBalance(accountRow.opening_balance_cents, txnRows)
+  // Same "available to allocate" figure /money/budget computes — see that
+  // page's own call to this helper. Sharing it (rather than reimplementing
+  // workingBalance - netAllocated inline, as this page used to) is what
+  // keeps the two screens' starting-balance math structurally identical
+  // instead of coincidentally identical.
+  const availableCents = availableToAllocate(workingBalanceCents, moveRows as EnvelopeMoveLike[])
 
   const clients: ForecastClient[] = (clientRows ?? []).map((c) => ({
     id: c.id, name: c.name, terms_days: c.terms_days,
@@ -349,7 +358,7 @@ export default async function MoneyForecastPage() {
     id: i.id,
     number: i.number,
     client_id: i.client_id,
-    status: i.status as 'draft' | 'sent',
+    status: i.status as 'draft' | 'sent' | 'paid',
     total_cents: i.total_cents,
     sent_at: i.sent_at,
     paid_at: i.paid_at,
@@ -357,7 +366,11 @@ export default async function MoneyForecastPage() {
   }))
 
   const hasOpenShows = shows.some((s) => s.status === 'open')
-  const hasUnpaidInvoices = invoices.length > 0
+  // 'paid' rows are fetched too now (so payLagFor can learn from them — see
+  // fetchAllForecastInvoices above), so this can no longer just be
+  // invoices.length > 0 — that would count a client with only settled
+  // history as having current booked work.
+  const hasUnpaidInvoices = invoices.some((i) => i.status !== 'paid')
 
   const takeHomeCents = settingsRow?.monthly_take_home_cents ?? 0
   const overheadOverrideCents = settingsRow?.monthly_overhead_cents ?? null
@@ -379,7 +392,12 @@ export default async function MoneyForecastPage() {
 
   const overdueInflows = forecast?.inflows.filter((f) => f.overdue) ?? []
 
-  const headline = forecast === null
+  // With no take-home set, the walk still runs (draw = $0), so
+  // coveredThrough/beyondHorizon would name a runway Dan hasn't actually
+  // earned — the month table below still reflects the true, honest $0-draw
+  // arithmetic, but the headline itself should prompt him to set the number
+  // rather than assert a month it can't back up.
+  const headline = forecast === null || takeHomeCents === 0
     ? null
     : forecast.beyondHorizon
       ? 'Covered beyond the next two years'
@@ -400,7 +418,20 @@ export default async function MoneyForecastPage() {
       ) : (
         <>
           <section className="mb-8">
-            <p className="display text-2xl sm:text-3xl font-bold">{headline}</p>
+            {takeHomeCents === 0 ? (
+              <Link
+                href="/settings"
+                className="display text-2xl sm:text-3xl font-bold text-accent hover:opacity-80
+                           transition-opacity"
+              >
+                Set your monthly take-home to see your runway →
+              </Link>
+            ) : (
+              <p className="display text-2xl sm:text-3xl font-bold">{headline}</p>
+            )}
+            <p className="text-xs text-muted mt-2">
+              Estimates from booked work only — not a promise.
+            </p>
             {forecast.bookedThrough !== null && (
               <p className="text-muted mt-1">
                 Booked work runs out after {monthLabel(forecast.bookedThrough)}.
@@ -408,14 +439,18 @@ export default async function MoneyForecastPage() {
             )}
           </section>
 
-          {takeHomeCents === 0 && (
-            <Link
-              href="/settings"
-              className="block mb-8 rounded-field border border-accent bg-accent-wash px-4 py-3
-                         text-sm font-semibold text-accent hover:opacity-80 transition-opacity"
-            >
-              No monthly take-home set — the draw column below reads $0 until you set one in Settings.
-            </Link>
+          {forecast.notProjected.length > 0 && (
+            <section className="mb-6">
+              <p className="text-xs text-muted">
+                Not projected —{' '}
+                {forecast.notProjected.map((s, idx) => (
+                  <span key={s.showId}>
+                    {idx > 0 && ', '}
+                    {s.name} ({s.reason === 'no days' ? 'no scheduled days' : 'no rate set'})
+                  </span>
+                ))}
+              </p>
+            </section>
           )}
 
           {overdueInflows.length > 0 && (
@@ -450,11 +485,11 @@ export default async function MoneyForecastPage() {
                     : formatUSD(computedOverheadCents)
                 }
               />
-              {/* Estimate, not advice — this is Dan's own configured set-aside
+              {/* Estimate, not advice — this is your own configured set-aside
                   rate (settings.tax_setaside_bp), read-only here by design;
                   it's edited in Settings, never on this page. */}
               <AssumptionRow
-                label="Tax set-aside — Dan's own rate, an estimate"
+                label="Tax set-aside — your configured rate, an estimate"
                 value={`${(taxRateBp / 100).toFixed(2)}%`}
               />
               <AssumptionRow label="Billing lag" value={`${billingLagDays} day${billingLagDays === 1 ? '' : 's'}`} />
@@ -474,6 +509,7 @@ export default async function MoneyForecastPage() {
                         key={lag.clientId}
                         label={name}
                         value={`${lag.days} day${lag.days === 1 ? '' : 's'} · ${detail}`}
+                        href={`/clients/${lag.clientId}`}
                       />
                     )
                   })}

@@ -111,6 +111,15 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
   function submit() {
     setError(null)
     setSaved(false)
+    // Blank billing lag saves as 7 (saveSettings' own default), not 0 or
+    // null like the other blank-means-unset fields on this form — so unlike
+    // those, leaving this input blank does NOT round-trip to itself. Compute
+    // the effective value once, send it, and (on success) write it straight
+    // back into the field below, so the UI shows what was actually saved
+    // without waiting on router.refresh() — refresh() re-fetches `initial`
+    // on the server, but this component's useState only reads `initial` on
+    // first mount, so a prop change alone would leave the field blank.
+    const effectiveBillingLagDays = billingLagDays.trim() === '' ? 7 : Number(billingLagDays)
     start(async () => {
       const result = await saveSettings({
         business_name: businessName,
@@ -128,10 +137,11 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
           monthlyTakeHome.trim() === '' ? 0 : Math.round(Number(monthlyTakeHome) * 100),
         monthly_overhead_cents:
           monthlyOverhead.trim() === '' ? null : Math.round(Number(monthlyOverhead) * 100),
-        billing_lag_days: billingLagDays.trim() === '' ? 7 : Number(billingLagDays),
+        billing_lag_days: effectiveBillingLagDays,
       })
       if ('error' in result) { setError(result.error); return }
       setSaved(true)
+      setBillingLagDays(String(effectiveBillingLagDays))
       router.refresh()
     })
   }
