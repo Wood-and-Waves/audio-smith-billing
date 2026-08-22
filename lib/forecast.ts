@@ -25,17 +25,25 @@
 // actually told the client to expect, which is the only number this model
 // has any business asserting.
 //
-// A show's cash also includes what the model ASSUMES about travel and PM
-// time when the show data doesn't say so explicitly: an out-of-state show
-// that runs more than one day, with no travel legs flagged on any of its
-// days, is assumed to need two (see `stateOf` and the travel-leg rule in
-// `projectedShowCents`) — a one-day out-of-town gig is flown in and out the
-// same day, not billed as travel days, so a one-day show never gets the
-// assumption. A show
-// with `pm_role` set gets a flat `PM_FORECAST_HOURS` of PM time billed once,
-// never per day. Both are reported per-show in `showProjections`, which
-// lists exactly the shows that fed `inflows` — the two are computed from the
-// same pass over `shows` so they can never drift apart.
+// A show's cash also reflects what the model ASSUMES about travel and PM
+// time when the show data doesn't say so explicitly. Travel days are part of
+// the scheduled block, never added on top of it (Dan: "the standard practice
+// is to have for a 6 day show, 2 travel days and 4 working days. That is the
+// most conservative.") — every scheduled day is EITHER a travel day or a
+// work day, never both. A day flagged `travel_in` or `travel_out` (either or
+// both) IS a travel day; with nothing flagged at all, an out-of-state show
+// (see `stateOf`) that runs more than one day is assumed to need its FIRST
+// and LAST scheduled day as travel (see the travel-day rule in
+// `computeShowBreakdown`) — a one-day out-of-town gig is flown in and out
+// the same day, not billed as travel, so a one-day show never gets the
+// assumption, and a 2-day out-of-state show with no flags is 2 travel days
+// and ZERO work days, deliberately not special-cased. Dan sometimes travels
+// and works the same day, which pays more — but the forecast always plans
+// the cheaper, more conservative case. A show with `pm_role` set gets a flat
+// `PM_FORECAST_HOURS` of PM time billed once, never per day. Both are
+// reported per-show in `showProjections`, which lists exactly the shows that
+// fed `inflows` — the two are computed from the same pass over `shows` so
+// they can never drift apart.
 //
 // `today` is always a parameter, never read from a clock in here — see
 // lib/dates.ts and lib/status.ts, which insist on the same thing for the
@@ -137,12 +145,14 @@ export type ShowProjection = {
   // never a second computation, so a count can never drift from what the
   // dollar figure was PRICED from. It can still be positive while its own
   // dollar figure is exactly zero, though — a $0 travel or PM rate prices a
-  // real leg/hour count at $0 — so a UI rendering these counts must also
+  // real day/hour count at $0 — so a UI rendering these counts must also
   // check the matching cents field before claiming the work as paid-for.
-  dayCount: number // scheduled days; a half day counts as 0.5
-  travelLegs: number // flagged legs, or 2 when travelAssumed
+  // dayCount and travelDays partition the scheduled block, never overlap —
+  // dayCount + travelDays always equals the show's total scheduled days.
+  dayCount: number // WORK days only; a half day counts as 0.5
+  travelDays: number // flagged travel days, or 2 when travelAssumed
   pmHours: number // 0 or PM_FORECAST_HOURS
-  travelAssumed: boolean // true when the legs came from the out-of-state rule, not flagged days
+  travelAssumed: boolean // true when the days came from the out-of-state rule, not flagged days
   landsMonth: string // YYYY-MM the cash is expected
 }
 
@@ -201,22 +211,37 @@ type ShowBreakdown = {
   travelCents: number
   pmCents: number
   totalCents: number
-  dayCount: number // fullDays + halfDays * 0.5
-  travelLegs: number // same value that priced travelCents
+  dayCount: number // WORK days only; fullDays + halfDays * 0.5
+  travelDays: number // same value that priced travelCents
   pmHours: number // same value that priced pmCents
   travelAssumed: boolean
 }
 
-/** Every scheduled day is a work day (migration 0005). Travel legs come from
- *  flagged days when any are flagged; otherwise an out-of-state show (per
- *  `stateOf` vs the normalized `homeState`) that has MORE THAN ONE scheduled
- *  day is assumed to need exactly 2 legs — a single-day out-of-town gig is
- *  flown in and out the same day, not billed as travel days, so a one-day
- *  show never picks up the assumption. Flagged legs always win over the
- *  assumption in every case, including on a one-day show (the double-count
- *  guard) — if Dan flags travel on a single-day show, that flag is honored
- *  regardless. PM is `pm_role`'s flat `PM_FORECAST_HOURS * pm_rate_cents`,
- *  once per show regardless of day count. */
+/** Every scheduled day is EITHER a travel day or a work day, never both —
+ *  travel days are part of the scheduled block (the owner's "most
+ *  conservative" reading of standard practice), not added on top of it.
+ *  Travel days come from flagged days when any are flagged (a day counts
+ *  once even if it carries both `travel_in` and `travel_out` — the
+ *  double-count guard); otherwise an out-of-state show (per `stateOf` vs the
+ *  normalized `homeState`) that has MORE THAN ONE scheduled day is assumed
+ *  to need exactly 2 travel days — its FIRST and LAST scheduled day by
+ *  date — a single-day out-of-town gig is flown in and out the same day, not
+ *  billed as travel, so a one-day show never picks up the assumption.
+ *  Flagged days always win over the assumption in every case, including on a
+ *  one-day show — if Dan flags travel on a single-day show, that flag is
+ *  honored regardless. Every day that isn't a travel day is a work day: full
+ *  rate, or half (rounded) when `pay_as_half_day` — a travel day's own
+ *  `pay_as_half_day` flag is irrelevant, since it isn't a work day at all. A
+ *  literal, deliberate consequence: a 2-day out-of-state show with no flags
+ *  is 2 travel days and ZERO work days — not special-cased. Dan reviewed
+ *  this exact case: a short out-of-state trip is really two travel days
+ *  plus a show day (a 3-day block, not 2), but teaching this function to
+ *  guess "day 2 is probably also a work day" is a judgment call he
+ *  deliberately deferred rather than asked for — so this is NOT a bug to
+ *  "fix" unasked; it's the literal, intended output of the rule above until
+ *  he asks for the short-trip case specifically. PM is `pm_role`'s flat
+ *  `PM_FORECAST_HOURS * pm_rate_cents`, once per show regardless of day
+ *  count. */
 function computeShowBreakdown(show: ForecastShow, homeState: string): ShowBreakdown {
   // Same bad-data clamping doctrine as the rate guards just below: `stateOf`
   // already trims+uppercases the show's own location before comparing, but
@@ -224,7 +249,7 @@ function computeShowBreakdown(show: ForecastShow, homeState: string): ShowBreakd
   // through that normalization — a value stored lowercase ('il') or
   // whitespace-padded (' IL ') would fail the strict equality below and
   // make every same-state, multi-day show read as out-of-state, inventing
-  // two travel legs and overstating the runway. Normalize once, here, and
+  // two travel days and overstating the runway. Normalize once, here, and
   // compare against that for the rest of the function. An empty home state
   // (a settings row nobody has ever saved) can't answer "is this the same
   // state" at all, so it must never be treated as an answer — a blank home
@@ -238,42 +263,48 @@ function computeShowBreakdown(show: ForecastShow, homeState: string): ShowBreakd
   const pmRate = show.pm_rate_cents > 0 ? show.pm_rate_cents : 0
   const halfRate = Math.round(dayRate / 2)
 
-  let fullDays = 0
-  let halfDays = 0
-  let flaggedLegs = 0
   let firstDay: string | null = null
   let lastDay: string | null = null
-
   for (const d of show.days) {
-    if (d.pay_as_half_day) halfDays += 1
-    else fullDays += 1
-    if (d.travel_in) flaggedLegs += 1
-    if (d.travel_out) flaggedLegs += 1
     if (firstDay === null || d.date < firstDay) firstDay = d.date
     if (lastDay === null || d.date > lastDay) lastDay = d.date
   }
 
-  const dayCents = fullDays * dayRate + halfDays * halfRate
-
-  let legs = 0
+  // Which scheduled days are travel days. Flagged days win outright — a day
+  // counts once even if it carries both `travel_in` and `travel_out`. Only
+  // when NOTHING is flagged does the out-of-state assumption get a look, and
+  // then only the FIRST and LAST scheduled day (by date) become travel;
+  // everything in between stays a work day.
+  const isTravel = show.days.map((d) => d.travel_in || d.travel_out)
   let travelAssumed = false
-  if (flaggedLegs > 0) {
-    legs = flaggedLegs
-  } else if (show.days.length > 1) {
+  if (!isTravel.some(Boolean) && show.days.length > 1) {
     const showState = stateOf(show.location)
     if (home !== '' && showState !== null && showState !== home) {
-      legs = 2
+      for (let i = 0; i < show.days.length; i++) {
+        if (show.days[i].date === firstDay || show.days[i].date === lastDay) isTravel[i] = true
+      }
       travelAssumed = true
     }
   }
-  const travelCents = legs * travelRate
+
+  let fullDays = 0
+  let halfDays = 0
+  let travelDays = 0
+  for (let i = 0; i < show.days.length; i++) {
+    if (isTravel[i]) { travelDays += 1; continue } // a travel day is never also a work day
+    if (show.days[i].pay_as_half_day) halfDays += 1
+    else fullDays += 1
+  }
+
+  const dayCents = fullDays * dayRate + halfDays * halfRate
+  const travelCents = travelDays * travelRate
 
   const pmHours = show.pm_role ? PM_FORECAST_HOURS : 0
   const pmCents = pmHours * pmRate
 
   return {
     firstDay, lastDay, dayCents, travelCents, pmCents, totalCents: dayCents + travelCents + pmCents,
-    dayCount: fullDays + halfDays * 0.5, travelLegs: legs, pmHours, travelAssumed,
+    dayCount: fullDays + halfDays * 0.5, travelDays, pmHours, travelAssumed,
   }
 }
 
@@ -400,7 +431,7 @@ export function buildForecast(input: {
       pmCents: breakdown.pmCents,
       totalCents: breakdown.totalCents,
       dayCount: breakdown.dayCount,
-      travelLegs: breakdown.travelLegs,
+      travelDays: breakdown.travelDays,
       pmHours: breakdown.pmHours,
       travelAssumed: breakdown.travelAssumed,
       landsMonth: month,

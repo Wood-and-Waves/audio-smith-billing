@@ -89,12 +89,14 @@ test('a half day bills at day_rate/2, rounded', () => {
   assert.equal(projectedShowCents(s, HOME_STATE), 10001 + 5001)
 })
 
-test('travel legs add on top of the day, one leg per flag', () => {
+test('a flagged travel day is a travel day, not also a work day — a day flagged both '
+  + 'travel_in AND travel_out still counts as ONE travel day at ONE travel rate, never two', () => {
   const s = show({
     day_rate_cents: 100000, travel_rate_cents: 20000,
     days: [day({ date: '2026-09-01', travel_in: true, travel_out: true })],
   })
-  assert.equal(projectedShowCents(s, HOME_STATE), 100000 + 2 * 20000)
+  // The day is entirely a travel day: no day-rate work happens on it at all.
+  assert.equal(projectedShowCents(s, HOME_STATE), 20000)
 })
 
 test('zero rates project zero, no crash', () => {
@@ -122,35 +124,88 @@ test('a show with no scheduled days projects zero, no crash', () => {
 })
 
 // ---------------------------------------------------------------------------
-// projectedShowCents — assumed travel legs (out-of-state rule + double-count guard)
+// projectedShowCents — travel days are part of the scheduled block (out-of-
+// state assumption + flagged days), never added on top of it. Every
+// scheduled day is EITHER a travel day or a work day, never both, so
+// dayCount + travelDays always equals the show's total scheduled days.
 
-test('a multi-day out-of-state show with no flagged legs assumes 2 legs at its own travel rate', () => {
+test('a 2-day out-of-state show with no flags is 2 travel days and ZERO work days — the '
+  + 'literal, deliberate consequence of "first and last scheduled day are travel," not '
+  + 'special-cased into a 3rd, worked day', () => {
   const s = show({
     day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Orlando, FL',
     days: [day({ date: '2026-09-01' }), day({ date: '2026-09-02' })],
   })
-  assert.equal(projectedShowCents(s, HOME_STATE), 2 * 100000 + 2 * 25000)
+  assert.equal(projectedShowCents(s, HOME_STATE), 2 * 25000)
+  const result = buildForecast(baseInput({ shows: [s] }))
+  const proj = result.showProjections[0]
+  assert.equal(proj.dayCount, 0)
+  assert.equal(proj.travelDays, 2)
+  assert.equal(proj.travelAssumed, true)
+  assert.equal(proj.dayCount + proj.travelDays, s.days.length)
 })
 
-test('a one-day out-of-state show assumes NO travel legs — flown in and out the same day, '
-  + 'not billed as travel days', () => {
+test('a 3-day out-of-state show with no flags is 1 work day (the middle one) + 2 travel days '
+  + '(first and last)', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Orlando, FL',
+    days: [day({ date: '2026-09-01' }), day({ date: '2026-09-02' }), day({ date: '2026-09-03' })],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 100000 + 2 * 25000)
+  const result = buildForecast(baseInput({ shows: [s] }))
+  const proj = result.showProjections[0]
+  assert.equal(proj.dayCount, 1)
+  assert.equal(proj.travelDays, 2)
+  assert.equal(proj.dayCount + proj.travelDays, s.days.length)
+})
+
+test('the owner\'s own 6-day example: 2 travel days + 4 working days, never 6 worked days '
+  + 'with 2 travel legs added on top', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Orlando, FL',
+    days: [1, 2, 3, 4, 5, 6].map((n) => day({ date: `2026-09-0${n}` })),
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 4 * 100000 + 2 * 25000)
+  const result = buildForecast(baseInput({ shows: [s] }))
+  const proj = result.showProjections[0]
+  assert.equal(proj.dayCount, 4)
+  assert.equal(proj.travelDays, 2)
+  assert.equal(proj.dayCount + proj.travelDays, s.days.length)
+})
+
+test('a real pinned example — 5-day out-of-state Bentonville show at $780/$390 day/travel '
+  + 'rates projects $3,120 (3 work days + 2 travel days), not the old, overstated $4,680 '
+  + '(5 work days plus 2 travel legs added on top)', () => {
+  const s = show({
+    day_rate_cents: 78000, travel_rate_cents: 39000, location: 'Bentonville, AR',
+    days: [1, 2, 3, 4, 5].map((n) => day({ date: `2026-09-0${n}` })),
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 312000) // $3,120.00
+})
+
+test('a one-day out-of-state show is 0 travel + 1 work day — flown in and out the same day, '
+  + 'not billed as travel', () => {
   const s = show({
     day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Orlando, FL',
     days: [day({ date: '2026-09-01' })],
   })
   assert.equal(projectedShowCents(s, HOME_STATE), 100000)
+  const result = buildForecast(baseInput({ shows: [s] }))
+  const proj = result.showProjections[0]
+  assert.equal(proj.dayCount, 1)
+  assert.equal(proj.travelDays, 0)
 })
 
-test('a one-day out-of-state show WITH flagged legs still uses the flags, not the (absent) '
-  + 'assumption', () => {
+test('a one-day out-of-state show WITH a flagged travel day uses the flag, not the (absent) '
+  + 'assumption — the flagged day is pure travel, not also a paid work day', () => {
   const s = show({
     day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Orlando, FL',
     days: [day({ date: '2026-09-01', travel_in: true, travel_out: true })],
   })
-  assert.equal(projectedShowCents(s, HOME_STATE), 100000 + 2 * 25000)
+  assert.equal(projectedShowCents(s, HOME_STATE), 25000)
 })
 
-test('a same-state show assumes no travel legs', () => {
+test('a same-state show assumes no travel days', () => {
   const s = show({
     day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Chicago, IL',
     days: [day({ date: '2026-09-01' })],
@@ -158,12 +213,46 @@ test('a same-state show assumes no travel legs', () => {
   assert.equal(projectedShowCents(s, HOME_STATE), 100000)
 })
 
-test('a blank location assumes no travel legs', () => {
+test('a same-state multi-day show is all work, zero travel, even across several scheduled '
+  + 'days — the out-of-state assumption never fires at all', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Chicago, IL',
+    days: [day({ date: '2026-09-01' }), day({ date: '2026-09-02' }), day({ date: '2026-09-03' })],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 3 * 100000)
+  const result = buildForecast(baseInput({ shows: [s] }))
+  const proj = result.showProjections[0]
+  assert.equal(proj.dayCount, 3)
+  assert.equal(proj.travelDays, 0)
+  assert.equal(proj.travelAssumed, false)
+})
+
+test('a blank location assumes no travel days', () => {
   const s = show({
     day_rate_cents: 100000, travel_rate_cents: 25000, location: '',
     days: [day({ date: '2026-09-01' })],
   })
   assert.equal(projectedShowCents(s, HOME_STATE), 100000)
+})
+
+test('flagged travel days are exactly the travel days and everything else is work — 4 days, '
+  + 'first flagged travel_in, last flagged travel_out -> 2 work days + 2 travel days', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000,
+    days: [
+      day({ date: '2026-09-01', travel_in: true }),
+      day({ date: '2026-09-02' }),
+      day({ date: '2026-09-03' }),
+      day({ date: '2026-09-04', travel_out: true }),
+    ],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 2 * 100000 + 2 * 25000)
+  const result = buildForecast(baseInput({ shows: [s] }))
+  const proj = result.showProjections[0]
+  assert.equal(proj.dayCount, 2)
+  assert.equal(proj.travelDays, 2)
+  assert.equal(proj.travelAssumed, false)
+  assert.equal(proj.dayCount + proj.travelDays, s.days.length)
 })
 
 // ---------------------------------------------------------------------------
@@ -173,7 +262,7 @@ test('a blank location assumes no travel legs', () => {
 // padded, or missing would either invent phantom travel or, if empty,
 // mark literally everything as "out of state."
 
-test('a lowercase home state still matches an in-state multi-day show — no phantom travel legs', () => {
+test('a lowercase home state still matches an in-state multi-day show — no phantom travel days', () => {
   const s = show({
     day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Chicago, IL',
     days: [day({ date: '2026-09-01' }), day({ date: '2026-09-02' })],
@@ -181,7 +270,7 @@ test('a lowercase home state still matches an in-state multi-day show — no pha
   assert.equal(projectedShowCents(s, 'il'), 2 * 100000)
 })
 
-test('a whitespace-padded home state still matches an in-state multi-day show — no phantom travel legs', () => {
+test('a whitespace-padded home state still matches an in-state multi-day show — no phantom travel days', () => {
   const s = show({
     day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Chicago, IL',
     days: [day({ date: '2026-09-01' }), day({ date: '2026-09-02' })],
@@ -189,7 +278,7 @@ test('a whitespace-padded home state still matches an in-state multi-day show �
   assert.equal(projectedShowCents(s, ' IL '), 2 * 100000)
 })
 
-test('an empty home state assumes no travel legs on an in-state multi-day show', () => {
+test('an empty home state assumes no travel days on an in-state multi-day show', () => {
   const s = show({
     day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Chicago, IL',
     days: [day({ date: '2026-09-01' }), day({ date: '2026-09-02' })],
@@ -197,7 +286,7 @@ test('an empty home state assumes no travel legs on an in-state multi-day show',
   assert.equal(projectedShowCents(s, ''), 2 * 100000)
 })
 
-test('an empty home state assumes no travel legs on an out-of-state multi-day show either — '
+test('an empty home state assumes no travel days on an out-of-state multi-day show either — '
   + 'an unusable home state can never justify assuming travel', () => {
   const s = show({
     day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Orlando, FL',
@@ -206,25 +295,35 @@ test('an empty home state assumes no travel legs on an out-of-state multi-day sh
   assert.equal(projectedShowCents(s, ''), 2 * 100000)
 })
 
-test('flagged travel legs win over the (absent) out-of-state assumption — the double-count guard', () => {
+test('a flagged travel day wins over the (absent) out-of-state assumption — the double-count '
+  + 'guard — and, being a travel day, is not also a paid work day', () => {
   const s = show({
     day_rate_cents: 100000, travel_rate_cents: 25000, location: null,
     days: [day({ date: '2026-09-01', travel_in: true, travel_out: true })],
   })
-  assert.equal(projectedShowCents(s, HOME_STATE), 100000 + 2 * 25000)
+  assert.equal(projectedShowCents(s, HOME_STATE), 25000)
 })
 
-test('a show that is BOTH out-of-state AND has flagged travel legs uses the flags only — no double count', () => {
+test('a show that is BOTH out-of-state AND has a flagged travel day uses the flag only — no '
+  + 'double count, and the out-of-state assumption does not ALSO mark the last day as travel '
+  + 'even though this 3-day show would otherwise qualify for it', () => {
   const s = show({
     day_rate_cents: 100000, travel_rate_cents: 25000,
-    location: 'Orlando, FL', // out of state — would independently justify 2 assumed legs
+    location: 'Orlando, FL', // out of state — would independently justify a 2-day assumption
     days: [
-      day({ date: '2026-09-01', travel_in: true }),
-      day({ date: '2026-09-02', travel_in: true, travel_out: true }),
-    ], // 3 flagged legs
+      day({ date: '2026-09-01', travel_in: true }), // flagged travel day
+      day({ date: '2026-09-02' }), // plain work day
+      day({ date: '2026-09-03' }), // plain work day — NOT travel, even though it's the last
+    ],
   })
-  // If the guard were broken this would double-count to 3 (flagged) + 2 (assumed) = 5 legs.
-  assert.equal(projectedShowCents(s, HOME_STATE), 100000 * 2 + 3 * 25000)
+  // If the guard were broken, the out-of-state assumption would also mark 09-03 (the last
+  // day) as travel, on top of the flagged 09-01, double-counting to 1 work + 2 travel.
+  assert.equal(projectedShowCents(s, HOME_STATE), 2 * 100000 + 25000)
+  const result = buildForecast(baseInput({ shows: [s] }))
+  const proj = result.showProjections[0]
+  assert.equal(proj.dayCount, 2)
+  assert.equal(proj.travelDays, 1)
+  assert.equal(proj.travelAssumed, false)
 })
 
 // ---------------------------------------------------------------------------
@@ -272,11 +371,11 @@ test('a full example — 5-day out-of-state PM show — matches hand arithmetic'
     location: 'Orlando, FL',
     days: [1, 2, 3, 4, 5].map((n) => day({ date: `2026-09-0${n}` })),
   })
-  // day: 5 * 100000 = 500000
-  // travel (assumed, out-of-state, no flags): 2 * 20000 = 40000
-  // pm: 4 * 5000 = 20000
-  // total = 560000
-  assert.equal(projectedShowCents(s, HOME_STATE), 560000)
+  // work (5 scheduled days minus the first+last assumed as travel = 3): 3 * 100000 = 300000
+  // travel (assumed, out-of-state, no flags, first+last): 2 * 20000 = 40000
+  // pm (flat, unaffected by the travel/work split): 4 * 5000 = 20000
+  // total = 360000
+  assert.equal(projectedShowCents(s, HOME_STATE), 360000)
 })
 
 // ---------------------------------------------------------------------------
@@ -752,7 +851,10 @@ test('showProjections reconciles exactly with inflows and orders by firstDay the
     id: 's-a', name: 'Zephyr', client_id: 'c1',
     day_rate_cents: 100000, travel_rate_cents: 20000,
     location: 'Orlando, FL',
-    days: [day({ date: '2026-09-05' }), day({ date: '2026-09-06' })],
+    // 3 scheduled days out-of-state: first+last assumed travel, middle stays work —
+    // deliberately NOT 2 days, so this general reconciliation check doesn't collide
+    // with the 2-day (0 work, 2 travel) edge case pinned by its own dedicated test.
+    days: [day({ date: '2026-09-05' }), day({ date: '2026-09-06' }), day({ date: '2026-09-07' })],
   })
   const showB = show({
     id: 's-b', name: 'Alpha', client_id: 'c1',
@@ -773,15 +875,19 @@ test('showProjections reconciles exactly with inflows and orders by firstDay the
   }
 
   const zephyr = result.showProjections.find((p) => p.showId === 's-a')!
-  assert.equal(zephyr.dayCents, 200000)
+  assert.equal(zephyr.dayCount, 1) // just the middle day, 09-06
+  assert.equal(zephyr.travelDays, 2) // first (09-05) and last (09-07)
+  assert.equal(zephyr.dayCents, 100000)
   assert.equal(zephyr.travelCents, 40000)
   assert.equal(zephyr.travelAssumed, true)
-  assert.equal(zephyr.totalCents, 240000)
+  assert.equal(zephyr.totalCents, 140000)
   assert.equal(zephyr.firstDay, '2026-09-05')
-  assert.equal(zephyr.lastDay, '2026-09-06')
+  assert.equal(zephyr.lastDay, '2026-09-07')
+  assert.equal(zephyr.dayCount + zephyr.travelDays, showA.days.length)
 })
 
-test('travelAssumed is true only when legs came from the out-of-state rule, never from flags', () => {
+test('travelAssumed is true only when travel days came from the out-of-state rule, never from '
+  + 'flags', () => {
   const outOfState = show({
     id: 's-out', name: 'OutOfState Show', client_id: 'c1',
     day_rate_cents: 100000, travel_rate_cents: 20000,
@@ -792,14 +898,24 @@ test('travelAssumed is true only when legs came from the out-of-state rule, neve
     id: 's-flag', name: 'Flagged Show', client_id: 'c1',
     day_rate_cents: 100000, travel_rate_cents: 20000,
     location: 'Orlando, FL', // also out of state — the guard's whole point
-    days: [day({ date: '2026-09-05', travel_in: true, travel_out: true })],
+    // Two flagged travel days (not one day flagged twice), so this show's totals land on
+    // the same numbers as outOfState's 2-day assumption above, sourced from flags instead.
+    days: [
+      day({ date: '2026-09-05', travel_in: true }),
+      day({ date: '2026-09-06', travel_out: true }),
+    ],
   })
   const result = buildForecast(baseInput({ shows: [outOfState, flagged] }))
   const outProj = result.showProjections.find((p) => p.showId === 's-out')!
   const flagProj = result.showProjections.find((p) => p.showId === 's-flag')!
   assert.equal(outProj.travelAssumed, true)
+  assert.equal(outProj.travelDays, 2)
+  assert.equal(outProj.dayCount, 0)
   assert.equal(flagProj.travelAssumed, false)
-  assert.equal(flagProj.travelCents, 2 * 20000) // same total as the assumption, but sourced from flags
+  assert.equal(flagProj.travelDays, 2)
+  assert.equal(flagProj.dayCount, 0)
+  // same total as the assumption above, but sourced from flags, not the out-of-state rule
+  assert.equal(flagProj.travelCents, outProj.travelCents)
 })
 
 test('a zero-total show still appears in showProjections (as $0) even though it is excluded '
@@ -831,35 +947,41 @@ test('a multi-day PM show contributes one showProjections row with pmCents count
   assert.equal(proj.totalCents, 4 * 100000 + PM_FORECAST_HOURS * 7500)
 })
 
-test('showProjections count fields (dayCount/travelLegs/pmHours) reconcile with the money fields '
-  + 'on a mixed out-of-state, multi-day, PM show with one half day', () => {
+test('showProjections count fields (dayCount/travelDays/pmHours) reconcile with the money fields '
+  + 'on a mixed out-of-state, multi-day, PM show — AND a half-day flag on the assumed LAST '
+  + 'travel day is ignored, since a travel day is never also a (half-)work day', () => {
   const mixedShow = show({
     id: 's1', name: 'Mixed Show', client_id: 'c1',
     day_rate_cents: 100000, travel_rate_cents: 20000, pm_rate_cents: 7500, pm_role: true,
     location: 'Orlando, FL', // out of state vs HOME_STATE 'IL' — the travel assumption fires
     days: [
-      day({ date: '2026-09-01' }),
-      day({ date: '2026-09-02' }),
-      day({ date: '2026-09-03' }),
-      day({ date: '2026-09-04', pay_as_half_day: true }), // 4 scheduled days, one half
+      day({ date: '2026-09-01' }), // assumed travel (first)
+      day({ date: '2026-09-02' }), // work
+      day({ date: '2026-09-03' }), // work
+      // last day — assumed travel — ALSO flagged pay_as_half_day. That flag must be
+      // ignored: the day is a travel day, not a half-priced work day, so it must not
+      // contribute halfRate to dayCents nor shrink dayCount below the 2 plain work days.
+      day({ date: '2026-09-04', pay_as_half_day: true }),
     ],
   })
   const result = buildForecast(baseInput({ shows: [mixedShow] }))
   assert.equal(result.showProjections.length, 1)
   const proj = result.showProjections[0]
 
-  // 3 full days + 1 half day = 3.5
-  assert.equal(proj.dayCount, 3.5)
-  // no flagged legs, but >1 scheduled day and out-of-state -> the 2-leg assumption
-  assert.equal(proj.travelLegs, 2)
+  // 2 plain work days (09-02, 09-03) — the half-day flag on the assumed travel day
+  // (09-04) contributes nothing, full or half.
+  assert.equal(proj.dayCount, 2)
+  // no flagged days, but >1 scheduled day and out-of-state -> the 2-travel-day assumption
+  // (first 09-01 and last 09-04, regardless of 09-04's half-day flag)
+  assert.equal(proj.travelDays, 2)
   assert.equal(proj.travelAssumed, true)
+  assert.equal(proj.dayCount + proj.travelDays, mixedShow.days.length)
   // pm_role set -> the flat PM_FORECAST_HOURS, once
   assert.equal(proj.pmHours, PM_FORECAST_HOURS)
 
   // Same computation as the money fields, not a second pass — these must reconcile exactly.
-  const halfRate = Math.round(100000 / 2)
-  assert.equal(proj.dayCents, 3 * 100000 + halfRate)
-  assert.equal(proj.travelCents, proj.travelLegs * 20000)
+  assert.equal(proj.dayCents, 2 * 100000)
+  assert.equal(proj.travelCents, proj.travelDays * 20000)
   assert.equal(proj.pmCents, proj.pmHours * 7500)
 })
 
@@ -874,7 +996,7 @@ test('showProjections count fields on a plain one-day local show: 1 day, no trav
   assert.equal(result.showProjections.length, 1)
   const proj = result.showProjections[0]
   assert.equal(proj.dayCount, 1)
-  assert.equal(proj.travelLegs, 0)
+  assert.equal(proj.travelDays, 0)
   assert.equal(proj.travelAssumed, false)
   assert.equal(proj.pmHours, 0)
   assert.equal(proj.dayCents, 80000)

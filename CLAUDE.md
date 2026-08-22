@@ -148,14 +148,20 @@ status.
   future bookings) and pairs the runway with the month booked work runs out.
   Projection is its own arithmetic, NOT `computeShowLines` — that earns the
   day rate from punched straight time, so a booked show projects $0 through
-  it; every `show_days` row is a work day (0005). A show's projection =
-  days x day rate (half days halved) + travel + PM, where **travel** is 2
-  legs at the show's own rate ONLY when it runs >1 day AND its location names
-  a state other than `settings.home_state` (flagged travel_in/out legs always
-  win over the assumption), and **PM** is a flat 4h at the show's PM rate when
-  `shows.pm_role` is set (forecast-only; real PM still bills from
-  `pm_entries`). No OT/DT/meal penalties/expenses are assumed — every omission
-  understates EXCEPT an hourly show, the one place it can overstate.
+  it. Every scheduled day is EITHER a travel day or a work day, never both —
+  travel days are part of the scheduled block, never added on top of it
+  (Dan: "for a 6 day show, 2 travel days and 4 working days. That is the most
+  conservative."). A day flagged travel_in/out (either or both) IS a travel
+  day; with nothing flagged, an out-of-state show (location names a state
+  other than `settings.home_state`) that runs >1 day is assumed to need its
+  FIRST and LAST scheduled day as travel — flagged days always win over the
+  assumption. Every remaining day is a work day at the show's own rate (half
+  days halved). A 2-day out-of-state show with nothing flagged is therefore 2
+  travel days and ZERO work days — deliberate, not special-cased. **PM** is a
+  flat 4h at the show's PM rate when `shows.pm_role` is set (forecast-only;
+  real PM still bills from `pm_entries`). No OT/DT/meal penalties/expenses
+  are assumed — every omission understates EXCEPT an hourly show, the one
+  place it can overstate.
   **Payment timing is each client's `terms_days`** (Net 30 today). A learned
   per-client pay lag was built and then DELIBERATELY REMOVED 2026-08-22 —
   Dan's lags come from him not being home when checks arrive, not from client

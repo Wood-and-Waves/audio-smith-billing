@@ -244,20 +244,23 @@ function AssumptionRow({
 
 /** One row in the "Booked shows" list — the per-show breakdown backing each
  *  show's contribution to `inflows`. The muted line under the name states
- *  the non-zero COUNTS (`dayCount`/`travelLegs`/`pmHours`), not dollars — the
+ *  the non-zero COUNTS (`dayCount`/`travelDays`/`pmHours`), not dollars — the
  *  row's own total (`totalCents`) already carries the money, so a second
- *  dollar figure per component just repeated it in smaller type. The counts
- *  come straight off `ShowProjection`, sourced from the same computation as
- *  `dayCents`/`travelCents`/`pmCents` (see its doc comment in
- *  lib/forecast.ts) — but a count can be positive while its own dollars are
- *  exactly zero (a $0 travel or PM rate), so each part below is gated on
- *  BOTH its count and its cents, not the count alone, or a $0-rate show
- *  would claim "2 travel · 4h PM" beside a total that pays for neither.
+ *  dollar figure per component just repeated it in smaller type. `dayCount`
+ *  (work days) and `travelDays` partition the scheduled block — they never
+ *  overlap and always sum to the show's total scheduled days, so "3 days ·
+ *  2 travel" on a 5-day show reads as the whole block, not extra days
+ *  bolted on. The counts come straight off `ShowProjection`, sourced from
+ *  the same computation as `dayCents`/`travelCents`/`pmCents` (see its doc
+ *  comment in lib/forecast.ts) — but a count can be positive while its own
+ *  dollars are exactly zero (a $0 travel or PM rate), so each part below is
+ *  gated on BOTH its count and its cents, not the count alone, or a $0-rate
+ *  show would claim "2 travel · 4h PM" beside a total that pays for neither.
  *  `travelAssumed` gets its own quiet marker (matching the "Short" / "Booked
  *  work ends" tag idiom in ForecastTable) rather than folding into the
- *  travel figure itself, so an assumed leg reads distinctly from one Dan
- *  actually flagged; a show whose `landsMonth` falls past the last month the
- *  table below actually renders gets the same quiet-marker treatment
+ *  travel figure itself, so an assumed travel day reads distinctly from one
+ *  Dan actually flagged; a show whose `landsMonth` falls past the last month
+ *  the table below actually renders gets the same quiet-marker treatment
  *  ("beyond the table") — the bigger, more optimistic booked-work total has
  *  no row behind it there. */
 function BookedShowRow({ sp, lastRenderedMonth }: { sp: ShowProjection; lastRenderedMonth: string | null }) {
@@ -267,12 +270,12 @@ function BookedShowRow({ sp, lastRenderedMonth }: { sp: ShowProjection; lastRend
 
   const parts: { key: string; node: React.ReactNode }[] = []
   if (sp.dayCount > 0) parts.push({ key: 'days', node: `${sp.dayCount} day${sp.dayCount === 1 ? '' : 's'}` })
-  if (sp.travelLegs > 0 && sp.travelCents > 0) {
+  if (sp.travelDays > 0 && sp.travelCents > 0) {
     parts.push({
       key: 'travel',
       node: (
         <>
-          {sp.travelLegs} travel
+          {sp.travelDays} travel
           {sp.travelAssumed && (
             <span className="ml-1 text-[10px] font-semibold uppercase tracking-wider text-muted">assumed</span>
           )}
@@ -596,9 +599,9 @@ export default async function MoneyForecastPage() {
                   dropped. Links to the client list since terms_days lives on
                   each client record, not Settings. */}
               <AssumptionRow label="Payment terms" value="Net 30 — each client's terms" href="/clients" />
-              {/* Mirrors the out-of-state travel-leg rule in
+              {/* Mirrors the out-of-state travel-day rule in
                   computeShowBreakdown (lib/forecast.ts): only fires past one
-                  scheduled day, and only when flagged legs didn't already
+                  scheduled day, and only when flagged days didn't already
                   answer the question. */}
               <AssumptionRow
                 label="Travel"
