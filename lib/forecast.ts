@@ -181,13 +181,29 @@ export function computeOverheadCents(
     addMonths(currentMonth, -1), addMonths(currentMonth, -2), addMonths(currentMonth, -3),
   ])
 
+  // The denominator is the number of those three months that have ANY
+  // ledger history at all — not just expense rows. A month absent from the
+  // ledger entirely (no import yet, a gap, a business that's too young to
+  // have 3 months of data) must not silently count as a $0-spend month and
+  // drag the average down; it should just not be averaged in. A month that
+  // DOES have transactions but happens to have no expense-kind rows in it
+  // (a genuinely frugal month, or one with only income/transfer activity)
+  // is real data and must still count as a true zero in the average — that
+  // distinction is why this is tracked separately from the sum below.
+  const monthsWithHistory = new Set<string>()
+  for (const t of txns) {
+    const m = t.date.slice(0, 7)
+    if (completeMonths.has(m)) monthsWithHistory.add(m)
+  }
+  if (monthsWithHistory.size === 0) return 0
+
   let total = 0
   for (const t of txns) {
     if (t.kind !== 'expense') continue // excludes owner_pay and transfer along with income
     if (!completeMonths.has(t.date.slice(0, 7))) continue
     total += -t.amount_cents // expense amounts are stored negative; spend is positive
   }
-  return Math.round(total / 3)
+  return Math.round(total / monthsWithHistory.size)
 }
 
 type Bucketed = { month: string; overdue: boolean }

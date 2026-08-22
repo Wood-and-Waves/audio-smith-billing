@@ -200,6 +200,11 @@ test('overhead excludes owner_pay and transfer rows entirely', () => {
     { date: '2026-07-11', amount_cents: -760000, kind: 'owner_pay' },
     { date: '2026-07-12', amount_cents: -500000, kind: 'transfer' },
     { date: '2026-07-13', amount_cents: 300000, kind: 'income' },
+    // June and May filler rows: this test is about which KIND of row sums,
+    // not the denominator, so these just keep both months "with history"
+    // (see the denominator tests below) so the divisor stays 3.
+    { date: '2026-06-01', amount_cents: 100, kind: 'income' },
+    { date: '2026-05-01', amount_cents: 100, kind: 'income' },
   ]
   // only the expense row counts: 90000/3 = 30000
   assert.equal(computeOverheadCents(txns, '2026-08-21'), 30000)
@@ -209,8 +214,37 @@ test('overhead uses complete months only — the current month is excluded even 
   const txns = [
     { date: '2026-08-01', amount_cents: -9000000, kind: 'expense' }, // current month, excluded
     { date: '2026-07-01', amount_cents: -60000, kind: 'expense' },
+    // June and May filler rows: this test is about the CURRENT month being
+    // excluded, not the denominator, so these just keep both months "with
+    // history" (see the denominator tests below) so the divisor stays 3.
+    { date: '2026-06-01', amount_cents: 100, kind: 'income' },
+    { date: '2026-05-01', amount_cents: 100, kind: 'income' },
   ]
   assert.equal(computeOverheadCents(txns, '2026-08-21'), 20000)
+})
+
+test('a month with no ledger history at all is not averaged in — thin history does not understate overhead', () => {
+  const txns = [
+    { date: '2026-07-15', amount_cents: -100000, kind: 'expense' },
+    { date: '2026-06-15', amount_cents: -200000, kind: 'expense' },
+    // 2026-05 (three months back) has no transactions at all — no import,
+    // no history — and must not be treated as a $0-spend month.
+  ]
+  // (100000+200000)/2 = 150000, not /3
+  assert.equal(computeOverheadCents(txns, '2026-08-21'), 150000)
+})
+
+test('a month with transactions but no spending still counts as a real zero', () => {
+  const txns = [
+    { date: '2026-07-15', amount_cents: -100000, kind: 'expense' },
+    { date: '2026-06-15', amount_cents: -200000, kind: 'expense' },
+    // 2026-05 has ledger history (an income row) but no expense-kind row —
+    // a genuinely frugal month, distinct from "no history". It still counts
+    // in the denominator.
+    { date: '2026-05-10', amount_cents: 500000, kind: 'income' },
+  ]
+  // (100000+200000+0)/3 = 100000, not /2
+  assert.equal(computeOverheadCents(txns, '2026-08-21'), 100000)
 })
 
 test('no qualifying spend in the window computes zero', () => {
@@ -433,4 +467,22 @@ test('tax never goes negative when overhead exceeds income', () => {
   }))
   assert.equal(result.months[0].incomeCents, 0)
   assert.equal(result.months[0].taxCents, 0)
+})
+
+test('tax rounds a genuine .5-cent boundary up — Math.round\'s argument here is always >= 0 '
+  + '(clamped by the max(0, ...) above), so this matches half-away-from-zero, not banker\'s rounding', () => {
+  const invA = invoice({
+    id: 'i1', status: 'sent', sent_at: '2026-08-14T00:00:00Z', total_cents: 1100010,
+    client_id: 'c1',
+  })
+  const result = buildForecast(baseInput({
+    invoices: [invA],
+    assumptions: assumptions({ overheadCents: 100000, takeHomeCents: 0, taxRateBp: 1500, billingLagDays: 0 }),
+  }))
+  const septMonth = result.months.find((m) => m.month === '2026-09')
+  assert.ok(septMonth)
+  assert.equal(septMonth!.incomeCents, 1100010)
+  // (1100010 - 100000) * 1500 / 10000 = 1000010 * 0.15 = 150001.5 exactly —
+  // the pre-rounding product lands precisely on the .5-cent boundary.
+  assert.equal(septMonth!.taxCents, 150002)
 })
