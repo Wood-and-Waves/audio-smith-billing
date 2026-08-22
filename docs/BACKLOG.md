@@ -52,7 +52,12 @@ Still open from that design, deliberately deferred:
 
 Built as /money/forecast (migration 0034; design:
 docs/superpowers/specs/2026-08-21-cash-flow-forecast-design.md). Headline
-runway over a month table, booked work only, learned per-client pay lags.
+runway over a month table, booked work only.
+A per-client pay-lag learner WAS built and then deliberately REMOVED
+2026-08-22: the lags it found were an artifact of Dan not being home when
+checks arrive, not client behavior, so it was teaching the forecast the
+wrong thing. Payment timing is each client's `terms_days` now, always — do
+not rebuild the learner (see CLAUDE.md).
 Still open from that design, deliberately deferred:
 - **Per-show profit on the show page** — `projectedShowCents` in
   lib/forecast.ts makes "this show could make ~$X" a small addition.

@@ -28,8 +28,8 @@ export type EditorShow = {
   day_rate_cents: number
   travel_rate_cents: number
   pm_rate_cents: number
-  // Forecast-only (migration 0035) — see updateShow's billed branch in
-  // app/shows/actions.ts for why this one field stays editable after billing.
+  // Forecast-only (migration 0035); behind the normal billed lock like every
+  // other field here.
   pm_role: boolean
   ot_after_hours: number
   dt_after_hours: number | null

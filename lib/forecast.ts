@@ -78,8 +78,6 @@ export type ForecastInvoice = {
   status: 'draft' | 'sent' | 'paid' | 'void'
   total_cents: number
   sent_at: string | null // ISO; null on drafts
-  paid_at: string | null // YYYY-MM-DD
-  linked: boolean // has a ledger_transaction_invoices row
 }
 
 export type ForecastClient = { id: string; name: string; terms_days: number }
@@ -136,7 +134,11 @@ export type ShowProjection = {
   totalCents: number
   // Counts backing the money above, for the forecast screen's breakdown
   // line — same loop in computeShowBreakdown as dayCents/travelCents/pmCents,
-  // never a second computation, so a count can never drift from its dollars.
+  // never a second computation, so a count can never drift from what the
+  // dollar figure was PRICED from. It can still be positive while its own
+  // dollar figure is exactly zero, though — a $0 travel or PM rate prices a
+  // real leg/hour count at $0 — so a UI rendering these counts must also
+  // check the matching cents field before claiming the work as paid-for.
   dayCount: number // scheduled days; a half day counts as 0.5
   travelLegs: number // flagged legs, or 2 when travelAssumed
   pmHours: number // 0 or PM_FORECAST_HOURS
@@ -207,15 +209,28 @@ type ShowBreakdown = {
 
 /** Every scheduled day is a work day (migration 0005). Travel legs come from
  *  flagged days when any are flagged; otherwise an out-of-state show (per
- *  `stateOf` vs `homeState`) that has MORE THAN ONE scheduled day is assumed
- *  to need exactly 2 legs — a single-day out-of-town gig is flown in and out
- *  the same day, not billed as travel days, so a one-day show never picks up
- *  the assumption. Flagged legs always win over the assumption in every
- *  case, including on a one-day show (the double-count guard) — if Dan
- *  flags travel on a single-day show, that flag is honored regardless. PM is
- *  `pm_role`'s flat `PM_FORECAST_HOURS * pm_rate_cents`, once per show
- *  regardless of day count. */
+ *  `stateOf` vs the normalized `homeState`) that has MORE THAN ONE scheduled
+ *  day is assumed to need exactly 2 legs — a single-day out-of-town gig is
+ *  flown in and out the same day, not billed as travel days, so a one-day
+ *  show never picks up the assumption. Flagged legs always win over the
+ *  assumption in every case, including on a one-day show (the double-count
+ *  guard) — if Dan flags travel on a single-day show, that flag is honored
+ *  regardless. PM is `pm_role`'s flat `PM_FORECAST_HOURS * pm_rate_cents`,
+ *  once per show regardless of day count. */
 function computeShowBreakdown(show: ForecastShow, homeState: string): ShowBreakdown {
+  // Same bad-data clamping doctrine as the rate guards just below: `stateOf`
+  // already trims+uppercases the show's own location before comparing, but
+  // `homeState` (settings.home_state, read straight off the row) never went
+  // through that normalization — a value stored lowercase ('il') or
+  // whitespace-padded (' IL ') would fail the strict equality below and
+  // make every same-state, multi-day show read as out-of-state, inventing
+  // two travel legs and overstating the runway. Normalize once, here, and
+  // compare against that for the rest of the function. An empty home state
+  // (a settings row nobody has ever saved) can't answer "is this the same
+  // state" at all, so it must never be treated as an answer — a blank home
+  // state means NO show is out-of-state, never that every show is.
+  const home = homeState.trim().toUpperCase()
+
   // Guard against nonsense input without throwing: a negative rate would
   // otherwise subtract from the projection instead of contributing nothing.
   const dayRate = show.day_rate_cents > 0 ? show.day_rate_cents : 0
@@ -246,7 +261,7 @@ function computeShowBreakdown(show: ForecastShow, homeState: string): ShowBreakd
     legs = flaggedLegs
   } else if (show.days.length > 1) {
     const showState = stateOf(show.location)
-    if (showState !== null && showState !== homeState) {
+    if (home !== '' && showState !== null && showState !== home) {
       legs = 2
       travelAssumed = true
     }

@@ -813,6 +813,9 @@ export type UpdateShowInput = {
   day_rate: string             // raw USD input, e.g. "780" or "$780.00"
   travel_rate: string          // raw USD input
   pm_rate: string               // raw USD input
+  /** Forecast-only (migration 0035) — flags a flat PM_FORECAST_HOURS in
+   *  lib/forecast.ts's projection. Bills nothing itself; real PM time still
+   *  comes from pm_entries. */
   pm_role: boolean
   ot_after_hours: number
   // Raw string, not a number: an empty box must become NULL ("no double

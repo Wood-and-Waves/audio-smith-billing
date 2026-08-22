@@ -118,7 +118,7 @@ export function buildForecast(input: {
 
 **Pinned rules:**
 - `stateOf`: take the text after the last comma, trim, uppercase; return it only when it matches `/^[A-Z]{2}$/`, else null. `"Orlando, FL"` → `FL`; `"Chicago, IL"` → `IL`; `"South Barrington, IL"` → `IL`; `""`/null/`"Somewhere"` → null.
-- Travel legs: `flagged = count(travel_in) + count(travel_out)` across days. If `flagged > 0` use it and set `travelAssumed: false`. Else if `stateOf(location)` is non-null AND differs from `homeState` → 2 legs, `travelAssumed: true`. Else 0 legs.
+- Travel legs: `flagged = count(travel_in) + count(travel_out)` across days. If `flagged > 0` use it and set `travelAssumed: false`. Else if `stateOf(location)` is non-null AND differs from `homeState` → 2 legs, `travelAssumed: true`. Else 0 legs. (Superseded by 0cf9fcb: multi-day shows only — a one-day show never picks up the assumption. Historical plan left otherwise unedited.)
 - PM: `show.pm_role ? PM_FORECAST_HOURS * pm_rate_cents : 0`. Per show, not per day. A show with `pm_role` but `pm_rate_cents === 0` contributes 0 (and is NOT a "no rate" exclusion — its day rate may still be fine).
 - `projectedShowCents` = dayCents + travelCents + pmCents, where dayCents is the existing full/half arithmetic.
 - Pay lag everywhere = the client's `terms_days` (fallback 30 when the client is missing).

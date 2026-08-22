@@ -29,7 +29,7 @@ const show = (over: Partial<ForecastShow> = {}): ForecastShow => ({
 
 const invoice = (over: Partial<ForecastInvoice> = {}): ForecastInvoice => ({
   id: 'i1', number: 391, client_id: 'c1', status: 'sent', total_cents: 240000,
-  sent_at: '2026-08-01T00:00:00Z', paid_at: null, linked: false, ...over,
+  sent_at: '2026-08-01T00:00:00Z', ...over,
 })
 
 const client = (over: Partial<ForecastClient> = {}): ForecastClient => ({
@@ -164,6 +164,46 @@ test('a blank location assumes no travel legs', () => {
     days: [day({ date: '2026-09-01' })],
   })
   assert.equal(projectedShowCents(s, HOME_STATE), 100000)
+})
+
+// ---------------------------------------------------------------------------
+// projectedShowCents — homeState normalization (F1). `stateOf` already
+// trims+uppercases the show's own location; homeState must get the same
+// treatment before the comparison, or a home state stored lowercase,
+// padded, or missing would either invent phantom travel or, if empty,
+// mark literally everything as "out of state."
+
+test('a lowercase home state still matches an in-state multi-day show — no phantom travel legs', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Chicago, IL',
+    days: [day({ date: '2026-09-01' }), day({ date: '2026-09-02' })],
+  })
+  assert.equal(projectedShowCents(s, 'il'), 2 * 100000)
+})
+
+test('a whitespace-padded home state still matches an in-state multi-day show — no phantom travel legs', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Chicago, IL',
+    days: [day({ date: '2026-09-01' }), day({ date: '2026-09-02' })],
+  })
+  assert.equal(projectedShowCents(s, ' IL '), 2 * 100000)
+})
+
+test('an empty home state assumes no travel legs on an in-state multi-day show', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Chicago, IL',
+    days: [day({ date: '2026-09-01' }), day({ date: '2026-09-02' })],
+  })
+  assert.equal(projectedShowCents(s, ''), 2 * 100000)
+})
+
+test('an empty home state assumes no travel legs on an out-of-state multi-day show either — '
+  + 'an unusable home state can never justify assuming travel', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Orlando, FL',
+    days: [day({ date: '2026-09-01' }), day({ date: '2026-09-02' })],
+  })
+  assert.equal(projectedShowCents(s, ''), 2 * 100000)
 })
 
 test('flagged travel legs win over the (absent) out-of-state assumption — the double-count guard', () => {
@@ -512,9 +552,7 @@ test('bookedThrough: a sent invoice dates to the Chicago-calendar month it was a
 test('bookedThrough counts only open shows and unpaid (draft/sent) invoices — '
   + 'billed shows and paid/void invoices contribute nothing', () => {
   const billed = show({ id: 's1', status: 'billed', days: [day({ date: '2027-06-01' })] })
-  const paidInv = invoice({
-    id: 'i1', status: 'paid', sent_at: '2027-06-01T00:00:00Z', paid_at: '2027-06-15', linked: true,
-  })
+  const paidInv = invoice({ id: 'i1', status: 'paid', sent_at: '2027-06-01T00:00:00Z' })
   const voidInv = invoice({ id: 'i2', status: 'void', sent_at: '2027-06-01T00:00:00Z' })
   const result = buildForecast(baseInput({ shows: [billed], invoices: [paidInv, voidInv] }))
   assert.equal(result.bookedThrough, null)
@@ -570,7 +608,7 @@ test('a sent invoice with a null sent_at (should not happen) is dated like a dra
 })
 
 test('paid and void invoices are excluded from inflows entirely', () => {
-  const paid = invoice({ id: 'i1', status: 'paid', total_cents: 100000, paid_at: '2026-08-01' })
+  const paid = invoice({ id: 'i1', status: 'paid', total_cents: 100000 })
   const void_ = invoice({ id: 'i2', status: 'void', total_cents: 200000 })
   const result = buildForecast(baseInput({ invoices: [paid, void_] }))
   assert.equal(result.inflows.length, 0)
@@ -663,17 +701,18 @@ test('tax rounds a genuine .5-cent boundary up — Math.round\'s argument here i
 
 // ---------------------------------------------------------------------------
 // Pay lag = terms_days, everywhere, always. No learning path remains: even a
-// client with a rich history of settled, deposit-linked invoices projects
-// off its plain terms_days now — the previous "learned median" machinery
-// (and the 365-day window built to guard it) is gone entirely.
+// client with a rich history of settled invoices projects off its plain
+// terms_days now — the previous "learned median" machinery (and the
+// 365-day window built to guard it) is gone entirely, including the fields
+// (`linked`, `paid_at`) it used to read off ForecastInvoice.
 
-test('every client\'s pay lag is simply terms_days now — settled, deposit-linked history '
+test('every client\'s pay lag is simply terms_days now — settled invoice history '
   + 'that would once have taught a learned median has no effect', () => {
   const settledInvoices = [
     // Under the old model these two would have taught a learned median of
     // 29.5 -> 30 days for this client, overriding its stated terms.
-    invoice({ id: 'i1', status: 'paid', linked: true, sent_at: '2026-06-01T00:00:00Z', paid_at: '2026-06-28' }),
-    invoice({ id: 'i2', status: 'paid', linked: true, sent_at: '2026-06-05T00:00:00Z', paid_at: '2026-07-07' }),
+    invoice({ id: 'i1', status: 'paid', sent_at: '2026-06-01T00:00:00Z' }),
+    invoice({ id: 'i2', status: 'paid', sent_at: '2026-06-05T00:00:00Z' }),
   ]
   const openInvoice = invoice({
     id: 'i3', status: 'sent', sent_at: '2026-08-14T00:00:00Z', total_cents: 100000, client_id: 'c1',

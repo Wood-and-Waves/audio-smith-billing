@@ -120,8 +120,6 @@ type RawInvoiceRow = {
   status: string
   total_cents: number
   sent_at: string | null
-  paid_at: string | null
-  ledger_transaction_invoices: { transaction_id: string }[]
 }
 
 async function fetchAllForecastInvoices(
@@ -130,20 +128,14 @@ async function fetchAllForecastInvoices(
   const rows: RawInvoiceRow[] = []
   let from = 0
   for (;;) {
-    // Includes 'paid' alongside 'draft'/'sent' — NOT just the unpaid ones.
-    // payLagFor (lib/forecast.ts) can only learn a client's pay lag from a
-    // linked invoice that has both sent_at AND paid_at, and paid_at is only
-    // ever written alongside status='paid' (markInvoicePaid). Fetching only
-    // draft/sent, as this used to, meant no invoice this page supplied could
-    // ever have a paid_at — every client silently fell back to terms_days,
-    // and "learned" pay lags were unreachable. buildForecast still excludes
-    // 'paid' invoices from inflows (see its own status check), so this adds
-    // nothing to projected income — it only makes the learning data reachable.
+    // draft/sent only — a 'paid' or 'void' invoice contributes no future
+    // cash. Payment timing is each client's terms_days now, always (see
+    // lib/forecast.ts's header), so there is no learner left that needs a
+    // wider read to find settled, deposit-linked history.
     const { data, error } = await supabase
       .from('invoices')
-      .select(`id, number, client_id, status, total_cents, sent_at, paid_at,
-                ledger_transaction_invoices(transaction_id)`)
-      .in('status', ['draft', 'sent', 'paid'])
+      .select('id, number, client_id, status, total_cents, sent_at')
+      .in('status', ['draft', 'sent'])
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
       .range(from, from + PAGE_SIZE - 1)
@@ -257,19 +249,25 @@ function AssumptionRow({
  *  dollar figure per component just repeated it in smaller type. The counts
  *  come straight off `ShowProjection`, sourced from the same computation as
  *  `dayCents`/`travelCents`/`pmCents` (see its doc comment in
- *  lib/forecast.ts), so they can never drift from what buildForecast
- *  actually charged. `travelAssumed` gets its own quiet marker (matching the
- *  "Short" / "Booked work ends" tag idiom in ForecastTable) rather than
- *  folding into the travel figure itself, so an assumed leg reads distinctly
- *  from one Dan actually flagged. */
-function BookedShowRow({ sp }: { sp: ShowProjection }) {
+ *  lib/forecast.ts) — but a count can be positive while its own dollars are
+ *  exactly zero (a $0 travel or PM rate), so each part below is gated on
+ *  BOTH its count and its cents, not the count alone, or a $0-rate show
+ *  would claim "2 travel · 4h PM" beside a total that pays for neither.
+ *  `travelAssumed` gets its own quiet marker (matching the "Short" / "Booked
+ *  work ends" tag idiom in ForecastTable) rather than folding into the
+ *  travel figure itself, so an assumed leg reads distinctly from one Dan
+ *  actually flagged; a show whose `landsMonth` falls past the last month the
+ *  table below actually renders gets the same quiet-marker treatment
+ *  ("beyond the table") — the bigger, more optimistic booked-work total has
+ *  no row behind it there. */
+function BookedShowRow({ sp, lastRenderedMonth }: { sp: ShowProjection; lastRenderedMonth: string | null }) {
   const dateSpan = sp.firstDay === sp.lastDay
     ? formatDateShort(sp.firstDay)
     : `${formatDateShort(sp.firstDay)}–${formatDateShort(sp.lastDay)}`
 
   const parts: { key: string; node: React.ReactNode }[] = []
   if (sp.dayCount > 0) parts.push({ key: 'days', node: `${sp.dayCount} day${sp.dayCount === 1 ? '' : 's'}` })
-  if (sp.travelLegs > 0) {
+  if (sp.travelLegs > 0 && sp.travelCents > 0) {
     parts.push({
       key: 'travel',
       node: (
@@ -282,7 +280,9 @@ function BookedShowRow({ sp }: { sp: ShowProjection }) {
       ),
     })
   }
-  if (sp.pmHours > 0) parts.push({ key: 'pm', node: `${sp.pmHours}h PM` })
+  if (sp.pmHours > 0 && sp.pmCents > 0) parts.push({ key: 'pm', node: `${sp.pmHours}h PM` })
+
+  const beyondTable = lastRenderedMonth !== null && sp.landsMonth > lastRenderedMonth
 
   return (
     <li>
@@ -296,6 +296,11 @@ function BookedShowRow({ sp }: { sp: ShowProjection }) {
         </div>
         <p className="text-xs text-muted mt-1">
           {dateSpan} · lands {monthLabel(sp.landsMonth)}
+          {beyondTable && (
+            <span className="ml-1 text-[10px] font-semibold uppercase tracking-wider text-muted">
+              beyond the table
+            </span>
+          )}
           {parts.length > 0 && ' · '}
           {parts.map((p, i) => (
             <span key={p.key}>
@@ -423,19 +428,15 @@ export default async function MoneyForecastPage() {
     id: i.id,
     number: i.number,
     client_id: i.client_id,
-    status: i.status as 'draft' | 'sent' | 'paid',
+    status: i.status as 'draft' | 'sent',
     total_cents: i.total_cents,
     sent_at: i.sent_at,
-    paid_at: i.paid_at,
-    linked: (i.ledger_transaction_invoices ?? []).length > 0,
   }))
 
   const hasOpenShows = shows.some((s) => s.status === 'open')
-  // 'paid' rows are fetched too now (so payLagFor can learn from them — see
-  // fetchAllForecastInvoices above), so this can no longer just be
-  // invoices.length > 0 — that would count a client with only settled
-  // history as having current booked work.
-  const hasUnpaidInvoices = invoices.some((i) => i.status !== 'paid')
+  // Only draft/sent invoices are fetched (see fetchAllForecastInvoices
+  // above), so "has any unpaid invoice" is just "fetched any invoice at all".
+  const hasUnpaidInvoices = invoices.length > 0
 
   const takeHomeCents = settingsRow?.monthly_take_home_cents ?? 0
   const overheadOverrideCents = settingsRow?.monthly_overhead_cents ?? null
@@ -463,6 +464,16 @@ export default async function MoneyForecastPage() {
 
   const overdueInflows = forecast?.inflows.filter((f) => f.overdue) ?? []
   const bookedShowsTotalCents = forecast?.showProjections.reduce((sum, sp) => sum + sp.totalCents, 0) ?? 0
+  // ForecastTable stops rendering at the first uncovered month (or the
+  // horizon), but bookedShowsTotalCents above sums EVERY showProjection
+  // regardless of whether the table below has a row for the month it lands
+  // in — so this can be the last month actually on the page, not the last
+  // month with booked work. Used to flag individual Booked-shows rows whose
+  // cash lands past it (see BookedShowRow's "beyond the table" marker);
+  // does not change any arithmetic.
+  const lastRenderedMonth = forecast && forecast.months.length > 0
+    ? forecast.months[forecast.months.length - 1].month
+    : null
 
   // With no take-home set, the walk still runs (draw = $0), so
   // coveredThrough/beyondHorizon would name a runway Dan hasn't actually
@@ -550,11 +561,11 @@ export default async function MoneyForecastPage() {
               <h2 className="eyebrow mb-4">Booked shows</h2>
               <ul className="border-t border-line">
                 {forecast.showProjections.map((sp) => (
-                  <BookedShowRow key={sp.showId} sp={sp} />
+                  <BookedShowRow key={sp.showId} sp={sp} lastRenderedMonth={lastRenderedMonth} />
                 ))}
               </ul>
               <div className="flex items-center justify-between gap-3 pt-3 text-sm font-semibold">
-                <span>Total</span>
+                <span>Total booked work</span>
                 <span className="tabular">{formatUSD(bookedShowsTotalCents)}</span>
               </div>
             </section>
@@ -591,7 +602,7 @@ export default async function MoneyForecastPage() {
                   answer the question. */}
               <AssumptionRow
                 label="Travel"
-                value={`Two days assumed outside ${homeState}`}
+                value={`Two days assumed on multi-day shows outside ${homeState}`}
                 href="/settings"
               />
             </div>
