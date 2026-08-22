@@ -9,9 +9,12 @@
 //
 // The clock is never read in here. DTSTAMP comes from the caller's nowIso,
 // not `new Date()`, so the same input always produces the same output —
-// byte for byte, which is what makes this testable at all and what stops a
-// calendar subscription from re-downloading a "changed" feed every poll
-// when nothing about the schedule actually moved.
+// byte for byte except DTSTAMP, which is what makes this testable at all.
+// In deployment DTSTAMP changes on every poll (the route handler passes
+// `new Date().toISOString()`), so byte-stability of the rest of the feed
+// does not stop a re-download — what actually stops a calendar app from
+// duplicating an event is the stable UID below: DTSTAMP only ever tells it
+// "the feed was regenerated," never "this event changed."
 //
 // UIDs are derived from the row's own id (`showday-{id}@…`,
 // `flight-{id}@…`), never generated. A calendar app keys on UID: a stable
@@ -57,7 +60,7 @@ function escapeText(value: string): string {
     .replace(/\\/g, '\\\\')
     .replace(/;/g, '\\;')
     .replace(/,/g, '\\,')
-    .replace(/\n/g, '\\n')
+    .replace(/\r\n|\r|\n/g, '\\n')
 }
 
 /**
@@ -90,9 +93,17 @@ function foldLine(line: string): string {
   return chunks.join(CRLF + ' ')
 }
 
-/** nowIso / an ISO instant -> 'YYYYMMDDTHHMMSSZ' (strip punctuation and millis). */
+/**
+ * nowIso / an ISO instant -> 'YYYYMMDDTHHMMSSZ'. Routed through `Date` and
+ * `toISOString()` rather than a lexical strip: Postgres renders a
+ * timestamptz as JSON with an explicit offset (`2026-08-10T14:30:00+00:00`)
+ * and sometimes microsecond precision, neither of which a regex over the
+ * raw string handles — an offset form has no trailing `Z` for the punctuation
+ * strip to leave behind, producing an illegal DATE-TIME. `Date` normalizes
+ * both away first.
+ */
 function toStamp(iso: string): string {
-  return iso.replace(/[-:]/g, '').replace(/\.\d{3}/, '')
+  return new Date(iso).toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '')
 }
 
 /** Plain YYYY-MM-DD -> YYYYMMDD, for DTSTART;VALUE=DATE. */
@@ -117,23 +128,38 @@ function showDayEvent(day: FeedDay, stamp: string): string[] {
   return lines
 }
 
+/**
+ * Flight timing has three cases, checked on depAt alone (arrAt never
+ * decides whether the event is timed — an arrival with no departure has
+ * nothing to anchor DTSTART on, so it falls back to all-day same as having
+ * neither): both times known -> DTSTART+DTEND, both UTC basic form, so the
+ * event spans the actual flight instead of reading as instantaneous;
+ * departure only -> a timed DTSTART with no DTEND (RFC 5545 treats a
+ * DTSTART-only VEVENT as a point in time, which is exactly what a known
+ * departure and unknown arrival is); neither, or arrival-only -> all-day on
+ * flightDate, same as before.
+ */
 function flightEvent(flight: FeedFlight, stamp: string): string[] {
   const summary = flight.arrAirport
     ? `✈ ${flight.flightNo} → ${flight.arrAirport}`
     : `✈ ${flight.flightNo}`
 
-  const dtstart = flight.depAt && flight.arrAt
-    ? `DTSTART:${toStamp(flight.depAt)}`
-    : `DTSTART;VALUE=DATE:${toDateBasic(flight.flightDate)}`
-
-  return [
+  const lines = [
     'BEGIN:VEVENT',
     `UID:flight-${flight.id}@theaudiosmith.com`,
     `DTSTAMP:${stamp}`,
-    dtstart,
-    `SUMMARY:${escapeText(summary)}`,
-    'END:VEVENT',
   ]
+
+  if (flight.depAt) {
+    lines.push(`DTSTART:${toStamp(flight.depAt)}`)
+    if (flight.arrAt) lines.push(`DTEND:${toStamp(flight.arrAt)}`)
+  } else {
+    lines.push(`DTSTART;VALUE=DATE:${toDateBasic(flight.flightDate)}`)
+  }
+
+  lines.push(`SUMMARY:${escapeText(summary)}`)
+  lines.push('END:VEVENT')
+  return lines
 }
 
 /** Builds a complete RFC 5545 VCALENDAR feed from schedule facts alone. */

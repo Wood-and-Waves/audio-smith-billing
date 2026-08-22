@@ -40,9 +40,10 @@ export async function GET(
   { params }: { params: Promise<{ token: string }> },
 ) {
   const { token: rawToken } = await params
-  // Both /cal/{uuid} and /cal/{uuid}.ics work: strip at most one trailing
-  // .ics before the shape check reaches the token itself.
-  const token = rawToken.endsWith('.ics') ? rawToken.slice(0, -'.ics'.length) : rawToken
+  // Both /cal/{uuid} and /cal/{uuid}.ics (or .ICS, .Ics — calendar clients
+  // and OSes vary in case) work: strip at most one trailing .ics,
+  // case-insensitively, before the shape check reaches the token itself.
+  const token = rawToken.replace(/\.ics$/i, '')
   if (!UUID.test(token)) return new Response('Not found', { status: 404 })
 
   const supabase = await createClient()

@@ -6,13 +6,26 @@ import { generateCalendarToken } from '@/app/calendar/actions'
 import { FIELD_FULL } from '@/components/ui/field'
 
 /**
- * No token yet -> one Generate button. With a token, the URL plus Copy and
- * Regenerate. Regenerating is the entire revocation story for the old link
- * (generateCalendarToken just overwrites the column, same as invoices'
- * public_token) — the one line of copy below says so plainly, because
- * there is no undo once the old URL stops working.
+ * No token yet -> one Generate button. With a token AND a usable URL, the
+ * URL plus Copy and Regenerate. Regenerating is the entire revocation story
+ * for the old link (generateCalendarToken just overwrites the column, same
+ * as invoices' public_token) — the one line of copy below says so plainly,
+ * because there is no undo once the old URL stops working.
+ *
+ * A token can exist with no usable URL — APP_URL unset in this environment —
+ * and that is a different state from no token at all: showing the Generate
+ * button there would read as "you have no feed yet," which is false and
+ * would prompt a needless regenerate. `hasToken` (defaulted from feedUrl for
+ * any other caller) distinguishes the two; with a token but no URL this
+ * renders Regenerate only, with a muted dash standing in for the missing link.
  */
-export default function CalendarSubscribe({ feedUrl }: { feedUrl: string | null }) {
+export default function CalendarSubscribe({
+  feedUrl,
+  hasToken = feedUrl !== null,
+}: {
+  feedUrl: string | null
+  hasToken?: boolean
+}) {
   const router = useRouter()
   const [pending, start] = useTransition()
   const [error, setError] = useState<string | null>(null)
@@ -38,7 +51,7 @@ export default function CalendarSubscribe({ feedUrl }: { feedUrl: string | null 
     }
   }
 
-  if (!feedUrl) {
+  if (!hasToken) {
     return (
       <div>
         <button
@@ -56,14 +69,18 @@ export default function CalendarSubscribe({ feedUrl }: { feedUrl: string | null 
   return (
     <div>
       <div className="flex items-center gap-2">
-        <input
-          readOnly value={feedUrl} onFocus={(e) => e.target.select()}
-          className={`${FIELD_FULL} max-w-xs`}
-        />
+        {feedUrl ? (
+          <input
+            readOnly value={feedUrl} onFocus={(e) => e.target.select()}
+            className={`${FIELD_FULL} max-w-xs`}
+          />
+        ) : (
+          <span className="text-xs text-muted" aria-label="Feed link unavailable">—</span>
+        )}
         <button
-          type="button" onClick={copy}
+          type="button" onClick={copy} disabled={!feedUrl}
           className="px-3 py-2 text-xs font-semibold uppercase tracking-wider
-                     rounded-field border border-line text-muted hover:text-ink"
+                     rounded-field border border-line text-muted hover:text-ink disabled:opacity-40"
         >
           {copied ? 'Copied' : 'Copy'}
         </button>

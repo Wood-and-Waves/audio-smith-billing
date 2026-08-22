@@ -22,6 +22,13 @@ type Fail = { error: string }
 const PROVIDER_HOST = 'aerodatabox.p.rapidapi.com'
 const LOOKUP_TIMEOUT_MS = 10_000
 
+// Same shape check as app/i/[token]/page.tsx:24 — a malformed id is a driver
+// error, not a null row, and updateFlight/deleteFlight must not let that
+// distinguish "badly-shaped id" from "no such flight" for a prober probing
+// ids rather than tokens.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const NOT_FOUND: Fail = { error: 'That flight no longer exists.' }
+
 // Mirrors lib/flightLookup.ts's own NOT_FOUND text (not exported — a
 // deliberately tiny, private constant there) so a provider 404 and a
 // provider 200-with-empty-array read as the identical message to Dan;
@@ -66,26 +73,30 @@ export async function lookupFlight(
   try {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), LOOKUP_TIMEOUT_MS)
-    let response: Response
     try {
-      response = await fetch(url, {
+      const response = await fetch(url, {
         headers: { 'X-RapidAPI-Key': key, 'X-RapidAPI-Host': PROVIDER_HOST },
         signal: controller.signal,
       })
+
+      if (!response.ok) {
+        // The response body is never read here on a non-OK status — quota
+        // text, an HTML error page, a RapidAPI outage notice, whatever it
+        // is, it stays on the server. A 404 means no such flight for that
+        // number and date; anything else (401 bad key, 429 rate limit, a
+        // 5xx) is indistinguishable from "unavailable" to Dan, who cannot
+        // act on the difference either way.
+        return response.status === 404 ? NO_FLIGHT : UNAVAILABLE
+      }
+      // The abort timer has to stay live through this read too — the fetch
+      // above resolving only means headers arrived, not that the body has.
+      // A slow/stalled body on an otherwise-OK response would hang past
+      // LOOKUP_TIMEOUT_MS forever if the timer were cleared right after
+      // fetch() settled instead of here.
+      json = await response.json()
     } finally {
       clearTimeout(timer)
     }
-
-    if (!response.ok) {
-      // The response body is never read here on a non-OK status — quota
-      // text, an HTML error page, a RapidAPI outage notice, whatever it
-      // is, it stays on the server. A 404 means no such flight for that
-      // number and date; anything else (401 bad key, 429 rate limit, a
-      // 5xx) is indistinguishable from "unavailable" to Dan, who cannot
-      // act on the difference either way.
-      return response.status === 404 ? NO_FLIGHT : UNAVAILABLE
-    }
-    json = await response.json()
   } catch {
     // One catch for three distinct failures — a genuine network throw
     // (DNS, connection refused), the AbortController firing at the 10s
@@ -224,6 +235,13 @@ export async function saveFlight(input: FlightInput): Promise<Fail | { ok: true;
 export async function updateFlight(
   input: { id: string } & FlightInput,
 ): Promise<Fail | { ok: true }> {
+  // Guarded before any query, same reason app/i/[token]/page.tsx does: a
+  // malformed id is a driver error, not a null row, and letting that surface
+  // would tell a prober its guess isn't even shaped like a real id — the same
+  // "That flight no longer exists" message a genuinely-deleted flight gets
+  // teaches it nothing either way.
+  if (!UUID.test(input.id)) return NOT_FOUND
+
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
   if (authError) return { error: authError.message }
@@ -232,7 +250,7 @@ export async function updateFlight(
   const { data: existing, error: existingError } = await supabase
     .from('flights').select('id').eq('id', input.id).maybeSingle()
   if (existingError) return { error: existingError.message }
-  if (!existing) return { error: 'That flight no longer exists.' }
+  if (!existing) return NOT_FOUND
 
   const validated = validateFlightInput(input)
   if ('error' in validated) return validated
@@ -254,6 +272,9 @@ export async function updateFlight(
  * confirmed to exist.
  */
 export async function deleteFlight(id: string): Promise<Fail | { ok: true }> {
+  // Guarded before any query — see updateFlight's comment above.
+  if (!UUID.test(id)) return NOT_FOUND
+
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
   if (authError) return { error: authError.message }
@@ -262,7 +283,7 @@ export async function deleteFlight(id: string): Promise<Fail | { ok: true }> {
   const { data: existing, error: existingError } = await supabase
     .from('flights').select('id').eq('id', id).maybeSingle()
   if (existingError) return { error: existingError.message }
-  if (!existing) return { error: 'That flight no longer exists.' }
+  if (!existing) return NOT_FOUND
 
   const { error } = await supabase.from('flights').delete().eq('id', id)
   if (error) return { error: error.message }
@@ -289,8 +310,16 @@ export async function generateCalendarToken(): Promise<Fail | { ok: true }> {
   if (!user) return { error: 'Not signed in.' }
 
   const token = crypto.randomUUID()
-  const { error } = await supabase.from('settings').update({ calendar_token: token }).eq('owner_id', user.id)
+  const { data, error } = await supabase
+    .from('settings')
+    .update({ calendar_token: token })
+    .eq('owner_id', user.id)
+    .select('calendar_token')
   if (error) return { error: error.message }
+  // Same wording as app/settings/page.tsx's own missing-row state: an
+  // owner-scoped update that touches zero rows means there is no settings
+  // row for this owner at all, not that the token write silently no-opped.
+  if (!data || data.length === 0) return { error: 'No settings row found.' }
 
   revalidatePath('/calendar')
   return { ok: true }

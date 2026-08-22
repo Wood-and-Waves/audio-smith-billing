@@ -76,14 +76,19 @@ test('a show day with only a venue skips the joiner', () => {
   assert.ok(block.includes('LOCATION:The Grand Hall'))
 })
 
-test('a flight with both times builds a timed VEVENT with DTSTART in UTC basic format', () => {
+test('a flight with both times builds a timed VEVENT with DTSTART and DTEND in UTC basic format', () => {
   const feed = buildCalendarFeed({ days: [], flights: [flight()], nowIso: NOW })
   const block = eventLines(feed, 'UID:flight-f1@theaudiosmith.com')
+  assert.deepEqual(
+    block.map((l) => l.split(/[:;]/)[0]),
+    ['BEGIN', 'UID', 'DTSTAMP', 'DTSTART', 'DTEND', 'SUMMARY', 'END'],
+  )
   assert.deepEqual(block, [
     'BEGIN:VEVENT',
     'UID:flight-f1@theaudiosmith.com',
     'DTSTAMP:20260821T230000Z',
     'DTSTART:20260810T143000Z',
+    'DTEND:20260810T174500Z',
     'SUMMARY:✈ AA123 → LAX',
     'END:VEVENT',
   ])
@@ -95,19 +100,58 @@ test('a flight with no arrival airport drops the arrow from SUMMARY', () => {
   assert.ok(block.includes('SUMMARY:✈ AA123'))
 })
 
-test('a flight missing either time falls back to an all-day VEVENT on flightDate', () => {
-  const noArrTime = buildCalendarFeed({
+test('a flight with a departure time but no arrival time is timed with no DTEND', () => {
+  const feed = buildCalendarFeed({
     days: [], flights: [flight({ id: 'f2', arrAt: null })], nowIso: NOW,
   })
-  const block1 = eventLines(noArrTime, 'UID:flight-f2@theaudiosmith.com')
-  assert.ok(block1.includes('DTSTART;VALUE=DATE:20260810'))
-  assert.ok(!block1.some((l) => l.startsWith('DTSTART:'))) // not the timed form
+  const block = eventLines(feed, 'UID:flight-f2@theaudiosmith.com')
+  assert.deepEqual(block, [
+    'BEGIN:VEVENT',
+    'UID:flight-f2@theaudiosmith.com',
+    'DTSTAMP:20260821T230000Z',
+    'DTSTART:20260810T143000Z',
+    'SUMMARY:✈ AA123 → LAX',
+    'END:VEVENT',
+  ])
+  assert.ok(!block.some((l) => l.startsWith('DTEND')))
+})
 
-  const noTimesAtAll = buildCalendarFeed({
-    days: [], flights: [flight({ id: 'f3', depAt: null, arrAt: null })], nowIso: NOW,
+test('a departure time in Postgres timestamptz offset form produces a legal DTSTART', () => {
+  // Postgres renders a timestamptz as JSON with an explicit offset, not a
+  // trailing Z — a lexical strip would leave `+0000` on the end instead of
+  // converting it to the `Z` RFC 5545 requires.
+  const feed = buildCalendarFeed({
+    days: [], flights: [flight({ id: 'f5', depAt: '2026-08-10T14:30:00+00:00', arrAt: null })], nowIso: NOW,
   })
-  const block2 = eventLines(noTimesAtAll, 'UID:flight-f3@theaudiosmith.com')
-  assert.ok(block2.includes('DTSTART;VALUE=DATE:20260810'))
+  const block = eventLines(feed, 'UID:flight-f5@theaudiosmith.com')
+  assert.ok(block.includes('DTSTART:20260810T143000Z'))
+})
+
+test('a departure time with microseconds and an offset also normalizes to a legal DTSTART', () => {
+  const feed = buildCalendarFeed({
+    days: [], flights: [flight({ id: 'f6', depAt: '2026-08-10T14:30:00.123456+00:00', arrAt: null })], nowIso: NOW,
+  })
+  const block = eventLines(feed, 'UID:flight-f6@theaudiosmith.com')
+  assert.ok(block.includes('DTSTART:20260810T143000Z'))
+})
+
+test('a flight with an arrival time but no departure time falls back to all-day', () => {
+  const feed = buildCalendarFeed({
+    days: [], flights: [flight({ id: 'f3', depAt: null })], nowIso: NOW,
+  })
+  const block = eventLines(feed, 'UID:flight-f3@theaudiosmith.com')
+  assert.ok(block.includes('DTSTART;VALUE=DATE:20260810'))
+  assert.ok(!block.some((l) => l.startsWith('DTSTART:'))) // not the timed form
+  assert.ok(!block.some((l) => l.startsWith('DTEND')))
+})
+
+test('a flight with neither time falls back to an all-day VEVENT on flightDate', () => {
+  const feed = buildCalendarFeed({
+    days: [], flights: [flight({ id: 'f4', depAt: null, arrAt: null })], nowIso: NOW,
+  })
+  const block = eventLines(feed, 'UID:flight-f4@theaudiosmith.com')
+  assert.ok(block.includes('DTSTART;VALUE=DATE:20260810'))
+  assert.ok(!block.some((l) => l.startsWith('DTEND')))
 })
 
 test('identical input builds byte-identical output — UIDs and content are stable, not random', () => {
@@ -144,6 +188,19 @@ test('TEXT values escape backslash, comma, semicolon, and newline per RFC 5545',
 
   assert.equal(value, expected)
   assert.ok(!value.includes('\n'), 'a real newline must never survive into a folded content line')
+})
+
+test('TEXT escaping folds a CRLF pair and a bare CR into literal \\n, never a raw carriage return', () => {
+  const raw = 'Line one\r\nLine two\rLine three'
+  const feed = buildCalendarFeed({ days: [day({ showName: raw })], flights: [], nowIso: NOW })
+  const block = eventLines(feed, 'UID:showday-d1@theaudiosmith.com')
+  const summary = block.find((l) => l.startsWith('SUMMARY:'))
+  assert.ok(summary)
+  const value = summary!.slice('SUMMARY:'.length)
+
+  assert.equal(value, 'Line one\\nLine two\\nLine three')
+  assert.ok(!value.includes('\r'), 'a raw carriage return must never survive into a folded content line')
+  assert.ok(!value.includes('\n'), 'a raw newline must never survive into a folded content line')
 })
 
 test('a content line over 75 octets folds with CRLF + single-space continuation', () => {

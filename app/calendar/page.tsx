@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic'
 // The reports-page idiom (app/money/reports/page.tsx): a bad or absent `m`
 // falls back to the current month rather than 404ing or crashing a date
 // helper on garbage input.
-const MONTH_KEY = /^\d{4}-(0[1-9]|1[0-2])$/
+const MONTH_KEY = /^(19|20)\d{2}-(0[1-9]|1[0-2])$/
 
 type ShowDayRow = {
   id: string
@@ -155,10 +155,14 @@ export default async function CalendarPage({
 
   // Same source invoices' own public links read from (app/invoices/actions.ts
   // ~line 854): APP_URL, trailing slash stripped. No token yet -> no URL to
-  // hand CalendarSubscribe; it renders the Generate button instead.
+  // hand CalendarSubscribe; it renders the Generate button instead. And if
+  // APP_URL itself isn't configured, feedUrl must stay null rather than
+  // silently compose a relative `/cal/{token}.ics` — that string is not a
+  // usable subscribe URL in any calendar app, so CalendarSubscribe gets told
+  // a token exists (hasToken) but has nothing clickable/copyable to show.
   const appUrl = (process.env.APP_URL ?? '').replace(/\/+$/, '')
   const token = settingsRow?.calendar_token ?? null
-  const feedUrl = token ? `${appUrl}/cal/${token}.ics` : null
+  const feedUrl = token && appUrl ? `${appUrl}/cal/${token}.ics` : null
 
   const today = todayInChicago()
 
@@ -184,7 +188,7 @@ export default async function CalendarPage({
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <AddFlightDialog mode="create" defaultDate={today} />
-          <CalendarSubscribe feedUrl={feedUrl} />
+          <CalendarSubscribe feedUrl={feedUrl} hasToken={token !== null} />
         </div>
       </header>
 
