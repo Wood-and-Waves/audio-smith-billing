@@ -516,6 +516,12 @@ export default async function MoneyPage({
               Budget
             </Link>
             <Link
+              href="/money/forecast"
+              className="text-xs text-muted hover:text-ink transition-colors"
+            >
+              Forecast
+            </Link>
+            <Link
               href="/money/reports"
               className="text-xs text-muted hover:text-ink transition-colors"
             >

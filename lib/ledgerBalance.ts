@@ -10,7 +10,12 @@ export type BalanceLike = {
   cleared: 'uncleared' | 'cleared' | 'reconciled'
 }
 
-export function workingBalance(openingCents: number, txns: BalanceLike[]): number {
+// Widened to `{ amount_cents }[]` rather than `BalanceLike[]`: the reduce
+// below never reads `cleared`, so a caller with no `cleared` column in its
+// query (the forecast's txn fetch, which has no use for it) can pass its
+// rows straight through instead of casting them into a shape they don't
+// have. clearedBalance genuinely needs `cleared`, so it keeps BalanceLike.
+export function workingBalance(openingCents: number, txns: { amount_cents: number }[]): number {
   return txns.reduce((t, x) => t + x.amount_cents, openingCents)
 }
 

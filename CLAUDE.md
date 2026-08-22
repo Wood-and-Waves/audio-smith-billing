@@ -93,7 +93,7 @@ status.
   `border-b border-line py-4 pl-3 -ml-3 pr-3`; eyebrow headers; FIELD_FULL;
   `components/ui/Select`; useTransition + router.refresh + `{error}`.
 
-## Money module map (migrations 0027–0032)
+## Money module map (migrations 0027–0034)
 
 - Tables: `ledger_accounts` (one business checking), `ledger_categories`
   (Dan's YNAB chart; `deductible` drives the reports figure — "Taxes" seeds
@@ -142,6 +142,24 @@ status.
   on /money/matches); `paid_at` is a Postgres `date` on purpose — a
   timestamptz would NaN the matcher's daysApart and silently exclude every
   paid candidate.
+- **The forecast (0034)**: `/money/forecast` answers "covered through
+  <month>". `lib/forecast.ts` holds ALL the math and **writes nothing** —
+  derived every render, no ledger rows, no envelope moves. It counts BOOKED
+  WORK ONLY (never assumes future bookings) and pairs the runway with the
+  month booked work runs out, so a short number reads as a thin calendar.
+  Projection is its own arithmetic, NOT `computeShowLines` — that earns the
+  day rate from punched straight time, so a booked show projects $0 through
+  it; every `show_days` row is a work day (0005), travel flags add legs, no
+  OT/penalties assumed. Pay lags are learned per client ONLY from
+  deposit-LINKED invoices sent within 365 days, min 2 samples, else
+  `terms_days` — the window exists because Dan's four ancient Journey
+  settlements (393–752 days) would otherwise model a two-year payer.
+  Overhead = trailing 3 COMPLETE months of expense-kind spend, averaged over
+  months that actually have ledger history. Tax uses `tax_setaside_bp` on
+  projected PROFIT and is labeled an estimate — **nothing in this app is
+  tax advice**. Anchor is working balance − net allocated (envelope money is
+  spoken for). A show billed to a VOIDED invoice stays 'billed' upstream, so
+  the page maps it back to open or it would vanish from the forecast.
 - **Register order and balances**: `lib/ledgerBalance.ts` is the single
   source — `compareLedgerOrder` (date asc, created_at asc, id asc; display =
   exact reverse) and `runningBalances` (pinned invariant: top rendered row's
@@ -209,7 +227,7 @@ status.
   with `--push` to Vercel and `--probe` diagnostics; secrets never printed).
 - **Backlog:** `docs/BACKLOG.md` (canonical). Module design reference:
   `docs/superpowers/specs/2026-08-18-bookkeeping-module-reference.md` (incl.
-  Dan's CPA homework questions). Next big pieces: show revenue projection +
-  cash-flow forecast/runway (paid_at now exists for pay-lag learning),
-  calendar feed from shows, CPA year-end export, income-by-payee report,
-  W-9, MileIQ.
+  Dan's CPA homework questions). Next big pieces: CPA year-end export
+  (awaits the CPA's answers — which also unblock reconciling the three
+  charts of accounts), income-by-payee report, per-show profit on the show
+  page, W-9, MileIQ, SimpleFIN.

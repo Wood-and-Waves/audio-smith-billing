@@ -48,45 +48,20 @@ Still open from that design, deliberately deferred:
 - Show↔flight linkage; personal-vs-work flight separation.
 - Live flight delay tracking / airline pushes (lookup is once, at entry).
 
-## Show revenue projection + cash-flow forecast (2026-08-21, Dan)
+## Cash-flow forecast — SHIPPED 2026-08-21 (deferred bits below)
 
-"I am putting all shows in. This should give me a calculation of what each
-show could make and do some cash flow predictions… a valuable tool for my
-forecasting."
-- **Per-show projection**: before punches exist, scheduled days already imply
-  revenue — days x frozen day rate (+ travel legs x travel rate, half days),
-  assuming a standard day (no OT). `lib/showBuckets.ts` computes ACTUALS from
-  punches; a projection variant assumes st = a full day per scheduled date.
-  Surface on the show page pre-punch ("could make ~$X") and in a Forecast
-  list of upcoming shows.
-- **Cash-flow timeline**: expected invoice date (last show day + a billing-lag
-  assumption) + payment timing → expected inflows by week/month. The payment
-  timing should be LEARNED per client: invoices carry sent_at and paid dates,
-  so each client's real median pay-lag beats assuming Net-30. Outflows: the
-  ledger's own history gives trailing-average monthly spend per Bills/
-  Expenses category. Anchor at the current working balance → projected cash
-  position / runway chart.
-- **Runway, not just a timeline** (2026-08-21, Dan): "I know what I need to
-  take home each month. The cash flow calc should tell me how far in the
-  future my finances will hold me." So: a **monthly take-home need** Dan
-  sets, then walk forward month by month — projected inflows minus the
-  need minus projected outflows — **carrying surplus forward** (a month
-  that earns more than the need funds the next one). The headline figure
-  is "covered through <month>", not a chart. A month that comes up short
-  after the carry-forward is the first uncovered month.
-- **Pay-lag learning must trust only deposit-linked dates** (2026-08-21):
-  a `paid_at` from an accepted bank match is the real payment date; one from
-  Mark Paid is "today," which on a backfilled old invoice is noise. Learn
-  per-client lag only from invoices with a `ledger_transaction_invoices`
-  row; fall back to terms_days otherwise.
-- **Assumptions to surface (and let Dan tweak)**: monthly take-home need,
-  all scheduled days worked, no cancellations, per-client pay lag
-  (fallback terms_days), recurring bills at trailing-3-month average.
-- Likely home: /money/forecast or a Reports section. Needs the shows +
-  ledger + invoice-history joins that all exist today; no new data entry
-  beyond the take-home need. Pay-lag learning depends on `invoices.paid_at`
-  — landed with the auto-bridge (0032, 2026-08-21); accepted deposit
-  matches backfill it with real bank dates.
+Built as /money/forecast (migration 0034; design:
+docs/superpowers/specs/2026-08-21-cash-flow-forecast-design.md). Headline
+runway over a month table, booked work only, learned per-client pay lags.
+Still open from that design, deliberately deferred:
+- **Per-show profit on the show page** — `projectedShowCents` in
+  lib/forecast.ts makes "this show could make ~$X" a small addition.
+- **Scenarios** — "what if I book two more Streamline weeks."
+- **Assumed future bookings** of any kind (Dan chose booked-only on purpose;
+  revisit only if the honest number proves too pessimistic to use).
+- **Seasonality** in the overhead average.
+- **Envelope auto-funding** from the projected tax set-aside (still waiting
+  on the CPA's rate, same as the bridge's deferred set-aside).
 
 ## Money module — remaining phases
 

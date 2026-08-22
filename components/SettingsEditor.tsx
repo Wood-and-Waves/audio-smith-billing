@@ -26,6 +26,9 @@ export type EditorSettings = {
   default_terms_days: number
   next_invoice_number: number
   tax_setaside_bp: number
+  monthly_take_home_cents: number
+  monthly_overhead_cents: number | null
+  billing_lag_days: number
 }
 
 export default function SettingsEditor({ initial }: { initial: EditorSettings }) {
@@ -46,6 +49,20 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
   const [taxSetasidePct, setTaxSetasidePct] = useState(
     initial.tax_setaside_bp === 0 ? '' : String(initial.tax_setaside_bp / 100),
   )
+
+  // Dollars in the field, cents in the row — same shape as taxSetasidePct
+  // above (percent in the field, basis points in the row): blank means
+  // "unset" and converts to a default on save, never a typed 0.
+  const [monthlyTakeHome, setMonthlyTakeHome] = useState(
+    initial.monthly_take_home_cents === 0 ? '' : String(initial.monthly_take_home_cents / 100),
+  )
+  // Unlike take-home, null here is not "unset" — it's "use the computed
+  // average," a real and distinct choice, so an actual $0 override must
+  // round-trip as "0", not blank.
+  const [monthlyOverhead, setMonthlyOverhead] = useState(
+    initial.monthly_overhead_cents === null ? '' : String(initial.monthly_overhead_cents / 100),
+  )
+  const [billingLagDays, setBillingLagDays] = useState(String(initial.billing_lag_days))
 
   const [remitTo, setRemitTo] = useState(initial.remit_to ?? '')
   const [achDetails, setAchDetails] = useState(initial.ach_details ?? '')
@@ -94,6 +111,15 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
   function submit() {
     setError(null)
     setSaved(false)
+    // Blank billing lag saves as 7 (saveSettings' own default), not 0 or
+    // null like the other blank-means-unset fields on this form — so unlike
+    // those, leaving this input blank does NOT round-trip to itself. Compute
+    // the effective value once, send it, and (on success) write it straight
+    // back into the field below, so the UI shows what was actually saved
+    // without waiting on router.refresh() — refresh() re-fetches `initial`
+    // on the server, but this component's useState only reads `initial` on
+    // first mount, so a prop change alone would leave the field blank.
+    const effectiveBillingLagDays = billingLagDays.trim() === '' ? 7 : Number(billingLagDays)
     start(async () => {
       const result = await saveSettings({
         business_name: businessName,
@@ -107,9 +133,15 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
         default_terms_days: Number(termsDays),
         next_invoice_number: Number(nextInvoiceNumber),
         tax_setaside_bp: taxSetasidePct.trim() === '' ? 0 : Math.round(Number(taxSetasidePct) * 100),
+        monthly_take_home_cents:
+          monthlyTakeHome.trim() === '' ? 0 : Math.round(Number(monthlyTakeHome) * 100),
+        monthly_overhead_cents:
+          monthlyOverhead.trim() === '' ? null : Math.round(Number(monthlyOverhead) * 100),
+        billing_lag_days: effectiveBillingLagDays,
       })
       if ('error' in result) { setError(result.error); return }
       setSaved(true)
+      setBillingLagDays(String(effectiveBillingLagDays))
       router.refresh()
     })
   }
@@ -184,6 +216,34 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
             Used only to estimate per-show take-home. Ask your CPA for the number;
             leave blank to skip the estimate.
           </p>
+        </div>
+      </div>
+
+      <h2 className="eyebrow mb-3">Forecast</h2>
+      <div className="grid gap-4 sm:grid-cols-2 mb-8">
+        <div>
+          <label className="eyebrow block mb-2" htmlFor="take-home">Monthly take-home</label>
+          <input id="take-home" type="number" min={0} step="0.01" className={FIELD_FULL}
+                 value={monthlyTakeHome} placeholder="e.g. 4500"
+                 onChange={(e) => setMonthlyTakeHome(e.target.value)} />
+        </div>
+
+        <div>
+          <label className="eyebrow block mb-2" htmlFor="overhead">Monthly overhead override</label>
+          <input id="overhead" type="number" min={0} step="0.01" className={FIELD_FULL}
+                 value={monthlyOverhead} placeholder="Blank uses the computed average"
+                 onChange={(e) => setMonthlyOverhead(e.target.value)} />
+          <p className="text-xs text-muted mt-1.5">
+            Leave blank to use the trailing 3-month average instead of a fixed number.
+          </p>
+        </div>
+
+        <div>
+          <label className="eyebrow block mb-2" htmlFor="billing-lag">Billing lag (days)</label>
+          <input id="billing-lag" type="number" min={0} max={120} className={FIELD_FULL}
+                 value={billingLagDays}
+                 onChange={(e) => setBillingLagDays(e.target.value)} />
+          <p className="text-xs text-muted mt-1.5">Days from a show&rsquo;s last day to invoicing.</p>
         </div>
       </div>
 
