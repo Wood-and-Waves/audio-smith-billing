@@ -68,6 +68,10 @@ export async function createShow(input: {
    *  either flag is a no-op with no dates to apply it to. */
   travel_in?: boolean
   travel_out?: boolean
+  /** Dan is PM on this show. Forecast-only (migration 0035) — lib/forecast.ts
+   *  reads it to project a fixed block of PM hours; actual PM billing still
+   *  comes from pm_entries. Off unless ticked, same as the travel flags. */
+  pm_role?: boolean
   // Raw USD/number input, same shape as UpdateShowInput below. Each is an
   // OVERRIDE of the chosen rate card's own number: undefined or blank means
   // "use the card", not zero — parseUSD("") is 0, and treating a blank box
@@ -211,6 +215,7 @@ export async function createShow(input: {
     day_rate_cents: day,
     travel_rate_cents: travel,
     pm_rate_cents: pm,
+    pm_role: input.pm_role ?? false,
     ot_after_hours: hours,
     // The rules below are copied straight off the card, with no override box
     // on New Show for any of them — they're edited afterwards in "Rates and
@@ -808,6 +813,10 @@ export type UpdateShowInput = {
   day_rate: string             // raw USD input, e.g. "780" or "$780.00"
   travel_rate: string          // raw USD input
   pm_rate: string               // raw USD input
+  /** Forecast-only (migration 0035) — flags a flat PM_FORECAST_HOURS in
+   *  lib/forecast.ts's projection. Bills nothing itself; real PM time still
+   *  comes from pm_entries. */
+  pm_role: boolean
   ot_after_hours: number
   // Raw string, not a number: an empty box must become NULL ("no double
   // time"), and Number('') is 0 — which would mean "every hour is double
@@ -924,6 +933,7 @@ export async function updateShow(input: UpdateShowInput): Promise<Fail | { ok: t
     day_rate_cents: dayRate,
     travel_rate_cents: travelRate,
     pm_rate_cents: pmRate,
+    pm_role: input.pm_role,
     ot_after_hours: input.ot_after_hours,
     dt_after_hours: dtAfterHours,
     minimum_meal_break_minutes: input.minimum_meal_break_minutes,

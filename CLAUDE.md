@@ -93,7 +93,7 @@ status.
   `border-b border-line py-4 pl-3 -ml-3 pr-3`; eyebrow headers; FIELD_FULL;
   `components/ui/Select`; useTransition + router.refresh + `{error}`.
 
-## Money module map (migrations 0027–0034)
+## Money module map (migrations 0027–0035)
 
 - Tables: `ledger_accounts` (one business checking), `ledger_categories`
   (Dan's YNAB chart; `deductible` drives the reports figure — "Taxes" seeds
@@ -142,24 +142,31 @@ status.
   on /money/matches); `paid_at` is a Postgres `date` on purpose — a
   timestamptz would NaN the matcher's daysApart and silently exclude every
   paid candidate.
-- **The forecast (0034)**: `/money/forecast` answers "covered through
-  <month>". `lib/forecast.ts` holds ALL the math and **writes nothing** —
-  derived every render, no ledger rows, no envelope moves. It counts BOOKED
-  WORK ONLY (never assumes future bookings) and pairs the runway with the
-  month booked work runs out, so a short number reads as a thin calendar.
+- **The forecast (0034, refined 0035)**: `/money/forecast` answers "covered
+  through <month>". `lib/forecast.ts` holds ALL the math and **writes
+  nothing** — derived every render. It counts BOOKED WORK ONLY (never assumes
+  future bookings) and pairs the runway with the month booked work runs out.
   Projection is its own arithmetic, NOT `computeShowLines` — that earns the
   day rate from punched straight time, so a booked show projects $0 through
-  it; every `show_days` row is a work day (0005), travel flags add legs, no
-  OT/penalties assumed. Pay lags are learned per client ONLY from
-  deposit-LINKED invoices sent within 365 days, min 2 samples, else
-  `terms_days` — the window exists because Dan's four ancient Journey
-  settlements (393–752 days) would otherwise model a two-year payer.
+  it; every `show_days` row is a work day (0005). A show's projection =
+  days x day rate (half days halved) + travel + PM, where **travel** is 2
+  legs at the show's own rate ONLY when it runs >1 day AND its location names
+  a state other than `settings.home_state` (flagged travel_in/out legs always
+  win over the assumption), and **PM** is a flat 4h at the show's PM rate when
+  `shows.pm_role` is set (forecast-only; real PM still bills from
+  `pm_entries`). No OT/DT/meal penalties/expenses are assumed — every omission
+  understates EXCEPT an hourly show, the one place it can overstate.
+  **Payment timing is each client's `terms_days`** (Net 30 today). A learned
+  per-client pay lag was built and then DELIBERATELY REMOVED 2026-08-22 —
+  Dan's lags come from him not being home when checks arrive, not from client
+  behaviour, so learning them taught the wrong thing. Do not rebuild it.
   Overhead = trailing 3 COMPLETE months of expense-kind spend, averaged over
-  months that actually have ledger history. Tax uses `tax_setaside_bp` on
-  projected PROFIT and is labeled an estimate — **nothing in this app is
-  tax advice**. Anchor is working balance − net allocated (envelope money is
-  spoken for). A show billed to a VOIDED invoice stays 'billed' upstream, so
-  the page maps it back to open or it would vanish from the forecast.
+  months that actually have ledger history; the current month pro-rates its
+  overhead and draw because month-0 income is only what's left to land. Tax
+  uses `tax_setaside_bp` on projected PROFIT and is labeled an estimate —
+  **nothing in this app is tax advice**. Anchor is working balance − net
+  allocated. A show billed to a VOIDED invoice stays 'billed' upstream, so
+  the page maps it back to open or it would vanish.
 - **Register order and balances**: `lib/ledgerBalance.ts` is the single
   source — `compareLedgerOrder` (date asc, created_at asc, id asc; display =
   exact reverse) and `runningBalances` (pinned invariant: top rendered row's

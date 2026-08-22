@@ -1,3 +1,27 @@
+> **Postscript (2026-08-22) — four changes after Dan used it.**
+> (1) **Learned pay lags are GONE.** Dan: *"The billing lags are usually
+> because I am not home when the check comes."* The lag the model learned was
+> an artifact of his mail, not client behaviour — so learning it taught the
+> forecast the wrong thing. Every client is now simply their `terms_days`
+> (Net 30 across the board today). `payLagFor`, the 365-day window and the
+> Journey-anomaly reasoning below are all superseded; the section is kept for
+> the record of WHY it existed, not as a description of the code.
+> (2) **Out-of-state shows assume two travel legs** at that show's own
+> `travel_rate_cents` — but only when the show runs MORE THAN ONE DAY (a
+> single-day out-of-town gig is flown in and out the same day). "Out of
+> state" = the show's location names a different state than
+> `settings.home_state` (default IL); same-state shows are drives, which is
+> exactly the case a city-name test got wrong for South Barrington.
+> Explicitly flagged `travel_in`/`travel_out` legs always win over the
+> assumption.
+> (3) **PM shows** carry `shows.pm_role`; when set, the projection adds a
+> flat 4 hours at the show's PM rate, once per show. Actual PM work still
+> bills from `pm_entries` — this is forecast-only.
+> (4) The forecast screen now lists **expected pay per show** with a
+> `5 days · 2 travel · 4h PM` breakdown and marks travel that was assumed
+> rather than flagged.
+> Migration 0035 carries `shows.pm_role` and `settings.home_state`.
+
 # Cash-flow forecast and runway — design
 
 *"I am putting all shows in. This should be able to give me a calculation of

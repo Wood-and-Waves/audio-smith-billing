@@ -29,6 +29,7 @@ export type EditorSettings = {
   monthly_take_home_cents: number
   monthly_overhead_cents: number | null
   billing_lag_days: number
+  home_state: string
 }
 
 export default function SettingsEditor({ initial }: { initial: EditorSettings }) {
@@ -63,6 +64,7 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
     initial.monthly_overhead_cents === null ? '' : String(initial.monthly_overhead_cents / 100),
   )
   const [billingLagDays, setBillingLagDays] = useState(String(initial.billing_lag_days))
+  const [homeState, setHomeState] = useState(initial.home_state)
 
   const [remitTo, setRemitTo] = useState(initial.remit_to ?? '')
   const [achDetails, setAchDetails] = useState(initial.ach_details ?? '')
@@ -120,6 +122,11 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
     // on the server, but this component's useState only reads `initial` on
     // first mount, so a prop change alone would leave the field blank.
     const effectiveBillingLagDays = billingLagDays.trim() === '' ? 7 : Number(billingLagDays)
+    // saveSettings trims and uppercases this itself, but writing the same
+    // effective value back into the field below (same trick as billing lag
+    // above) means the box shows "IL" immediately on success rather than
+    // whatever case Dan happened to type until router.refresh() catches up.
+    const effectiveHomeState = homeState.trim().toUpperCase()
     start(async () => {
       const result = await saveSettings({
         business_name: businessName,
@@ -138,10 +145,12 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
         monthly_overhead_cents:
           monthlyOverhead.trim() === '' ? null : Math.round(Number(monthlyOverhead) * 100),
         billing_lag_days: effectiveBillingLagDays,
+        home_state: homeState,
       })
       if ('error' in result) { setError(result.error); return }
       setSaved(true)
       setBillingLagDays(String(effectiveBillingLagDays))
+      setHomeState(effectiveHomeState)
       router.refresh()
     })
   }
@@ -244,6 +253,13 @@ export default function SettingsEditor({ initial }: { initial: EditorSettings })
                  value={billingLagDays}
                  onChange={(e) => setBillingLagDays(e.target.value)} />
           <p className="text-xs text-muted mt-1.5">Days from a show&rsquo;s last day to invoicing.</p>
+        </div>
+
+        <div>
+          <label className="eyebrow block mb-2" htmlFor="home-state">Home state</label>
+          <input id="home-state" className={FIELD_FULL} value={homeState} maxLength={2}
+                 placeholder="IL" onChange={(e) => setHomeState(e.target.value)} />
+          <p className="text-xs text-muted mt-1.5">Shows outside it forecast two travel days.</p>
         </div>
       </div>
 
