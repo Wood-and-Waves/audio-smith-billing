@@ -1,6 +1,10 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import MobileNav from '@/components/MobileNav'
+import SnapReceipt from '@/components/SnapReceipt'
+import { createClient } from '@/lib/supabase/server'
+import { todayInChicago } from '@/lib/dates'
+import type { PickableShow } from '@/lib/showPicker'
 
 // The site's nav, carried over: charcoal bar closed by a 2px amber rule.
 // Anyone who has seen theaudiosmith.com should recognise this immediately.
@@ -14,7 +18,7 @@ const NAV = [
   { href: '/settings', label: 'Settings', key: 'settings' },
 ] as const
 
-export default function AppShell({
+export default async function AppShell({
   current,
   children,
   wide = false,
@@ -26,6 +30,37 @@ export default function AppShell({
    *  so navigation doesn't jump between pages. */
   wide?: boolean
 }) {
+  // Feeds the mobile header's "snap a receipt" button
+  // (components/SnapReceipt.tsx): which show counts as "today", and what goes
+  // in its picker.
+  //
+  // This runs on EVERY page render, which is a real cost and a deliberate
+  // one: the camera has to open from the same tap that opened it, and iOS
+  // Safari only honours that during live user activation. Awaiting a fetch
+  // first would save the expense and then silently fail to reopen the camera
+  // — so the shows must already be here when the button is tapped.
+  //
+  // Bounded two ways to keep that cost flat: three columns and one join (no
+  // punches, expenses or PM entries), and OPEN shows only. The second is not
+  // just an optimisation — a billed show's expenses are frozen and
+  // `addExpense` refuses them, so showPicker never offers one anyway. It also
+  // means the set shrinks as shows get billed rather than growing forever.
+  //
+  // Auth relies on RLS plus the "no user, no rows" fallback its sibling reads
+  // use; AppShell is not where any page gates sign-in.
+  const supabase = await createClient()
+  const { data: showRows } = await supabase
+    .from('shows')
+    .select('id, name, status, show_days(date)')
+    .eq('status', 'open')
+  const shows: PickableShow[] = (showRows ?? []).map((s) => ({
+    id: s.id as string,
+    name: s.name as string,
+    status: s.status as 'open' | 'billed',
+    dates: ((s.show_days ?? []) as { date: string }[]).map((d) => d.date),
+  }))
+  const today = todayInChicago()
+
   return (
     <div className="min-h-dvh">
       <header className="sticky top-0 z-50 bg-bg border-b-2 border-accent">
@@ -41,8 +76,12 @@ export default function AppShell({
           </Link>
 
           {/* Below sm the links collapse into a hamburger; the inline bar is
-              desktop-only. */}
-          <div className="sm:hidden">
+              desktop-only. Snap-a-receipt sits beside it — under Dan's thumb
+              the moment the app opens on his phone — and is mobile-only for
+              the same reason as the design doc: receipts aren't photographed
+              at a desk. */}
+          <div className="sm:hidden flex items-center gap-1">
+            <SnapReceipt shows={shows} today={today} />
             <MobileNav items={NAV} current={current} />
           </div>
 
