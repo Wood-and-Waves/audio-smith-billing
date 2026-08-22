@@ -1,12 +1,12 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { todayInChicago, monthLabel } from '@/lib/dates'
+import { todayInChicago, monthLabel, formatDateShort } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
 import { workingBalance } from '@/lib/ledgerBalance'
 import { availableToAllocate, type EnvelopeMoveLike } from '@/lib/envelopes'
 import {
   buildForecast, computeOverheadCents,
-  type ForecastShow, type ForecastInvoice, type ForecastClient,
+  type ForecastShow, type ForecastInvoice, type ForecastClient, type ShowProjection,
 } from '@/lib/forecast'
 import AppShell from '@/components/AppShell'
 import ForecastTable from '@/components/ForecastTable'
@@ -80,6 +80,9 @@ type RawShowRow = {
   status: string
   day_rate_cents: number
   travel_rate_cents: number
+  pm_rate_cents: number
+  pm_role: boolean
+  location: string | null
   invoice_id: string | null
   show_days: { date: string; travel_in: boolean; travel_out: boolean; pay_as_half_day: boolean }[]
 }
@@ -96,7 +99,8 @@ async function fetchAllForecastShows(
   for (;;) {
     const { data, error } = await supabase
       .from('shows')
-      .select(`id, name, client_id, status, day_rate_cents, travel_rate_cents, invoice_id,
+      .select(`id, name, client_id, status, day_rate_cents, travel_rate_cents,
+                pm_rate_cents, pm_role, location, invoice_id,
                 show_days(date, travel_in, travel_out, pay_as_half_day)`)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
@@ -226,10 +230,10 @@ const BackLink = () => (
 )
 
 /** One assumptions row — by default the whole row links to Settings, where
- *  every figure here (take-home, overhead override, tax rate, billing lag)
- *  actually lives and is edited. Per-client pay-lag rows pass their own
- *  `href` instead: `terms_days` lives on the CLIENT record, not Settings, so
- *  linking those to Settings would send Dan somewhere he can't change the
+ *  every figure here (take-home, overhead override, tax rate, billing lag,
+ *  home state) actually lives and is edited. Payment terms passes its own
+ *  `href` instead: `terms_days` lives on each CLIENT record, not Settings, so
+ *  linking that row to Settings would send Dan somewhere he can't change the
  *  number that's actually driving the row. */
 function AssumptionRow({
   label, value, href = '/settings',
@@ -243,6 +247,65 @@ function AssumptionRow({
       <span className="text-muted">{label}</span>
       <span className="text-right">{value}</span>
     </Link>
+  )
+}
+
+/** One row in the "Booked shows" list — the per-show breakdown backing each
+ *  show's contribution to `inflows`. The muted line under the name states
+ *  only the non-zero money components (`dayCents`/`travelCents`/`pmCents`),
+ *  never a day or leg COUNT: `ShowProjection` doesn't expose one, and
+ *  reverse-deriving a count from cents ÷ rate would be re-deriving show
+ *  arithmetic in the page — exactly the duplicate-computation risk
+ *  `ShowProjection`'s own doc comment (lib/forecast.ts) warns against, since
+ *  a page-side recomputation could silently drift from what buildForecast
+ *  actually charged. `travelAssumed` gets its own quiet marker (matching the
+ *  "Short" / "Booked work ends" tag idiom in ForecastTable) rather than
+ *  folding into the travel figure itself, so an assumed leg reads distinctly
+ *  from one Dan actually flagged. */
+function BookedShowRow({ sp }: { sp: ShowProjection }) {
+  const dateSpan = sp.firstDay === sp.lastDay
+    ? formatDateShort(sp.firstDay)
+    : `${formatDateShort(sp.firstDay)}–${formatDateShort(sp.lastDay)}`
+
+  const parts: { key: string; node: React.ReactNode }[] = []
+  if (sp.dayCents > 0) parts.push({ key: 'days', node: `${formatUSD(sp.dayCents)} days` })
+  if (sp.travelCents > 0) {
+    parts.push({
+      key: 'travel',
+      node: (
+        <>
+          {formatUSD(sp.travelCents)} travel
+          {sp.travelAssumed && (
+            <span className="ml-1 text-[10px] font-semibold uppercase tracking-wider text-muted">assumed</span>
+          )}
+        </>
+      ),
+    })
+  }
+  if (sp.pmCents > 0) parts.push({ key: 'pm', node: `${formatUSD(sp.pmCents)} PM` })
+
+  return (
+    <li>
+      <Link
+        href={`/shows/${sp.showId}`}
+        className="block border-b border-line py-4 pl-3 -ml-3 pr-3 hover:bg-surface transition-colors"
+      >
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <span className="font-semibold">{sp.name}</span>
+          <span className="tabular font-semibold text-right">{formatUSD(sp.totalCents)}</span>
+        </div>
+        <p className="text-xs text-muted mt-1">
+          {dateSpan} · lands {monthLabel(sp.landsMonth)}
+          {parts.length > 0 && ' · '}
+          {parts.map((p, i) => (
+            <span key={p.key}>
+              {i > 0 && ' · '}
+              {p.node}
+            </span>
+          ))}
+        </p>
+      </Link>
+    </li>
   )
 }
 
@@ -313,7 +376,7 @@ export default async function MoneyForecastPage() {
     // Explicit columns, never '*' — this screen has no business reading
     // remit_to/ach_details/etc, and a widened select would hand more of the
     // settings row to this page than the forecast has any use for.
-    .select('monthly_take_home_cents, monthly_overhead_cents, billing_lag_days, tax_setaside_bp')
+    .select('monthly_take_home_cents, monthly_overhead_cents, billing_lag_days, tax_setaside_bp, home_state')
     .eq('owner_id', user.id)
     .maybeSingle()
   if (settingsError) return <LoadError message={settingsError.message} />
@@ -331,7 +394,6 @@ export default async function MoneyForecastPage() {
   const clients: ForecastClient[] = (clientRows ?? []).map((c) => ({
     id: c.id, name: c.name, terms_days: c.terms_days,
   }))
-  const clientNames = new Map(clients.map((c) => [c.id, c.name]))
 
   const shows: ForecastShow[] = (showRows ?? []).map((s) => {
     // The void defense (see fetchAllVoidInvoiceIds above): a 'billed' show
@@ -348,6 +410,9 @@ export default async function MoneyForecastPage() {
       status,
       day_rate_cents: s.day_rate_cents,
       travel_rate_cents: s.travel_rate_cents,
+      pm_rate_cents: s.pm_rate_cents,
+      pm_role: s.pm_role,
+      location: s.location,
       days: (s.show_days ?? []).map((d) => ({
         date: d.date, travel_in: d.travel_in, travel_out: d.travel_out, pay_as_half_day: d.pay_as_half_day,
       })),
@@ -378,11 +443,17 @@ export default async function MoneyForecastPage() {
   const overheadCents = overheadOverrideCents ?? computedOverheadCents
   const taxRateBp = settingsRow?.tax_setaside_bp ?? 0
   const billingLagDays = settingsRow?.billing_lag_days ?? 7
+  // Same default as migration 0035's column default — a settings row that
+  // predates the column, or hasn't loaded, still needs a state to compare
+  // show locations against rather than passing an empty string through to
+  // stateOf's comparison in lib/forecast.ts.
+  const homeState = settingsRow?.home_state ?? 'IL'
 
   const forecast = hasOpenShows || hasUnpaidInvoices
     ? buildForecast({
         today,
         startingBalanceCents: availableCents,
+        homeState,
         shows,
         invoices,
         clients,
@@ -391,6 +462,7 @@ export default async function MoneyForecastPage() {
     : null
 
   const overdueInflows = forecast?.inflows.filter((f) => f.overdue) ?? []
+  const bookedShowsTotalCents = forecast?.showProjections.reduce((sum, sp) => sum + sp.totalCents, 0) ?? 0
 
   // With no take-home set, the walk still runs (draw = $0), so
   // coveredThrough/beyondHorizon would name a runway Dan hasn't actually
@@ -473,6 +545,21 @@ export default async function MoneyForecastPage() {
             <ForecastTable months={forecast.months} bookedThrough={forecast.bookedThrough} />
           </section>
 
+          {forecast.showProjections.length > 0 && (
+            <section className="mb-10">
+              <h2 className="eyebrow mb-4">Booked shows</h2>
+              <ul className="border-t border-line">
+                {forecast.showProjections.map((sp) => (
+                  <BookedShowRow key={sp.showId} sp={sp} />
+                ))}
+              </ul>
+              <div className="flex items-center justify-between gap-3 pt-3 text-sm font-semibold">
+                <span>Total</span>
+                <span className="tabular">{formatUSD(bookedShowsTotalCents)}</span>
+              </div>
+            </section>
+          )}
+
           <section>
             <h2 className="eyebrow mb-4">Assumptions</h2>
             <div className="border-t border-line">
@@ -493,29 +580,21 @@ export default async function MoneyForecastPage() {
                 value={`${(taxRateBp / 100).toFixed(2)}%`}
               />
               <AssumptionRow label="Billing lag" value={`${billingLagDays} day${billingLagDays === 1 ? '' : 's'}`} />
+              {/* Every client's own terms_days, not a learned figure — see
+                  lib/forecast.ts's header on why per-client learning was
+                  dropped. Links to the client list since terms_days lives on
+                  each client record, not Settings. */}
+              <AssumptionRow label="Payment terms" value="Net 30 — each client's terms" href="/clients" />
+              {/* Mirrors the out-of-state travel-leg rule in
+                  computeShowBreakdown (lib/forecast.ts): only fires past one
+                  scheduled day, and only when flagged legs didn't already
+                  answer the question. */}
+              <AssumptionRow
+                label="Travel"
+                value={`Two days assumed outside ${homeState}`}
+                href="/settings"
+              />
             </div>
-
-            {forecast.payLags.length > 0 && (
-              <div className="mt-6">
-                <h3 className="eyebrow mb-3">Pay lag by client</h3>
-                <div className="border-t border-line">
-                  {forecast.payLags.map((lag) => {
-                    const name = clientNames.get(lag.clientId) ?? lag.clientId
-                    const detail = lag.source === 'learned'
-                      ? `learned from ${lag.sampleSize}`
-                      : `Net ${lag.days} terms`
-                    return (
-                      <AssumptionRow
-                        key={lag.clientId}
-                        label={name}
-                        value={`${lag.days} day${lag.days === 1 ? '' : 's'} · ${detail}`}
-                        href={`/clients/${lag.clientId}`}
-                      />
-                    )
-                  })}
-                </div>
-              </div>
-            )}
           </section>
         </>
       )}
