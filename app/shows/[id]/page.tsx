@@ -45,6 +45,7 @@ type ShowRow = {
   notes: string | null; timezone: string
   status: string; invoice_id: string | null
   day_rate_cents: number; travel_rate_cents: number; pm_rate_cents: number
+  pm_role: boolean
   ot_after_hours: number; dt_after_hours: number | null
   minimum_meal_break_minutes: number; meal_break_deduction_cap: number
   meal_penalty_grace_hours: number; meal_penalty_cents: number
@@ -65,7 +66,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
   const { data, error } = await supabase
     .from('shows')
     .select(`id, name, venue, location, notes, timezone, status, invoice_id,
-             day_rate_cents, travel_rate_cents, pm_rate_cents, ot_after_hours,
+             day_rate_cents, travel_rate_cents, pm_rate_cents, pm_role, ot_after_hours,
              dt_after_hours, minimum_meal_break_minutes, meal_break_deduction_cap,
              meal_penalty_grace_hours, meal_penalty_cents, short_turn_rest_hours,
              continuous_time_enabled, bill_hourly, rate_card_name,
@@ -212,6 +213,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
           day_rate_cents: s.day_rate_cents,
           travel_rate_cents: s.travel_rate_cents,
           pm_rate_cents: s.pm_rate_cents,
+          pm_role: s.pm_role,
           ot_after_hours: s.ot_after_hours,
           dt_after_hours: s.dt_after_hours,
           minimum_meal_break_minutes: s.minimum_meal_break_minutes,

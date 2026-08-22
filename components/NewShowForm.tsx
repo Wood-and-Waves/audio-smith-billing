@@ -60,6 +60,7 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
   const [dayRate, setDayRate] = useState('')
   const [travelRate, setTravelRate] = useState('')
   const [pmRate, setPmRate] = useState('')
+  const [pmRole, setPmRole] = useState(false)
   const [otAfterHours, setOtAfterHours] = useState('')
   // "Dirty" tracking, the same idea as a form library's touched-fields set:
   // once Dan types directly into travel or PM, a later day-rate edit must
@@ -220,6 +221,7 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
         day_rate: dayRate,
         travel_rate: travelRate,
         pm_rate: pmRate,
+        pm_role: pmRole,
         ot_after_hours: otAfterHours,
       })
       if ('error' in result) { setError(result.error); return }
@@ -390,6 +392,16 @@ export default function NewShowForm({ clients }: { clients: Client[] }) {
               <label className="eyebrow block mb-2" htmlFor="pm-rate">PM rate (per hour)</label>
               <input id="pm-rate" inputMode="decimal" className={FIELD_FULL} value={pmRate}
                      onChange={(e) => onPmRateChange(e.target.value)} />
+            </div>
+            <div className="flex items-end pb-2.5">
+              <div>
+                <label className="flex items-center gap-2 text-sm text-muted">
+                  <input type="checkbox" className="h-4 w-4 accent-accent" checked={pmRole}
+                         onChange={(e) => setPmRole(e.target.checked)} />
+                  I&rsquo;m PM on this show
+                </label>
+                <p className="text-xs text-muted mt-1.5">Forecasts 4 hours of PM work at the rate above.</p>
+              </div>
             </div>
             <div>
               <label className="eyebrow block mb-2" htmlFor="ot-after">OT after (hours)</label>

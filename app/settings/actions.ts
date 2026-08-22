@@ -29,6 +29,11 @@ export type SettingsInput = {
   // a number here overrides it. Meaningfully different from 0.
   monthly_overhead_cents: number | null
   billing_lag_days: number
+  // Two-letter state Dan travels from (migration 0035). The forecast assumes
+  // a show whose location names a different state costs two travel legs;
+  // same-state shows are drives. Uppercased and validated below — stored
+  // upper, e.g. "IL".
+  home_state: string
 }
 
 type Fail = { error: string }
@@ -78,6 +83,14 @@ export async function saveSettings(input: SettingsInput): Promise<Fail | { ok: t
     return { error: 'Billing lag must be between 0 and 120 days.' }
   }
 
+  // Trim first, then uppercase, then validate — same order as every other
+  // text field in this app, even though there's no money trap here to guard
+  // against. "il" and " il " are both meant as IL; "Illinois" is not.
+  const homeState = input.home_state.trim().toUpperCase()
+  if (!/^[A-Z]{2}$/.test(homeState)) {
+    return { error: 'Home state must be a two-letter abbreviation, like IL.' }
+  }
+
   // Lowering this would hand out an invoice number that already exists, and
   // the unique index on (owner_id, number) would reject the next invoice
   // with a database error the user cannot interpret. Refuse it here, clearly.
@@ -106,6 +119,7 @@ export async function saveSettings(input: SettingsInput): Promise<Fail | { ok: t
     monthly_take_home_cents: input.monthly_take_home_cents,
     monthly_overhead_cents: input.monthly_overhead_cents,
     billing_lag_days: input.billing_lag_days,
+    home_state: homeState,
   }
 
   // owner_id, not `id = 1`. This is a WRITE: keyed on the singleton row it

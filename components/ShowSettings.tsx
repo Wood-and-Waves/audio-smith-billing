@@ -28,6 +28,9 @@ export type EditorShow = {
   day_rate_cents: number
   travel_rate_cents: number
   pm_rate_cents: number
+  // Forecast-only (migration 0035) — see updateShow's billed branch in
+  // app/shows/actions.ts for why this one field stays editable after billing.
+  pm_role: boolean
   ot_after_hours: number
   dt_after_hours: number | null
   minimum_meal_break_minutes: number
@@ -57,6 +60,7 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
   const [dayRate, setDayRate] = useState(formatAmount(initial.day_rate_cents))
   const [travelRate, setTravelRate] = useState(formatAmount(initial.travel_rate_cents))
   const [pmRate, setPmRate] = useState(formatAmount(initial.pm_rate_cents))
+  const [pmRole, setPmRole] = useState(initial.pm_role)
   const [otAfterHours, setOtAfterHours] = useState(String(initial.ot_after_hours))
   // Empty box, not "0" — see app/shows/actions.ts on why null and zero must
   // never be conflated here.
@@ -91,6 +95,7 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
         day_rate: dayRate,
         travel_rate: travelRate,
         pm_rate: pmRate,
+        pm_role: pmRole,
         ot_after_hours: Number(otAfterHours),
         dt_after_hours: dtAfterHours,
         minimum_meal_break_minutes: Number(minMealBreak),
@@ -191,6 +196,17 @@ export default function ShowSettings({ initial, locked }: { initial: EditorShow;
             <label className="eyebrow block mb-2" htmlFor="pm-rate">PM rate (per hour)</label>
             <input id="pm-rate" inputMode="decimal" className={FIELD_FULL} value={pmRate}
                    disabled={locked || pending} onChange={(e) => setPmRate(e.target.value)} />
+          </div>
+          <div className="flex items-end pb-2.5">
+            <div>
+              <label className="flex items-center gap-2 text-sm text-muted">
+                <input type="checkbox" className="h-4 w-4 accent-accent" checked={pmRole}
+                       disabled={locked || pending}
+                       onChange={(e) => setPmRole(e.target.checked)} />
+                I&rsquo;m PM on this show
+              </label>
+              <p className="text-xs text-muted mt-1.5">Forecasts 4 hours of PM work at the rate above.</p>
+            </div>
           </div>
           <div>
             <label className="eyebrow block mb-2" htmlFor="ot-after">OT after (hours)</label>
