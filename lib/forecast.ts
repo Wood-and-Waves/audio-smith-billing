@@ -17,6 +17,23 @@
 // produces the same answer, and calling it does not change what a third call
 // would return.
 //
+// Pay lag is simply the client's `terms_days` (30 when the client can't be
+// found) — no per-client learning happens here. A prior version tried to
+// learn each client's real-world lag from settled invoices, but the lags it
+// found were mostly an artifact of Dan's own mail habits, not client
+// behavior — teaching the forecast the wrong thing. `terms_days` is what Dan
+// actually told the client to expect, which is the only number this model
+// has any business asserting.
+//
+// A show's cash also includes what the model ASSUMES about travel and PM
+// time when the show data doesn't say so explicitly: an out-of-state show
+// with no travel legs flagged on any of its days is assumed to need two (see
+// `stateOf` and the travel-leg rule in `projectedShowCents`), and a show
+// with `pm_role` set gets a flat `PM_FORECAST_HOURS` of PM time billed once,
+// never per day. Both are reported per-show in `showProjections`, which
+// lists exactly the shows that fed `inflows` — the two are computed from the
+// same pass over `shows` so they can never drift apart.
+//
 // `today` is always a parameter, never read from a clock in here — see
 // lib/dates.ts and lib/status.ts, which insist on the same thing for the
 // same reason: a lib that reads its own clock can't be pinned by a test.
@@ -35,6 +52,9 @@ export type ForecastShowDay = {
   pay_as_half_day: boolean
 }
 
+/** Flat PM time billed once per show (not per day) when `pm_role` is set. */
+export const PM_FORECAST_HOURS = 4
+
 export type ForecastShow = {
   id: string
   name: string
@@ -42,6 +62,9 @@ export type ForecastShow = {
   status: 'open' | 'billed'
   day_rate_cents: number
   travel_rate_cents: number
+  pm_rate_cents: number // hourly PM rate; billed PM_FORECAST_HOURS times when pm_role
+  pm_role: boolean
+  location: string | null // free text, e.g. "City, ST" — see stateOf
   days: ForecastShowDay[]
 }
 
@@ -66,8 +89,6 @@ export type ForecastAssumptions = {
 }
 
 // ---- outputs ----
-
-export type PayLag = { clientId: string; days: number; source: 'learned' | 'terms'; sampleSize: number }
 
 export type ExpectedInflow = {
   month: string // YYYY-MM
@@ -95,41 +116,41 @@ export type NotProjectedShow = {
   reason: 'no days' | 'no rate'
 }
 
+/** Per-show cash breakdown backing the forecast screen's show-by-show table.
+ *  Lists every open, dated show buildForecast walked — including a $0 one,
+ *  so nothing goes missing between here and notProjected — ordered by
+ *  firstDay then name. `totalCents`/`landsMonth` always match the inflow
+ *  that show produced (zero for a show with no inflow at all), because both
+ *  come out of the same per-show computation in buildForecast. */
+export type ShowProjection = {
+  showId: string
+  name: string
+  firstDay: string
+  lastDay: string
+  dayCents: number // full + half days
+  travelCents: number
+  pmCents: number
+  totalCents: number
+  travelAssumed: boolean // true when the legs came from the out-of-state rule, not flagged days
+  landsMonth: string // YYYY-MM the cash is expected
+}
+
 export type Forecast = {
   months: ForecastMonth[]
   coveredThrough: string | null // YYYY-MM; null = not even this month
   beyondHorizon: boolean // never went negative within 24 months
   bookedThrough: string | null // last month carrying booked WORK (not cash landing)
   inflows: ExpectedInflow[] // for the table's detail + overdue flags
-  payLags: PayLag[]
   notProjected: NotProjectedShow[]
+  showProjections: ShowProjection[] // ordered by firstDay then name
 }
 
 export const HORIZON_MONTHS = 24
 
-// Learning a lag from a settlement over a year old models the client as a
-// worse payer than they are today — see the Journey case in the tests and
-// the design doc's postscript on why this window exists.
-const PAY_LAG_WINDOW_DAYS = 365
-
-// ---------------------------------------------------------------------------
-// Local date-diff helper. Same doctrine as lib/ledgerMatch.ts's daysApart:
-// split on '-' and Date.UTC the parts, so this never drifts with the host
-// machine's timezone. Unlike daysApart this is SIGNED (to - from), because a
-// pay lag needs direction (paid after sent, not just "far apart"); it also
-// tolerates a leading ISO timestamp (slices to the first 10 chars) so a
-// `sent_at` like '2026-08-01T00:00:00Z' can be compared directly against a
-// plain YYYY-MM-DD without every caller re-truncating it first.
-const MS_PER_DAY = 24 * 60 * 60 * 1000
-
-function toUtcMs(iso: string): number {
-  const [y, m, d] = iso.slice(0, 10).split('-').map(Number)
-  return Date.UTC(y, m - 1, d)
-}
-
-function diffDays(fromIso: string, toIso: string): number {
-  return Math.round((toUtcMs(toIso) - toUtcMs(fromIso)) / MS_PER_DAY)
-}
+// terms_days is missing only when a show/invoice's client_id doesn't match
+// any row in the roster passed in — shouldn't happen, but this is the same
+// "don't crash on bad data" doctrine as projectedShowCents' rate clamping.
+const FALLBACK_TERMS_DAYS = 30
 
 // `sent_at` is stamped `new Date().toISOString()` (sendInvoice) — a UTC
 // instant, not a plain date. Slicing its first 10 characters reads the UTC
@@ -148,56 +169,83 @@ function daysInMonth(ym: string): number {
   return new Date(Date.UTC(y, m, 0)).getUTCDate()
 }
 
-/** Even count -> average the two middle values, rounded to a whole day. */
-function median(sortedDays: number[]): number {
-  const n = sortedDays.length
-  const mid = Math.floor(n / 2)
-  if (n % 2 === 1) return sortedDays[mid]
-  return Math.round((sortedDays[mid - 1] + sortedDays[mid]) / 2)
+/** Two-letter state parsed from a free-text location ("Orlando, FL" -> "FL").
+ *  Takes the text after the LAST comma (so extra commas earlier in the
+ *  string don't confuse it), trims and uppercases it, and accepts it only
+ *  when that's exactly two A-Z letters. Null for null/empty/whitespace-only
+ *  text, text with no comma at all, or a trailing token that isn't a clean
+ *  two-letter code (a full state name, a trailing period, etc). */
+export function stateOf(location: string | null): string | null {
+  if (location === null) return null
+  const parts = location.split(',')
+  if (parts.length < 2) return null
+  const candidate = parts[parts.length - 1].trim().toUpperCase()
+  return /^[A-Z]{2}$/.test(candidate) ? candidate : null
 }
 
-/** Every scheduled day is a work day (migration 0005); travel flags add legs. */
-export function projectedShowCents(show: ForecastShow): number {
+type ShowBreakdown = {
+  firstDay: string | null // null only when the show has no days
+  lastDay: string | null
+  dayCents: number
+  travelCents: number
+  pmCents: number
+  totalCents: number
+  travelAssumed: boolean
+}
+
+/** Every scheduled day is a work day (migration 0005). Travel legs come from
+ *  flagged days when any are flagged; otherwise an out-of-state show (per
+ *  `stateOf` vs `homeState`) is assumed to need exactly 2 legs — flagged
+ *  legs always win so the two rules never both fire (the double-count
+ *  guard). PM is `pm_role`'s flat `PM_FORECAST_HOURS * pm_rate_cents`, once
+ *  per show regardless of day count. */
+function computeShowBreakdown(show: ForecastShow, homeState: string): ShowBreakdown {
   // Guard against nonsense input without throwing: a negative rate would
   // otherwise subtract from the projection instead of contributing nothing.
   const dayRate = show.day_rate_cents > 0 ? show.day_rate_cents : 0
   const travelRate = show.travel_rate_cents > 0 ? show.travel_rate_cents : 0
+  const pmRate = show.pm_rate_cents > 0 ? show.pm_rate_cents : 0
   const halfRate = Math.round(dayRate / 2)
 
   let fullDays = 0
   let halfDays = 0
-  let legs = 0
+  let flaggedLegs = 0
+  let firstDay: string | null = null
+  let lastDay: string | null = null
+
   for (const d of show.days) {
     if (d.pay_as_half_day) halfDays += 1
     else fullDays += 1
-    if (d.travel_in) legs += 1
-    if (d.travel_out) legs += 1
+    if (d.travel_in) flaggedLegs += 1
+    if (d.travel_out) flaggedLegs += 1
+    if (firstDay === null || d.date < firstDay) firstDay = d.date
+    if (lastDay === null || d.date > lastDay) lastDay = d.date
   }
 
-  return fullDays * dayRate + halfDays * halfRate + legs * travelRate
+  const dayCents = fullDays * dayRate + halfDays * halfRate
+
+  let legs = 0
+  let travelAssumed = false
+  if (flaggedLegs > 0) {
+    legs = flaggedLegs
+  } else {
+    const showState = stateOf(show.location)
+    if (showState !== null && showState !== homeState) {
+      legs = 2
+      travelAssumed = true
+    }
+  }
+  const travelCents = legs * travelRate
+
+  const pmCents = show.pm_role ? PM_FORECAST_HOURS * pmRate : 0
+
+  return {
+    firstDay, lastDay, dayCents, travelCents, pmCents, totalCents: dayCents + travelCents + pmCents, travelAssumed,
+  }
 }
 
-/** Median lag, learned ONLY from linked invoices sent within 365 days of `today`,
- *  minimum 2 samples; otherwise the client's terms_days. */
-export function payLagFor(
-  clientId: string, invoices: ForecastInvoice[], clients: ForecastClient[], today: string,
-): PayLag {
-  const samples: number[] = []
-  for (const inv of invoices) {
-    if (inv.client_id !== clientId) continue
-    if (!inv.linked) continue
-    if (inv.sent_at === null || inv.paid_at === null) continue
-    if (diffDays(inv.sent_at, today) > PAY_LAG_WINDOW_DAYS) continue
-    samples.push(diffDays(inv.sent_at, inv.paid_at))
-  }
-
-  if (samples.length >= 2) {
-    samples.sort((a, b) => a - b)
-    return { clientId, days: median(samples), source: 'learned', sampleSize: samples.length }
-  }
-
-  const client = clients.find((c) => c.id === clientId)
-  return { clientId, days: client ? client.terms_days : 0, source: 'terms', sampleSize: samples.length }
+export function projectedShowCents(show: ForecastShow, homeState: string): number {
+  return computeShowBreakdown(show, homeState).totalCents
 }
 
 /** Trailing 3 COMPLETE calendar months of spend, excluding owner_pay and transfer. */
@@ -245,27 +293,16 @@ function bucket(expectedDate: string, today: string): Bucketed {
 export function buildForecast(input: {
   today: string // YYYY-MM-DD
   startingBalanceCents: number // available-to-allocate
+  homeState: string // Dan's home state — drives the out-of-state travel assumption
   shows: ForecastShow[]
   invoices: ForecastInvoice[]
   clients: ForecastClient[]
   assumptions: ForecastAssumptions
 }): Forecast {
-  const { today, startingBalanceCents, shows, invoices, clients, assumptions } = input
+  const { today, startingBalanceCents, homeState, shows, invoices, clients, assumptions } = input
   const clientNames = new Map(clients.map((c) => [c.id, c.name]))
-
-  // A client's lag only needs computing (and reporting) if it actually has
-  // booked work counted below — a full client roster would otherwise pad the
-  // assumptions list with clients that have no bearing on this forecast.
-  const relevantClientIds = new Set<string>()
-  for (const s of shows) if (s.status === 'open') relevantClientIds.add(s.client_id)
-  for (const inv of invoices) if (inv.status === 'draft' || inv.status === 'sent') relevantClientIds.add(inv.client_id)
-
-  const payLagByClient = new Map<string, PayLag>()
-  for (const clientId of relevantClientIds) {
-    payLagByClient.set(clientId, payLagFor(clientId, invoices, clients, today))
-  }
-  const lagDaysFor = (clientId: string): number => payLagByClient.get(clientId)?.days
-    ?? payLagFor(clientId, invoices, clients, today).days
+  const clientsById = new Map(clients.map((c) => [c.id, c]))
+  const termsDaysFor = (clientId: string): number => clientsById.get(clientId)?.terms_days ?? FALLBACK_TERMS_DAYS
 
   const inflows: ExpectedInflow[] = []
 
@@ -278,13 +315,14 @@ export function buildForecast(input: {
       ? sentAtChicagoDate(inv.sent_at)
       : addDays(today, assumptions.billingLagDays)
 
-    const expectedDate = addDays(baseDate, lagDaysFor(inv.client_id))
+    const expectedDate = addDays(baseDate, termsDaysFor(inv.client_id))
     const { month, overdue } = bucket(expectedDate, today)
     const clientName = clientNames.get(inv.client_id) ?? inv.client_id
     inflows.push({ month, amountCents: inv.total_cents, label: `#${inv.number} ${clientName}`, overdue })
   }
 
   const notProjected: NotProjectedShow[] = []
+  const showProjections: ShowProjection[] = []
 
   for (const show of shows) {
     if (show.status === 'billed') continue // its invoice already covers it, counted above
@@ -297,23 +335,47 @@ export function buildForecast(input: {
       continue
     }
 
-    const amountCents = projectedShowCents(show)
-    if (amountCents === 0) {
+    const breakdown = computeShowBreakdown(show, homeState)
+    // Guaranteed non-null: show.days.length > 0 was just checked above.
+    const firstDay = breakdown.firstDay as string
+    const lastDay = breakdown.lastDay as string
+
+    const baseDate = addDays(lastDay, assumptions.billingLagDays)
+    const expectedDate = addDays(baseDate, termsDaysFor(show.client_id))
+    const { month, overdue } = bucket(expectedDate, today)
+
+    if (breakdown.totalCents === 0) {
       // No rate card, no rates, or both clamped from negative — a real $0
       // projection the page never surfaced. List it instead of adding a
       // silent no-op inflow row.
       notProjected.push({ showId: show.id, name: show.name, reason: 'no rate' })
-      continue
+    } else {
+      inflows.push({ month, amountCents: breakdown.totalCents, label: `${show.name} (projected)`, overdue })
     }
 
-    let lastDay = show.days[0].date
-    for (const d of show.days) if (d.date > lastDay) lastDay = d.date
-
-    const baseDate = addDays(lastDay, assumptions.billingLagDays)
-    const expectedDate = addDays(baseDate, lagDaysFor(show.client_id))
-    const { month, overdue } = bucket(expectedDate, today)
-    inflows.push({ month, amountCents, label: `${show.name} (projected)`, overdue })
+    // Every open, dated show gets a row here — even the $0 one above — so
+    // the per-show table never hides a show inflows or notProjected didn't
+    // separately surface. totalCents/landsMonth are the exact figures just
+    // computed above, not a second pass, so this can never drift from inflows.
+    showProjections.push({
+      showId: show.id,
+      name: show.name,
+      firstDay,
+      lastDay,
+      dayCents: breakdown.dayCents,
+      travelCents: breakdown.travelCents,
+      pmCents: breakdown.pmCents,
+      totalCents: breakdown.totalCents,
+      travelAssumed: breakdown.travelAssumed,
+      landsMonth: month,
+    })
   }
+
+  showProjections.sort((a, b) => {
+    if (a.firstDay !== b.firstDay) return a.firstDay < b.firstDay ? -1 : 1
+    if (a.name !== b.name) return a.name < b.name ? -1 : 1
+    return 0
+  })
 
   inflows.sort((a, b) => {
     if (a.month !== b.month) return a.month < b.month ? -1 : 1
@@ -396,9 +458,5 @@ export function buildForecast(input: {
     }
   }
 
-  const payLags = [...payLagByClient.values()].sort((a, b) => (
-    a.clientId < b.clientId ? -1 : a.clientId > b.clientId ? 1 : 0
-  ))
-
-  return { months, coveredThrough, beyondHorizon, bookedThrough, inflows, payLags, notProjected }
+  return { months, coveredThrough, beyondHorizon, bookedThrough, inflows, notProjected, showProjections }
 }

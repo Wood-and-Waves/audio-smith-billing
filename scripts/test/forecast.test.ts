@@ -5,11 +5,16 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  projectedShowCents, payLagFor, computeOverheadCents, buildForecast, HORIZON_MONTHS,
+  projectedShowCents, stateOf, computeOverheadCents, buildForecast, HORIZON_MONTHS, PM_FORECAST_HOURS,
 } from '../../lib/forecast.ts'
 import type {
   ForecastShow, ForecastShowDay, ForecastInvoice, ForecastClient, ForecastAssumptions,
 } from '../../lib/forecast.ts'
+
+// Dan's configured home state for every fixture below, matching the client()
+// factory's implicit Chicago-area business — 'FL'-located shows are the
+// out-of-state case throughout this file.
+const HOME_STATE = 'IL'
 
 const day = (over: Partial<ForecastShowDay> = {}): ForecastShowDay => ({
   date: '2026-09-01', travel_in: false, travel_out: false, pay_as_half_day: false, ...over,
@@ -18,6 +23,7 @@ const day = (over: Partial<ForecastShowDay> = {}): ForecastShowDay => ({
 const show = (over: Partial<ForecastShow> = {}): ForecastShow => ({
   id: 's1', name: 'Willow Creek', client_id: 'c1', status: 'open',
   day_rate_cents: 100000, travel_rate_cents: 20000,
+  pm_rate_cents: 0, pm_role: false, location: null,
   days: [day()], ...over,
 })
 
@@ -35,11 +41,43 @@ const assumptions = (over: Partial<ForecastAssumptions> = {}): ForecastAssumptio
 })
 
 // ---------------------------------------------------------------------------
-// projectedShowCents
+// stateOf
+
+test('stateOf parses the trailing two-letter state from a comma-separated location', () => {
+  assert.equal(stateOf('Orlando, FL'), 'FL')
+  assert.equal(stateOf('Chicago, IL '), 'IL')
+  assert.equal(stateOf('South Barrington, IL'), 'IL')
+})
+
+test('stateOf uses only the LAST comma-separated token — extra commas do not confuse it', () => {
+  assert.equal(stateOf('a, b, IL'), 'IL')
+})
+
+test('stateOf is case-insensitive on the way in — a lowercase abbreviation still resolves', () => {
+  assert.equal(stateOf('orlando, fl'), 'FL')
+})
+
+test('stateOf returns null for null, empty, whitespace-only, or comma-less text', () => {
+  assert.equal(stateOf(null), null)
+  assert.equal(stateOf(''), null)
+  assert.equal(stateOf('   '), null)
+  assert.equal(stateOf('Somewhere'), null)
+})
+
+test('stateOf returns null when the trailing token is not exactly two A-Z letters '
+  + '(a trailing period, or anything longer/shorter)', () => {
+  assert.equal(stateOf('Orlando, FL.'), null)
+  assert.equal(stateOf('Orlando, Florida'), null)
+  assert.equal(stateOf('Orlando, F'), null)
+  assert.equal(stateOf('Orlando, '), null)
+})
+
+// ---------------------------------------------------------------------------
+// projectedShowCents — day/half-day arithmetic (unchanged doctrine)
 
 test('a plain two-day show bills two full days, no travel', () => {
   const s = show({ days: [day({ date: '2026-09-01' }), day({ date: '2026-09-02' })] })
-  assert.equal(projectedShowCents(s), 200000)
+  assert.equal(projectedShowCents(s, HOME_STATE), 200000)
 })
 
 test('a half day bills at day_rate/2, rounded', () => {
@@ -48,7 +86,7 @@ test('a half day bills at day_rate/2, rounded', () => {
     days: [day({ date: '2026-09-01' }), day({ date: '2026-09-02', pay_as_half_day: true })],
   })
   // full day 10001 + half round(10001/2)=round(5000.5)=5001
-  assert.equal(projectedShowCents(s), 10001 + 5001)
+  assert.equal(projectedShowCents(s, HOME_STATE), 10001 + 5001)
 })
 
 test('travel legs add on top of the day, one leg per flag', () => {
@@ -56,17 +94,17 @@ test('travel legs add on top of the day, one leg per flag', () => {
     day_rate_cents: 100000, travel_rate_cents: 20000,
     days: [day({ date: '2026-09-01', travel_in: true, travel_out: true })],
   })
-  assert.equal(projectedShowCents(s), 100000 + 2 * 20000)
+  assert.equal(projectedShowCents(s, HOME_STATE), 100000 + 2 * 20000)
 })
 
 test('zero rates project zero, no crash', () => {
   const s = show({ day_rate_cents: 0, travel_rate_cents: 0, days: [day({ travel_in: true })] })
-  assert.equal(projectedShowCents(s), 0)
+  assert.equal(projectedShowCents(s, HOME_STATE), 0)
 })
 
 test('negative rates project zero rather than a negative amount', () => {
   const s = show({ day_rate_cents: -50000, travel_rate_cents: -1000, days: [day({ travel_in: true })] })
-  assert.equal(projectedShowCents(s), 0)
+  assert.equal(projectedShowCents(s, HOME_STATE), 0)
 })
 
 test('an hourly show bills the same as a day-rate show off the same frozen day_rate_cents', () => {
@@ -75,110 +113,112 @@ test('an hourly show bills the same as a day-rate show off the same frozen day_r
   // arithmetic applies with no special case.
   const dayRateShow = show({ day_rate_cents: 84500, travel_rate_cents: 15000, days: [day()] })
   const hourlyShapedShow = show({ id: 's2', day_rate_cents: 84500, travel_rate_cents: 15000, days: [day()] })
-  assert.equal(projectedShowCents(hourlyShapedShow), projectedShowCents(dayRateShow))
+  assert.equal(projectedShowCents(hourlyShapedShow, HOME_STATE), projectedShowCents(dayRateShow, HOME_STATE))
 })
 
 test('a show with no scheduled days projects zero, no crash', () => {
   const s = show({ days: [] })
-  assert.equal(projectedShowCents(s), 0)
+  assert.equal(projectedShowCents(s, HOME_STATE), 0)
 })
 
 // ---------------------------------------------------------------------------
-// payLagFor
+// projectedShowCents — assumed travel legs (out-of-state rule + double-count guard)
 
-test('pay lag is learned as the median of three linked invoices sent within a year', () => {
-  const invoices = [
-    invoice({ id: 'i1', linked: true, sent_at: '2026-06-01T00:00:00Z', paid_at: '2026-06-28' }), // 27
-    invoice({ id: 'i2', linked: true, sent_at: '2026-06-05T00:00:00Z', paid_at: '2026-07-07' }), // 32
-    invoice({ id: 'i3', linked: true, sent_at: '2026-06-10T00:00:00Z', paid_at: '2026-07-17' }), // 37
-  ]
-  const result = payLagFor('c1', invoices, [client()], '2026-08-21')
-  assert.deepEqual(result, { clientId: 'c1', days: 32, source: 'learned', sampleSize: 3 })
+test('an out-of-state show with no flagged legs assumes 2 legs at its own travel rate', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Orlando, FL',
+    days: [day({ date: '2026-09-01' })],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 100000 + 2 * 25000)
 })
 
-test('the Journey case — ancient settlements outside the 365-day window fall back to terms', () => {
-  // Every sent_at below is well over a year before today (2026-08-21) —
-  // the shape of Dan's real Journey Church invoices, settled 2024-25 after
-  // sitting for a year-plus. Learning from these would model Journey as a
-  // two-year payer, so the window excludes them all.
-  const invoices = [
-    invoice({ id: 'i1', linked: true, sent_at: '2024-08-01T00:00:00Z', paid_at: '2025-08-29' }),
-    invoice({ id: 'i2', linked: true, sent_at: '2024-05-01T00:00:00Z', paid_at: '2025-08-31' }),
-    invoice({ id: 'i3', linked: true, sent_at: '2024-01-01T00:00:00Z', paid_at: '2025-10-13' }),
-    invoice({ id: 'i4', linked: true, sent_at: '2023-08-01T00:00:00Z', paid_at: '2025-08-23' }),
-  ]
-  const result = payLagFor('c1', invoices, [client({ terms_days: 30 })], '2026-08-21')
-  assert.deepEqual(result, { clientId: 'c1', days: 30, source: 'terms', sampleSize: 0 })
+test('a same-state show assumes no travel legs', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000, location: 'Chicago, IL',
+    days: [day({ date: '2026-09-01' })],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 100000)
 })
 
-test('one qualifying sample is not enough — falls back to terms', () => {
-  const invoices = [
-    invoice({ id: 'i1', linked: true, sent_at: '2026-06-01T00:00:00Z', paid_at: '2026-06-28' }),
-  ]
-  const result = payLagFor('c1', invoices, [client({ terms_days: 45 })], '2026-08-21')
-  assert.deepEqual(result, { clientId: 'c1', days: 45, source: 'terms', sampleSize: 1 })
+test('a blank location assumes no travel legs', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000, location: '',
+    days: [day({ date: '2026-09-01' })],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 100000)
 })
 
-test('an unlinked invoice with a paid_at is ignored — Mark Paid is not a real payment date', () => {
-  const invoices = [
-    invoice({ id: 'i1', linked: false, sent_at: '2026-06-01T00:00:00Z', paid_at: '2026-06-28' }),
-    invoice({ id: 'i2', linked: false, sent_at: '2026-06-05T00:00:00Z', paid_at: '2026-07-07' }),
-  ]
-  const result = payLagFor('c1', invoices, [client({ terms_days: 30 })], '2026-08-21')
-  assert.deepEqual(result, { clientId: 'c1', days: 30, source: 'terms', sampleSize: 0 })
+test('flagged travel legs win over the (absent) out-of-state assumption — the double-count guard', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000, location: null,
+    days: [day({ date: '2026-09-01', travel_in: true, travel_out: true })],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 100000 + 2 * 25000)
 })
 
-test('an invoice missing sent_at or paid_at is excluded from the sample', () => {
-  const invoices = [
-    invoice({ id: 'i1', linked: true, sent_at: null, paid_at: '2026-06-28' }),
-    invoice({ id: 'i2', linked: true, sent_at: '2026-06-05T00:00:00Z', paid_at: null }),
-    invoice({ id: 'i3', linked: true, sent_at: '2026-06-10T00:00:00Z', paid_at: '2026-07-10' }),
-  ]
-  const result = payLagFor('c1', invoices, [client({ terms_days: 30 })], '2026-08-21')
-  assert.deepEqual(result, { clientId: 'c1', days: 30, source: 'terms', sampleSize: 1 })
+test('a show that is BOTH out-of-state AND has flagged travel legs uses the flags only — no double count', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 25000,
+    location: 'Orlando, FL', // out of state — would independently justify 2 assumed legs
+    days: [
+      day({ date: '2026-09-01', travel_in: true }),
+      day({ date: '2026-09-02', travel_in: true, travel_out: true }),
+    ], // 3 flagged legs
+  })
+  // If the guard were broken this would double-count to 3 (flagged) + 2 (assumed) = 5 legs.
+  assert.equal(projectedShowCents(s, HOME_STATE), 100000 * 2 + 3 * 25000)
 })
 
-test('an even-sized sample averages the two middle values, rounded to a whole day', () => {
-  const invoices = [
-    invoice({ id: 'i1', linked: true, sent_at: '2026-06-01T00:00:00Z', paid_at: '2026-06-26' }), // 25
-    invoice({ id: 'i2', linked: true, sent_at: '2026-06-02T00:00:00Z', paid_at: '2026-06-30' }), // 28
-    invoice({ id: 'i3', linked: true, sent_at: '2026-06-03T00:00:00Z', paid_at: '2026-07-04' }), // 31
-    invoice({ id: 'i4', linked: true, sent_at: '2026-06-04T00:00:00Z', paid_at: '2026-07-09' }), // 35
-  ]
-  // sorted: 25, 28, 31, 35 -> middle two 28,31 -> avg 29.5 -> round -> 30
-  const result = payLagFor('c1', invoices, [client()], '2026-08-21')
-  assert.deepEqual(result, { clientId: 'c1', days: 30, source: 'learned', sampleSize: 4 })
+// ---------------------------------------------------------------------------
+// projectedShowCents — PM hours
+
+test('PM adds exactly 4 x pm_rate_cents once, regardless of day count (2-day show)', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 0, pm_rate_cents: 5000, pm_role: true,
+    days: [day({ date: '2026-09-01' }), day({ date: '2026-09-02' })],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 2 * 100000 + PM_FORECAST_HOURS * 5000)
 })
 
-test('the 365-day window is a boundary: exactly 365 days in, 366 days out', () => {
-  // today 2026-08-21. 365 days back = 2025-08-21. 366 days back = 2025-08-20.
-  const invoices = [
-    invoice({ id: 'i1', linked: true, sent_at: '2025-08-21T00:00:00Z', paid_at: '2025-09-20' }), // 30
-    invoice({ id: 'i2', linked: true, sent_at: '2025-08-21T00:00:00Z', paid_at: '2025-09-22' }), // 32
-  ]
-  const inWindow = payLagFor('c1', invoices, [client()], '2026-08-21')
-  assert.deepEqual(inWindow, { clientId: 'c1', days: 31, source: 'learned', sampleSize: 2 })
-
-  const outside = payLagFor('c1', [
-    invoice({ id: 'i1', linked: true, sent_at: '2025-08-20T00:00:00Z', paid_at: '2025-09-19' }),
-    invoice({ id: 'i2', linked: true, sent_at: '2025-08-20T00:00:00Z', paid_at: '2025-09-21' }),
-  ], [client({ terms_days: 30 })], '2026-08-21')
-  assert.deepEqual(outside, { clientId: 'c1', days: 30, source: 'terms', sampleSize: 0 })
+test('PM stays a flat once-per-show fee across a much longer run (6 days)', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 0, pm_rate_cents: 5000, pm_role: true,
+    days: [1, 2, 3, 4, 5, 6].map((n) => day({ date: `2026-09-0${n}` })),
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 6 * 100000 + PM_FORECAST_HOURS * 5000)
 })
 
-test('a client missing from the roster falls back to zero terms rather than throwing', () => {
-  const result = payLagFor('unknown-client', [], [client({ id: 'c1' })], '2026-08-21')
-  assert.deepEqual(result, { clientId: 'unknown-client', days: 0, source: 'terms', sampleSize: 0 })
+test('pm_role false adds nothing even with a nonzero pm_rate_cents', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 0, pm_rate_cents: 5000, pm_role: false,
+    days: [day({ date: '2026-09-01' })],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 100000)
 })
 
-test('samples from other clients never leak into this client\'s median', () => {
-  const invoices = [
-    invoice({ id: 'i1', client_id: 'c1', linked: true, sent_at: '2026-06-01T00:00:00Z', paid_at: '2026-06-11' }), // 10
-    invoice({ id: 'i2', client_id: 'c1', linked: true, sent_at: '2026-06-02T00:00:00Z', paid_at: '2026-06-13' }), // 11
-    invoice({ id: 'i3', client_id: 'c2', linked: true, sent_at: '2026-06-01T00:00:00Z', paid_at: '2026-09-01' }), // huge, other client
-  ]
-  const result = payLagFor('c1', invoices, [client({ id: 'c1' }), client({ id: 'c2' })], '2026-08-21')
-  assert.deepEqual(result, { clientId: 'c1', days: 11, source: 'learned', sampleSize: 2 })
+test('pm_role true with a $0 pm_rate_cents adds nothing, and is not a "no rate" exclusion', () => {
+  const s = show({
+    id: 's1', name: 'Willow Creek', status: 'open',
+    day_rate_cents: 100000, travel_rate_cents: 0, pm_rate_cents: 0, pm_role: true,
+    days: [day({ date: '2026-09-01' })],
+  })
+  assert.equal(projectedShowCents(s, HOME_STATE), 100000)
+  const result = buildForecast(baseInput({ shows: [s] }))
+  assert.equal(result.notProjected.length, 0)
+  assert.equal(result.inflows.length, 1)
+})
+
+test('a full example — 5-day out-of-state PM show — matches hand arithmetic', () => {
+  const s = show({
+    day_rate_cents: 100000, travel_rate_cents: 20000, pm_rate_cents: 5000, pm_role: true,
+    location: 'Orlando, FL',
+    days: [1, 2, 3, 4, 5].map((n) => day({ date: `2026-09-0${n}` })),
+  })
+  // day: 5 * 100000 = 500000
+  // travel (assumed, out-of-state, no flags): 2 * 20000 = 40000
+  // pm: 4 * 5000 = 20000
+  // total = 560000
+  assert.equal(projectedShowCents(s, HOME_STATE), 560000)
 })
 
 // ---------------------------------------------------------------------------
@@ -266,6 +306,7 @@ test('overhead spans a year boundary correctly', () => {
 const baseInput = (over: Partial<Parameters<typeof buildForecast>[0]> = {}) => ({
   today: '2026-08-21',
   startingBalanceCents: 1000000,
+  homeState: HOME_STATE,
   shows: [] as ForecastShow[],
   invoices: [] as ForecastInvoice[],
   clients: [client()] as ForecastClient[],
@@ -311,7 +352,7 @@ test('surplus carries forward into the next month\'s balance rather than resetti
     invoices: [bigInvoice],
     assumptions: assumptions({ overheadCents: 100000, takeHomeCents: 100000, taxRateBp: 0, billingLagDays: 0 }),
   }))
-  // client() terms_days=30, no learned lag -> sent_at (Chicago date 2026-08-13)
+  // client() terms_days=30 -> sent_at (Chicago date 2026-08-13)
   // + 30 days = 2026-09-12 -> month 2026-09 (index 1).
   // Month 0 (today 2026-08-21) is partial: August has 31 days, 11 remain
   // counting today -> fraction 11/31. overhead0 = round(100000*11/31) =
@@ -427,7 +468,7 @@ test('bookedThrough is the latest month of booked WORK, never a lag-shifted cash
   })
   const result = buildForecast(baseInput({ invoices: [nearInvoice], shows: [farShow] }))
   // farShow's own last scheduled day is 2027-01-10 -> month 2027-01. Unlike
-  // its cash-landing inflow (last day + billingLag(7) + payLag(terms 30) =
+  // its cash-landing inflow (last day + billingLag(7) + terms(30) =
   // 2027-02-16, month 2027-02), bookedThrough is never lag-shifted — it's
   // the month Dan's calendar actually goes quiet, not the month the money
   // from that quiet calendar finally lands.
@@ -493,7 +534,7 @@ test('inflows are sorted by month ascending, then label', () => {
     invoices: [invA, invB],
     assumptions: assumptions({ billingLagDays: 0 }),
   }))
-  // both land the same month (same sent_at + same learned/terms lag), so tie-break by label:
+  // both land the same month (same sent_at + same terms), so tie-break by label:
   // "#100 Clinique" < "#200 Clinique"
   assert.equal(result.inflows.length, 2)
   assert.deepEqual(result.inflows.map((f) => f.label), ['#100 Clinique', '#200 Clinique'])
@@ -534,6 +575,7 @@ test('a show with no scheduled days is listed in notProjected instead of vanishi
   const result = buildForecast(baseInput({ shows: [emptyShow] }))
   assert.equal(result.inflows.length, 0)
   assert.deepEqual(result.notProjected, [{ showId: 's1', name: 'Willow Creek', reason: 'no days' }])
+  assert.equal(result.showProjections.length, 0) // nothing to date the breakdown from either
 })
 
 test('a show with days but a zero projection (no rate card, no rates) is listed in notProjected '
@@ -554,42 +596,7 @@ test('an empty forecast (no shows, no invoices) still walks the months on overhe
   }))
   assert.ok(result.months.length > 0)
   assert.equal(result.months[0].incomeCents, 0)
-  assert.equal(result.payLags.length, 0)
-})
-
-test('the pay-lag list only covers clients with actual booked work in this forecast', () => {
-  const irrelevantClient = client({ id: 'c2', name: 'Nobody', terms_days: 15 })
-  const result = buildForecast(baseInput({
-    clients: [client(), irrelevantClient],
-    invoices: [invoice({ id: 'i1', status: 'sent', sent_at: '2026-08-01T00:00:00Z' })],
-  }))
-  assert.deepEqual(result.payLags.map((p) => p.clientId), ['c1'])
-})
-
-// ---------------------------------------------------------------------------
-// M1 — reachable learned pay lags. The page's invoice fetch used to filter
-// to .in('status', ['draft','sent']) only, so no invoice it ever supplied
-// to buildForecast could carry a paid_at (only written alongside
-// status='paid') — payLagFor's `linked && paid_at !== null` condition was
-// unreachable from the page, and every client silently fell back to
-// terms_days no matter how many times they'd actually paid. This test is
-// page-shaped on purpose — it supplies 'paid' rows the way the FIXED page's
-// .in('status', ['draft','sent','paid']) fetch now does — to lock in the
-// contract buildForecast has always honored (it never filtered its own
-// input by status for pay-lag learning) so that fetch can't silently regress.
-test('a page-shaped invoice set that includes paid+linked invoices produces a learned pay lag', () => {
-  const settled1 = invoice({
-    id: 'i1', status: 'paid', linked: true, sent_at: '2026-06-01T00:00:00Z', paid_at: '2026-06-28', // 27
-  })
-  const settled2 = invoice({
-    id: 'i2', status: 'paid', linked: true, sent_at: '2026-06-05T00:00:00Z', paid_at: '2026-07-07', // 32
-  })
-  const stillOpen = invoice({ id: 'i3', status: 'sent', sent_at: '2026-08-14T00:00:00Z', total_cents: 100000 })
-  const result = buildForecast(baseInput({ invoices: [settled1, settled2, stillOpen] }))
-  const lag = result.payLags.find((p) => p.clientId === 'c1')
-  assert.ok(lag)
-  assert.equal(lag!.source, 'learned')
-  assert.equal(lag!.sampleSize, 2)
+  assert.equal(result.showProjections.length, 0)
 })
 
 test('tax is computed on profit, never below zero, at the configured basis points', () => {
@@ -634,4 +641,135 @@ test('tax rounds a genuine .5-cent boundary up — Math.round\'s argument here i
   // (1100010 - 100000) * 1500 / 10000 = 1000010 * 0.15 = 150001.5 exactly —
   // the pre-rounding product lands precisely on the .5-cent boundary.
   assert.equal(septMonth!.taxCents, 150002)
+})
+
+// ---------------------------------------------------------------------------
+// Pay lag = terms_days, everywhere, always. No learning path remains: even a
+// client with a rich history of settled, deposit-linked invoices projects
+// off its plain terms_days now — the previous "learned median" machinery
+// (and the 365-day window built to guard it) is gone entirely.
+
+test('every client\'s pay lag is simply terms_days now — settled, deposit-linked history '
+  + 'that would once have taught a learned median has no effect', () => {
+  const settledInvoices = [
+    // Under the old model these two would have taught a learned median of
+    // 29.5 -> 30 days for this client, overriding its stated terms.
+    invoice({ id: 'i1', status: 'paid', linked: true, sent_at: '2026-06-01T00:00:00Z', paid_at: '2026-06-28' }),
+    invoice({ id: 'i2', status: 'paid', linked: true, sent_at: '2026-06-05T00:00:00Z', paid_at: '2026-07-07' }),
+  ]
+  const openInvoice = invoice({
+    id: 'i3', status: 'sent', sent_at: '2026-08-14T00:00:00Z', total_cents: 100000, client_id: 'c1',
+  })
+  const result = buildForecast(baseInput({
+    clients: [client({ id: 'c1', terms_days: 45 })],
+    invoices: [...settledInvoices, openInvoice],
+    assumptions: assumptions({ billingLagDays: 0 }),
+  }))
+  const inflow = result.inflows.find((f) => f.label === '#391 Clinique')
+  assert.ok(inflow)
+  // sent_at 2026-08-14T00:00:00Z reads 2026-08-13 in Chicago; +0 billing lag
+  // + 45 terms (NOT the ~30-day learned median the old model would have
+  // used) = 2026-09-27.
+  assert.equal(inflow!.month, '2026-09')
+})
+
+test('an invoice for a client missing from the roster falls back to 30-day terms, not zero, '
+  + 'and does not throw', () => {
+  const orphan = invoice({
+    id: 'i1', status: 'sent', sent_at: '2026-08-14T00:00:00Z', total_cents: 50000, client_id: 'ghost',
+  })
+  const result = buildForecast(baseInput({
+    invoices: [orphan],
+    assumptions: assumptions({ billingLagDays: 0 }),
+  }))
+  assert.equal(result.inflows.length, 1)
+  // Chicago date 2026-08-13 + 0 billing lag + 30 fallback terms = 2026-09-12
+  assert.equal(result.inflows[0].month, '2026-09')
+})
+
+// ---------------------------------------------------------------------------
+// showProjections — the per-show breakdown the forecast screen lists.
+
+test('showProjections reconciles exactly with inflows and orders by firstDay then name', () => {
+  const showA = show({
+    id: 's-a', name: 'Zephyr', client_id: 'c1',
+    day_rate_cents: 100000, travel_rate_cents: 20000,
+    location: 'Orlando, FL',
+    days: [day({ date: '2026-09-05' }), day({ date: '2026-09-06' })],
+  })
+  const showB = show({
+    id: 's-b', name: 'Alpha', client_id: 'c1',
+    day_rate_cents: 50000, travel_rate_cents: 10000,
+    days: [day({ date: '2026-09-01' })],
+  })
+  const result = buildForecast(baseInput({ shows: [showA, showB] }))
+
+  assert.equal(result.showProjections.length, 2)
+  // ordered by firstDay ascending: showB (09-01) before showA (09-05)
+  assert.deepEqual(result.showProjections.map((p) => p.showId), ['s-b', 's-a'])
+
+  for (const proj of result.showProjections) {
+    const inflow = result.inflows.find((f) => f.label === `${proj.name} (projected)`)
+    assert.ok(inflow)
+    assert.equal(proj.totalCents, inflow!.amountCents)
+    assert.equal(proj.landsMonth, inflow!.month)
+  }
+
+  const zephyr = result.showProjections.find((p) => p.showId === 's-a')!
+  assert.equal(zephyr.dayCents, 200000)
+  assert.equal(zephyr.travelCents, 40000)
+  assert.equal(zephyr.travelAssumed, true)
+  assert.equal(zephyr.totalCents, 240000)
+  assert.equal(zephyr.firstDay, '2026-09-05')
+  assert.equal(zephyr.lastDay, '2026-09-06')
+})
+
+test('travelAssumed is true only when legs came from the out-of-state rule, never from flags', () => {
+  const outOfState = show({
+    id: 's-out', name: 'OutOfState Show', client_id: 'c1',
+    day_rate_cents: 100000, travel_rate_cents: 20000,
+    location: 'Orlando, FL',
+    days: [day({ date: '2026-09-01' })],
+  })
+  const flagged = show({
+    id: 's-flag', name: 'Flagged Show', client_id: 'c1',
+    day_rate_cents: 100000, travel_rate_cents: 20000,
+    location: 'Orlando, FL', // also out of state — the guard's whole point
+    days: [day({ date: '2026-09-05', travel_in: true, travel_out: true })],
+  })
+  const result = buildForecast(baseInput({ shows: [outOfState, flagged] }))
+  const outProj = result.showProjections.find((p) => p.showId === 's-out')!
+  const flagProj = result.showProjections.find((p) => p.showId === 's-flag')!
+  assert.equal(outProj.travelAssumed, true)
+  assert.equal(flagProj.travelAssumed, false)
+  assert.equal(flagProj.travelCents, 2 * 20000) // same total as the assumption, but sourced from flags
+})
+
+test('a zero-total show still appears in showProjections (as $0) even though it is excluded '
+  + 'from inflows and listed in notProjected — nothing is invisible', () => {
+  const zeroShow = show({
+    id: 's1', name: 'Willow Creek', status: 'open',
+    day_rate_cents: 0, travel_rate_cents: 0, pm_rate_cents: 0, pm_role: false,
+    days: [day({ date: '2026-09-01' })],
+  })
+  const result = buildForecast(baseInput({ shows: [zeroShow] }))
+  assert.equal(result.inflows.length, 0)
+  assert.deepEqual(result.notProjected, [{ showId: 's1', name: 'Willow Creek', reason: 'no rate' }])
+  assert.equal(result.showProjections.length, 1)
+  assert.equal(result.showProjections[0].showId, 's1')
+  assert.equal(result.showProjections[0].totalCents, 0)
+})
+
+test('a multi-day PM show contributes one showProjections row with pmCents counted once', () => {
+  const pmShow = show({
+    id: 's1', name: 'Big PM Show', client_id: 'c1',
+    day_rate_cents: 100000, travel_rate_cents: 0, pm_rate_cents: 7500, pm_role: true,
+    days: [1, 2, 3, 4].map((n) => day({ date: `2026-09-0${n}` })),
+  })
+  const result = buildForecast(baseInput({ shows: [pmShow] }))
+  assert.equal(result.showProjections.length, 1)
+  const proj = result.showProjections[0]
+  assert.equal(proj.dayCents, 4 * 100000)
+  assert.equal(proj.pmCents, PM_FORECAST_HOURS * 7500)
+  assert.equal(proj.totalCents, 4 * 100000 + PM_FORECAST_HOURS * 7500)
 })
