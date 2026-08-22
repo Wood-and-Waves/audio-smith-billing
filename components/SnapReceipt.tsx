@@ -67,6 +67,15 @@ type ConfirmScreen = {
 
 type Screen =
   | { kind: 'picker'; onChoose: (show: PickableShow) => void }
+  /**
+   * Saved, and offering the next shot. This screen exists for one reason:
+   * iOS Safari only opens a file picker during live user activation, and the
+   * gesture that tapped "Add + another" has expired by the time `addExpense`
+   * resolves. Calling .click() from inside that async callback saves the
+   * expense and then silently does nothing — the worst shape of bug, on the
+   * one device this feature is FOR. So the next tap becomes the gesture.
+   */
+  | { kind: 'saved'; show: PickableShow }
   | { kind: 'adjust'; show: PickableShow; file: File; url: string; quad: Quad }
   | {
       kind: 'working'
@@ -337,8 +346,10 @@ export default function SnapReceipt({ shows, today }: { shows: PickableShow[]; t
       if ('error' in result) { setError(result.error); return } // no row created; capture stays for retry
 
       if (andAnother) {
-        setScreen(null)
-        beginCapture(show)
+        // NOT beginCapture() — see the 'saved' screen's comment. The camera
+        // has to open from a fresh tap, not from here.
+        setScreen({ kind: 'saved', show })
+        router.refresh()
       } else {
         setScreen(null)
         router.refresh()
@@ -417,6 +428,45 @@ export default function SnapReceipt({ shows, today }: { shows: PickableShow[]; t
             >
               Cancel
             </button>
+          </div>
+        </div>
+      )}
+
+      {screen?.kind === 'saved' && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Receipt added"
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setScreen(null) }}
+        >
+          <div
+            ref={panelRef}
+            tabIndex={-1}
+            className="w-full max-w-sm bg-bg border border-line rounded-field p-5 outline-none"
+            onKeyDown={(e) => { if (e.key === 'Escape') setScreen(null) }}
+          >
+            <h2 className="eyebrow mb-1">Added</h2>
+            <p className="text-sm text-muted mb-5">{screen.show.name}</p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                // This tap IS the user activation the file input needs.
+                onClick={() => beginCapture(screen.show)}
+                className="px-5 py-2.5 bg-accent-surface text-accent-ink font-bold uppercase
+                           tracking-wider text-sm rounded-field hover:opacity-90 transition-opacity"
+              >
+                Take another
+              </button>
+              <button
+                type="button"
+                onClick={() => setScreen(null)}
+                className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wider
+                           rounded-field border border-line text-muted hover:text-ink"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}

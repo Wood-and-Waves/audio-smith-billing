@@ -30,18 +30,29 @@ export default async function AppShell({
    *  so navigation doesn't jump between pages. */
   wide?: boolean
 }) {
-  // Feeds the mobile header's "snap a receipt" button (components/SnapReceipt.tsx):
-  // which of the owner's shows count as "today" or belong in its picker.
-  // AppShell renders on EVERY page in the app, so this query runs on every
-  // render — deliberately kept to the three columns and the one join
-  // SnapReceipt actually needs (no punches, no expenses, no PM entries).
-  // Auth relies on RLS + the same "no user, no rows" fallback every read in
-  // this file's sibling actions uses — there is no redirect here because
-  // AppShell itself is not the place any page currently gates sign-in.
+  // Feeds the mobile header's "snap a receipt" button
+  // (components/SnapReceipt.tsx): which show counts as "today", and what goes
+  // in its picker.
+  //
+  // This runs on EVERY page render, which is a real cost and a deliberate
+  // one: the camera has to open from the same tap that opened it, and iOS
+  // Safari only honours that during live user activation. Awaiting a fetch
+  // first would save the expense and then silently fail to reopen the camera
+  // — so the shows must already be here when the button is tapped.
+  //
+  // Bounded two ways to keep that cost flat: three columns and one join (no
+  // punches, expenses or PM entries), and OPEN shows only. The second is not
+  // just an optimisation — a billed show's expenses are frozen and
+  // `addExpense` refuses them, so showPicker never offers one anyway. It also
+  // means the set shrinks as shows get billed rather than growing forever.
+  //
+  // Auth relies on RLS plus the "no user, no rows" fallback its sibling reads
+  // use; AppShell is not where any page gates sign-in.
   const supabase = await createClient()
   const { data: showRows } = await supabase
     .from('shows')
     .select('id, name, status, show_days(date)')
+    .eq('status', 'open')
   const shows: PickableShow[] = (showRows ?? []).map((s) => ({
     id: s.id as string,
     name: s.name as string,
