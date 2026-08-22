@@ -9,6 +9,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   formatDateShort, formatDateLong, addDays, todayInChicago, isPlainDate,
+  WEEKDAYS, weekdayIndex, monthLabel, addMonths, monthGrid,
 } from '../../lib/dates.ts'
 
 test('a plain date renders as the date it is, west of UTC', () => {
@@ -74,4 +75,68 @@ test('isPlainDate rejects everything addDays cannot handle', () => {
 
   assert.equal(isPlainDate('2026-08-10'), true)
   assert.equal(isPlainDate('2024-02-29'), true)   // a real leap day
+})
+
+// ---------------------------------------------------------------------------
+// Month-grid helpers, added for the calendar wave. Same UTC-pinned doctrine
+// as the rest of this file: build with Date.UTC(y, m-1, d), read with
+// getUTC*, never let the machine's local timezone touch these.
+
+test('WEEKDAYS lists the seven day abbreviations, Sunday first', () => {
+  assert.deepEqual(WEEKDAYS, ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'])
+})
+
+test('monthLabel renders a full month name and year', () => {
+  assert.equal(monthLabel('2026-08'), 'August 2026')
+  assert.equal(monthLabel('2026-01'), 'January 2026')
+  assert.equal(monthLabel('2026-12'), 'December 2026')
+})
+
+test('addMonths wraps the year both directions', () => {
+  assert.equal(addMonths('2026-01', -1), '2025-12')
+  assert.equal(addMonths('2026-12', 1), '2027-01')
+  assert.equal(addMonths('2026-08', -1), '2026-07')
+  assert.equal(addMonths('2026-08', 6), '2027-02')
+})
+
+test('weekdayIndex is UTC-pinned — no machine-timezone drift', () => {
+  // 2026-08-01 is a Saturday (verified); the suite runs with TZ=America/Chicago
+  // (see package.json) specifically so a local-time bug here would show up.
+  assert.equal(weekdayIndex('2026-08-01'), 6)
+  assert.equal(weekdayIndex('2026-08-02'), 0) // Sunday
+  assert.equal(weekdayIndex('2026-01-01'), 4) // Thursday
+})
+
+test('monthGrid august 2026 runs sunday july twenty-sixth through saturday september fifth', () => {
+  // 2026-08-01 is a Saturday (verified), so the Sun-first grid needs a full
+  // leading week of July and spills into September to fill the last row.
+  const grid = monthGrid('2026-08')
+  assert.equal(grid.length, 6)
+  for (const row of grid) assert.equal(row.length, 7)
+  assert.equal(grid[0][0], '2026-07-26')
+  assert.equal(grid[0][6], '2026-08-01')
+  assert.equal(grid[5][6], '2026-09-05')
+})
+
+test('monthGrid pads a month that starts on Sunday with no leading days', () => {
+  // 2026-11-01 is a Sunday: the grid should start exactly on the 1st.
+  const grid = monthGrid('2026-11')
+  assert.equal(grid[0][0], '2026-11-01')
+  assert.equal(weekdayIndex('2026-11-01'), 0)
+})
+
+test('monthGrid rows are contiguous, Sunday-first, covering the whole month', () => {
+  const grid = monthGrid('2026-02') // short month, leap-adjacent
+  const flat = grid.flat()
+  // No gaps or repeats: consecutive calendar dates throughout.
+  for (let i = 1; i < flat.length; i++) {
+    assert.equal(addDays(flat[i - 1], 1), flat[i], `${flat[i - 1]} -> ${flat[i]}`)
+  }
+  // Every day of February 2026 is present exactly once.
+  for (let d = 1; d <= 28; d++) {
+    const iso = `2026-02-${String(d).padStart(2, '0')}`
+    assert.equal(flat.filter((x) => x === iso).length, 1, iso)
+  }
+  // Sunday-first: every row's first column is a Sunday.
+  for (const row of grid) assert.equal(weekdayIndex(row[0]), 0)
 })
