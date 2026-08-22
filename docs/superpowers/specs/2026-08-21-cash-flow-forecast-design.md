@@ -1,4 +1,4 @@
-> **Postscript (2026-08-22) — four changes after Dan used it.**
+> **Postscript (2026-08-22) — five changes after Dan used it.**
 > (1) **Learned pay lags are GONE.** Dan: *"The billing lags are usually
 > because I am not home when the check comes."* The lag the model learned was
 > an artifact of his mail, not client behaviour — so learning it taught the
@@ -6,20 +6,36 @@
 > (Net 30 across the board today). `payLagFor`, the 365-day window and the
 > Journey-anomaly reasoning below are all superseded; the section is kept for
 > the record of WHY it existed, not as a description of the code.
-> (2) **Out-of-state shows assume two travel legs** at that show's own
-> `travel_rate_cents` — but only when the show runs MORE THAN ONE DAY (a
-> single-day out-of-town gig is flown in and out the same day). "Out of
-> state" = the show's location names a different state than
-> `settings.home_state` (default IL); same-state shows are drives, which is
-> exactly the case a city-name test got wrong for South Barrington.
-> Explicitly flagged `travel_in`/`travel_out` legs always win over the
-> assumption.
+> (2) **Out-of-state shows assume two travel DAYS** — not two legs added on
+> top of every scheduled day. Dan: *"The standard practice is to have for a 6
+> day show, 2 travel days and 4 working days. That is the most
+> conservative. Sometimes we travel and work the same day which would be more
+> money. For the forecast, lets plan the more conservative."* Travel days are
+> part of the scheduled block: a day flagged `travel_in`/`travel_out` (either
+> or both) IS a travel day, and a day that's a travel day is never also a
+> work day. With nothing flagged, an out-of-state show (its location naming a
+> different state than `settings.home_state`, default IL — same-state shows
+> are drives, which is exactly the case a city-name test got wrong for South
+> Barrington) that runs MORE THAN ONE DAY is assumed to need its FIRST and
+> LAST scheduled day as travel — a single-day out-of-town gig is flown in and
+> out the same day, so it never gets the assumption. Every remaining
+> scheduled day is a work day. Explicitly flagged travel days always win over
+> the assumption. Literal consequence, deliberate: a 2-day out-of-state show
+> with nothing flagged is 2 travel days and ZERO work days — not
+> special-cased. An earlier version of this model added two travel legs ON
+> TOP of every scheduled day (a 6-day show billing 6 work days + 2 travel),
+> overstating every out-of-state show by two day-rates; that was a bug, now
+> fixed.
 > (3) **PM shows** carry `shows.pm_role`; when set, the projection adds a
 > flat 4 hours at the show's PM rate, once per show. Actual PM work still
 > bills from `pm_entries` — this is forecast-only.
 > (4) The forecast screen now lists **expected pay per show** with a
-> `5 days · 2 travel · 4h PM` breakdown and marks travel that was assumed
-> rather than flagged.
+> `4 days · 2 travel` breakdown (work days and travel days, which together
+> sum to the scheduled block) and marks travel that was assumed rather than
+> flagged.
+> (5) `ShowProjection.travelLegs` is renamed `travelDays`, and `dayCount` now
+> counts WORK days only (not every scheduled day) — `dayCount + travelDays`
+> always equals the show's scheduled day count.
 > Migration 0035 carries `shows.pm_role` and `settings.home_state`.
 
 # Cash-flow forecast and runway — design
