@@ -1,5 +1,5 @@
 import { formatUSD } from '@/lib/money'
-import type { CategoryMonth, TargetStatus } from '@/lib/budget'
+import type { CategoryMonth, CategoryTarget, TargetStatus } from '@/lib/budget'
 import TargetEditor from '@/components/TargetEditor'
 
 /**
@@ -105,26 +105,28 @@ function HalfCircleIcon() {
  * same read the status line gives in words — and only ever carry it
  * ALONGSIDE the words: `aria-label` restates the whole thing for a screen
  * reader, since color is exactly the kind of signal that must never be the
- * only one. Five states, straight off Task 7's own brief table:
+ * only one.
  *
- *   available < 0            -> danger, no glyph (overspent is loud enough
- *                                on the status line above; this pill just
- *                                needs to read as "not good")
- *   available > 0, met       -> good, filled check
- *   available > 0, not met   -> good, half circle (this bucket is also
- *                                where a category with NO target at all
- *                                lands, per the brief's own table — it only
- *                                distinguishes "met" from everything else
- *                                when available is positive, so an
- *                                untargeted category with money in it gets
- *                                the same half-circle as a partly-funded
- *                                one. Implemented exactly as specified;
- *                                flagged in Task 7's report since a
- *                                progress glyph on a category with no
- *                                target to progress toward reads a little
- *                                oddly)
- *   available === 0, target  -> accent-wash, outline check
- *   available === 0, no goal -> plain muted text, no glyph
+ * Six states. Task 7's original brief table split `available > 0` into only
+ * "target met" / "target not met", with no row for a category that carries
+ * no target at all — by elimination that category fell into "not met" and
+ * got the half-circle progress glyph, which points at progress toward
+ * nothing. This is the corrected table (dispatched as a fix, not a
+ * reinterpretation), with "no target" pulled out as its own row wherever it
+ * changes the rendering:
+ *
+ *   available < 0                    -> danger, no glyph (overspent is loud
+ *                                        enough on the status line above;
+ *                                        this pill just needs to read as
+ *                                        "not good")
+ *   available > 0, target, met       -> good, filled check
+ *   available > 0, target, not met   -> good, half circle
+ *   available > 0, no target         -> good, no glyph — money sitting in a
+ *                                        goalless category is a fine,
+ *                                        ordinary state; it reads as plain,
+ *                                        not as stalled progress
+ *   available === 0, target          -> accent-wash, outline check
+ *   available === 0, no target       -> plain muted text, no glyph
  *
  * "Met" is `status.kind === 'funded'` — the only TargetStatus variant that
  * can coexist with available > 0 AND a fully-satisfied target (see
@@ -148,9 +150,12 @@ function AvailablePill({ row }: { row: CategoryMonth }) {
     classes = 'bg-good/15 text-good'
     glyph = <CheckFilledIcon />
     label = `${formatUSD(cents)} available, target met`
-  } else if (cents > 0) {
+  } else if (cents > 0 && hasTarget) {
     classes = 'bg-good/15 text-good'
     glyph = <HalfCircleIcon />
+    label = `${formatUSD(cents)} available`
+  } else if (cents > 0) {
+    classes = 'bg-good/15 text-good'
     label = `${formatUSD(cents)} available`
   } else if (hasTarget) {
     classes = 'bg-accent-wash text-muted'
@@ -176,13 +181,25 @@ function AvailablePill({ row }: { row: CategoryMonth }) {
  * One category's line in the month grid: name, target status, progress bar,
  * assigned/activity, and the Available pill — everything BudgetTable's grid
  * expects, still under the same `grid-cols-[1fr_7rem_7rem_8rem]` template so
- * a category's figures land under the group's summed ones above it. Props
- * stay exactly `{ row, name }` (Task 7's own brief): BudgetTable renders
- * this and shouldn't need to change, and everything added here — the
- * pencil's categoryId, the pill's target-met read, the bar's target — comes
- * off `row` alone.
+ * a category's figures land under the group's summed ones above it.
+ *
+ * `target` is the fix for a real gap in Task 7's first pass: `row`
+ * (CategoryMonth, from lib/budget.ts) carries a target's *amount* but never
+ * its `kind` or `dueDate` — those exist only on CategoryTarget — so without
+ * this prop the pencil below could never reopen a by-date target showing its
+ * real kind and due date. `undefined`/`null` both mean "no target" (the
+ * former lets a caller omit the prop entirely rather than write `null` at
+ * every call site); `BudgetTable` is the only real caller and always passes
+ * one or the other explicitly. `lib/budget.ts` itself is untouched — this is
+ * presentation-path plumbing, not new arithmetic.
  */
-export default function BudgetRow({ row, name }: { row: CategoryMonth; name: string }) {
+export default function BudgetRow({
+  row, name, target,
+}: {
+  row: CategoryMonth
+  name: string
+  target?: CategoryTarget | null
+}) {
   const status = statusLine(row.status)
   return (
     <div className="grid grid-cols-[1fr_7rem_7rem_8rem] gap-x-4 items-center py-2 text-sm">
@@ -190,7 +207,7 @@ export default function BudgetRow({ row, name }: { row: CategoryMonth; name: str
         <div className="flex items-baseline gap-2">
           <span className="truncate min-w-0">{name}</span>
           <span className="ml-auto inline-flex items-center gap-2 shrink-0">
-            <TargetEditor categoryId={row.categoryId} categoryName={name} targetCents={row.targetCents} />
+            <TargetEditor categoryId={row.categoryId} categoryName={name} target={target ?? null} />
             {status && <span className={status.className}>{status.text}</span>}
           </span>
         </div>

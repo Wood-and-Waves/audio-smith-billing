@@ -1,8 +1,8 @@
 import { formatUSD } from '@/lib/money'
 import BudgetRow from '@/components/BudgetRow'
-import type { MonthBudget, BudgetCategory, CategoryMonth } from '@/lib/budget'
+import type { MonthBudget, BudgetCategory, CategoryMonth, CategoryTarget } from '@/lib/budget'
 
-type Entry = { row: CategoryMonth; name: string; sort: number }
+type Entry = { row: CategoryMonth; name: string; sort: number; target: CategoryTarget | null }
 type Section = { name: string; sort: number; entries: Entry[] }
 
 // Same grid every row in this table uses (BudgetRow's own template, repeated
@@ -30,14 +30,23 @@ const GRID = 'grid grid-cols-[1fr_7rem_7rem_8rem] gap-x-4 items-center'
  *     into a synthetic "Hidden" section at the bottom, so the rendered rows
  *     still sum to the month's own totals instead of a reader checking the
  *     arithmetic by hand finding money that appears from nowhere.
+ *
+ * `targets` is the page's own `ledger_category_targets` fetch, passed
+ * through rather than discarded — each entry looks its own category up in
+ * it and hands the real `CategoryTarget` (kind, amount, due date) to
+ * BudgetRow, which threads it on to TargetEditor. This is presentation-path
+ * plumbing only: `lib/budget.ts` and `CategoryMonth.targetCents` (still what
+ * the progress bar reads) are untouched by it.
  */
 export default function BudgetTable({
-  month, categories,
+  month, categories, targets,
 }: {
   month: MonthBudget
   categories: BudgetCategory[]
+  targets: CategoryTarget[]
 }) {
   const catById = new Map(categories.map((c) => [c.id, c]))
+  const targetByCategoryId = new Map(targets.map((t) => [t.categoryId, t]))
 
   const sectionsByGroup = new Map<string, Section>()
   const hiddenEntries: Entry[] = []
@@ -49,7 +58,10 @@ export default function BudgetTable({
     const isEmpty = row.assignedCents === 0 && row.activityCents === 0 && row.availableCents === 0
     if (row.hidden && isEmpty) continue
 
-    const entry: Entry = { row, name: category.name, sort: category.sort }
+    const entry: Entry = {
+      row, name: category.name, sort: category.sort,
+      target: targetByCategoryId.get(row.categoryId) ?? null,
+    }
 
     if (row.hidden) {
       hiddenEntries.push(entry)
@@ -101,7 +113,7 @@ export default function BudgetTable({
               </div>
               <div className="divide-y divide-line">
                 {section.entries.map((e) => (
-                  <BudgetRow key={e.row.categoryId} row={e.row} name={e.name} />
+                  <BudgetRow key={e.row.categoryId} row={e.row} name={e.name} target={e.target} />
                 ))}
               </div>
             </section>

@@ -347,7 +347,7 @@ export default async function MoneyBudgetPage({
         )}
       </header>
 
-      <BudgetTable month={current} categories={categories} />
+      <BudgetTable month={current} categories={categories} targets={targets} />
     </AppShell>
   )
 }

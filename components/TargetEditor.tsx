@@ -6,6 +6,7 @@ import { formatAmount, parseUSD } from '@/lib/money'
 import { isPlainDate } from '@/lib/dates'
 import { FIELD_FULL } from '@/components/ui/field'
 import { setCategoryTarget, clearCategoryTarget } from '@/app/money/budget/actions'
+import type { CategoryTarget } from '@/lib/budget'
 
 type Kind = 'monthly' | 'by_date'
 
@@ -25,30 +26,23 @@ function PencilIcon() {
  * PunchClock's own dialogs, each instance owning its own open/closed state
  * so one row's editor never collides with another's.
  *
- * BudgetRow's props are frozen at `{ row, name }` (Task 7's own brief), and
- * `CategoryMonth` (lib/budget.ts) carries a target's amount but not its
- * `kind` or `dueDate` — those live only in `CategoryTarget`, which nothing
- * between the page and this row currently threads through. So opening this
- * editor on a category that already has a target pre-fills the one figure
- * BudgetRow actually has (the amount, via `targetCents`) and starts on
- * `monthly` with a blank date regardless of what's really stored — the
- * honest options given what's on hand, rather than guessing a kind/date
- * that might be wrong. Switching to "By date" always starts empty and
- * requires a fresh date before Save will take it; re-saving a `monthly`
- * amount round-trips cleanly since that's the only field it needs. Editing
- * just the amount of an EXISTING by-date target without re-entering its
- * due date isn't possible from here — a real gap worth closing later by
- * threading CategoryTarget through, not something this task's data model
- * can paper over.
+ * `target` is the real `CategoryTarget` this category currently has, if
+ * any — threaded down from the page's own `ledger_category_targets` fetch
+ * via BudgetTable and BudgetRow, not derived or guessed from `CategoryMonth`
+ * (whose `targetCents` alone can't distinguish a `monthly` target from a
+ * `by_date` one, or say what its due date was). With the real target in
+ * hand, `openEditor` prefills all three fields — kind, amount, and date
+ * when there is one — so re-saving just the amount of an existing `by_date`
+ * target no longer silently drops its deadline. A category with no target
+ * still opens blank, defaulting to `monthly`.
  */
 export default function TargetEditor({
-  categoryId, categoryName, targetCents,
+  categoryId, categoryName, target,
 }: {
   categoryId: string
   categoryName: string
-  /** From CategoryMonth.targetCents — null when this category has no
-   *  target yet. The only piece of an existing target this row can see. */
-  targetCents: number | null
+  /** The category's current target, or null when it has none. */
+  target: CategoryTarget | null
 }) {
   const router = useRouter()
   const uid = useId()
@@ -64,9 +58,9 @@ export default function TargetEditor({
 
   function openEditor() {
     setError(null)
-    setKind('monthly')
-    setAmount(targetCents !== null ? formatAmount(targetCents) : '')
-    setDueDate('')
+    setKind(target?.kind ?? 'monthly')
+    setAmount(target ? formatAmount(target.amountCents) : '')
+    setDueDate(target?.dueDate ?? '')
     setOpen(true)
   }
 
@@ -104,7 +98,7 @@ export default function TargetEditor({
       <button
         type="button"
         onClick={openEditor}
-        aria-label={targetCents !== null ? `Edit target for ${categoryName}` : `Set target for ${categoryName}`}
+        aria-label={target !== null ? `Edit target for ${categoryName}` : `Set target for ${categoryName}`}
         className="text-muted hover:text-ink transition-colors"
       >
         <PencilIcon />
@@ -198,7 +192,7 @@ export default function TargetEditor({
                 {pending ? 'Saving…' : 'Save'}
               </button>
               <button
-                type="button" onClick={clear} disabled={pending || targetCents === null}
+                type="button" onClick={clear} disabled={pending || target === null}
                 className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wider
                            rounded-field border border-line text-muted hover:text-ink
                            disabled:opacity-40"
