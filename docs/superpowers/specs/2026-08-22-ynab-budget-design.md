@@ -281,16 +281,25 @@ account. The difference is the stranded penny. It is correct, not a defect.
 
 ## Sequencing
 
-Two phases, split on a deliberate line: **phase one only reads, phase two
-writes.** Because the goal is proving parity before trusting the screen, the
-numbers should be verifiable before any hand-editing path exists.
+Two phases, split on a deliberate line: **phase one never moves money, phase two
+does.** Because the goal is proving parity before trusting the screen, every
+figure should be verifiable before any path exists that can change one.
+
+Targets are the one write path in phase one, and deliberately so: the YNAB export
+carries no target data — YNAB simply does not export it — so Dan re-enters all of
+them by hand. A target display with no editor behind it would be dead weight, and
+targets are goals rather than money, so editing one cannot move a dollar or
+disturb the parity check.
 
 **Phase one — the numbers.** Migration, category convergence, `lib/budget.ts`
-with its tests, the import script, and the screen in read-only form: month
-navigation, the Ready to Assign banner, groups and roll-ups, the three columns,
-target bars and Available pills, the summary panel, filter chips, and the phone
-cards. The only thing that writes is the one-off import. Ends with Dan walking
-January to August against YNAB.
+with its tests, the import script, and the screen: month navigation, the Ready to
+Assign banner, groups and roll-ups, the three columns, target bars and Available
+pills, the summary panel, filter chips, and the phone cards — plus setting a
+category's target. Nothing here moves money except the one-off import. Ends with
+Dan walking January to August against YNAB.
+
+**Targets must be re-entered by hand**, all 17 of them. There is no import path
+because there is no export to import.
 
 **Phase two — the hands.** Assigning by typing, moving money between categories,
 Undo/Redo, and Recent Moves. Built once the arithmetic underneath is known to be
