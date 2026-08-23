@@ -367,20 +367,20 @@ export default function MoneyRegister({
   categories: CategoryOption[]
   shows: ShowOption[]
   /**
-   * Newest first, already capped at the latest 200 — see app/money/page.tsx.
+   * Newest first, optionally filtered by uncategorized status — see app/money/page.tsx.
    * Each row carries the true ledger balance after it posted (balanceCents),
-   * computed there over the full account before this list was capped or
-   * filtered, so it's correct regardless of what subset is being rendered.
+   * computed there over the full account before any filtering, so it's correct
+   * regardless of what subset is being rendered.
    */
   transactions: LedgerTxnRow[]
   workingBalanceCents: number
   clearedBalanceCents: number
   uncategorizedCount: number
   /**
-   * The size of whatever list `transactions` was capped from — the full
-   * account when `uncategorizedOnly` is off, or just its uncategorized
-   * income/expense rows when it's on (app/money/page.tsx filters before
-   * capping, not after, so this is a true count either way).
+   * The size of the `transactions` list — the full account when
+   * `uncategorizedOnly` is off, or just its uncategorized income/expense
+   * rows when it's on (app/money/page.tsx filters before returning, so this
+   * is always exact).
    */
   totalCount: number
   /**
@@ -713,12 +713,9 @@ export default function MoneyRegister({
    *  (not a clear back to blank) also checks the rows already on screen for
    *  the same normalized payee, still uncategorized income/expense — when
    *  there are any, the row grows an "apply to all" offer instead of firing
-   *  the sweep unasked. The count in that offer is only ever a floor: it's
-   *  drawn from the rendered `transactions` list, which is capped at 200
-   *  rows (`truncated`, above), while "Apply to all" itself sweeps every
-   *  matching row across the whole account server-side — so when the list
-   *  is capped, the offer is worded "at least N more" rather than claiming
-   *  N is the exact count. A blank payee is skipped entirely, mirroring the
+   *  the sweep unasked. The count is exact: `transactions` now spans the
+   *  entire filtered set, so the offer counts every matching uncategorized
+   *  row on screen. A blank payee is skipped entirely, mirroring the
    *  server's own refusal to sweep from one (see setTransactionCategory's
    *  doc comment).
    */
@@ -1433,13 +1430,13 @@ export default function MoneyRegister({
     )
   }
 
-  // Phone grouping, over the same (newest-first, already-capped) list the
-  // desktop table renders: every uncleared row first, under one "Pending"
-  // header, in whatever order they already carry; then the rest bucketed by
-  // date. Bucketing by "does this row's date match the open bucket" rather
-  // than a Map works because `transactions` is already sorted (newest ledger
-  // order first) — same-date rows are always contiguous once the interleaved
-  // uncleared ones are pulled out, so this never needs to re-sort.
+  // Phone grouping, over the same (newest-first) list the desktop table renders:
+  // every uncleared row first, under one "Pending" header, in whatever order they
+  // already carry; then the rest bucketed by date. Bucketing by "does this row's
+  // date match the open bucket" rather than a Map works because `transactions` is
+  // already sorted (newest ledger order first) — same-date rows are always
+  // contiguous once the interleaved uncleared ones are pulled out, so this never
+  // needs to re-sort.
   const pendingRows = transactions.filter((t) => t.cleared === 'uncleared')
   const clearedRows = transactions.filter((t) => t.cleared !== 'uncleared')
   const dateGroups: { date: string; rows: LedgerTxnRow[] }[] = []

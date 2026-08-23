@@ -24,11 +24,6 @@ export const dynamic = 'force-dynamic'
 // rather than imported because a 'use server' file may only export actions.
 const LEDGER_TXN_PAGE_SIZE = 1000
 
-// The RENDERED list is capped (see below) to keep the DOM sane on an account
-// with years of history, but the balances above it are computed from every
-// row that exists — the whole reason this file pages past 1000 in the first
-// place.
-const RENDER_CAP = 200
 
 type RawTxnRow = {
   id: string
@@ -430,11 +425,10 @@ export default async function MoneyPage({
   ).length
 
   // Canonical (oldest-first) ledger order — date asc, created_at asc, id asc,
-  // see compareLedgerOrder's doc comment — over the FULL set (never the
-  // 200-slice), so runningBalances can prefix-sum from the account's true
-  // opening balance. balanceById then lets the render step below look up
-  // "the balance after this txn" by id regardless of what order or subset
-  // it's about to display.
+  // see compareLedgerOrder's doc comment — over the FULL set, so runningBalances
+  // can prefix-sum from the account's true opening balance. balanceById then lets
+  // the render step below look up "the balance after this txn" by id regardless
+  // of what order or subset it's about to display.
   const ledgerOrdered = [...allTxns].sort(compareLedgerOrder)
   const balances = runningBalances(accountRow.opening_balance_cents, ledgerOrdered)
   const balanceById = new Map(ledgerOrdered.map((t, i) => [t.id, balances[i]]))
@@ -448,11 +442,10 @@ export default async function MoneyPage({
   // proven by the "invariant — last balance equals workingBalance" test in
   // scripts/test/ledgerBalance.test.ts).
   const sorted = [...allTxns].sort((a, b) => compareLedgerOrder(b, a))
-  // The RENDERED list only — filtered before the 200-cap below (not after),
-  // so ?filter=uncategorized shows the actual next 200 uncategorized rows
-  // rather than whatever uncategorized rows happened to survive an unrelated
-  // most-recent-200 cut. Same kind filter as uncategorizedCount above, so
-  // this list's length always agrees with that badge.
+  // The RENDERED list — filtered to match the uncategorized queue when
+  // ?filter=uncategorized is set, otherwise the full transaction set. Same kind
+  // filter as uncategorizedCount above, so when filtered, this list's length
+  // always agrees with that badge.
   //
   // Balances (balanceById, built above) are computed over the FULL,
   // unfiltered set — DELIBERATELY unaffected by this filter. A row's balance
@@ -464,7 +457,7 @@ export default async function MoneyPage({
     ? sorted.filter((t) => t.category_id === null && (t.kind === 'income' || t.kind === 'expense'))
     : sorted
   const totalCount = filtered.length
-  const transactions: LedgerTxnRow[] = filtered.slice(0, RENDER_CAP).map((t) => ({
+  const transactions: LedgerTxnRow[] = filtered.map((t) => ({
     id: t.id,
     date: t.date,
     amount_cents: t.amount_cents,
