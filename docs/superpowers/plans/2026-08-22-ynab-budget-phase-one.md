@@ -26,6 +26,13 @@ real export and are not open to reinterpretation.
 - Migrations live at `scripts/sql/migrations/NNNN_*.sql`, are checksummed, and are
   **never edited once applied**. **ADDITIVE ONLY.** This plan adds `0038` (schema)
   and `0039` (category data).
+- **The one approved exception**, and it is deliberate: 0038 drops the check
+  constraint `lt_nocat_for_owner_or_transfer` and replaces it with the narrower
+  `lt_nocat_for_transfer`. Dan approved this during spec review. It is a
+  RELAXATION — no column dropped, no row lost, nothing that running code reads
+  removed — so it does not repeat the incident behind the rule (0015 dropped a
+  column live code still read). Widening what a table accepts cannot break a
+  reader. Nothing else in this plan may drop anything.
 - **SHIP ORDER (non-negotiable): migrate prod FIRST, then merge/push.** Code
   referencing a missing column 500s the live app.
 - `lib/*.ts` are pure: **no `@/` imports, no JSX, relative `.ts` imports**, and
@@ -45,8 +52,10 @@ real export and are not open to reinterpretation.
     a spending category (income-role categories plus uncategorised rows, any `kind`).
   - `activity(c, m)` = **signed** sum over all transactions carrying category `c`,
     regardless of `kind`, so refunds net down without a special case.
-- Dan's real financial figures **stay out of the repository**. Committed tests use
-  synthetic fixtures only.
+- **Committed tests use synthetic fixtures only** — never Dan's real figures. The
+  design doc and this plan do quote his real reconciliation numbers, deliberately
+  and with his agreement, because the whole argument for the arithmetic rests on
+  them; the constraint is about test data, not prose.
 - Gates before every commit: `npm test`, cold `rm -f tsconfig.tsbuildinfo .next/cache/.tsbuildinfo && npx tsc --noEmit`, `npm run build`.
 
 ## Model tiering
