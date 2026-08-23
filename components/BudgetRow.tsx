@@ -208,11 +208,22 @@ export default function BudgetRow({
   return (
     <div className="grid grid-cols-1 sm:grid-cols-[1fr_7rem_7rem_8rem] gap-x-4 gap-y-2 items-center py-2 text-sm">
       <div className="min-w-0">
+        {/* The name is this screen's primary content and must win any
+         * squeeze — it carries no `truncate`/`min-w-0`, so its floor is its
+         * own min-content (the widest single word), and anything narrower
+         * than a one-line fit just wraps the name onto a second line rather
+         * than shrinking it further. The status wrapper is what gives way:
+         * it lost the `shrink-0` that used to make it refuse to shrink at
+         * all (which was *why* 100% of the squeeze fell on the name below —
+         * a 224px name column at desktop widths reduced `Software` to `So…`
+         * and `Transportation` to `T`). `min-w-0` on both the wrapper and
+         * the status text span lets that text truncate with an ellipsis
+         * once it's out of room, instead of forcing an overflow. */}
         <div className="flex items-baseline gap-2">
-          <span className="truncate min-w-0">{name}</span>
-          <span className="ml-auto inline-flex items-center gap-2 shrink-0">
+          <span>{name}</span>
+          <span className="ml-auto inline-flex items-center gap-2 min-w-0">
             <TargetEditor categoryId={row.categoryId} categoryName={name} target={target ?? null} />
-            {status && <span className={status.className}>{status.text}</span>}
+            {status && <span className={`${status.className} min-w-0 truncate`}>{status.text}</span>}
           </span>
         </div>
         <TargetProgressBar row={row} />

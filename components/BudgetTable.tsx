@@ -21,12 +21,24 @@ export function parseBudgetFilter(f: string | undefined): BudgetFilter {
  * `targetCents` is null exactly when a category carries no target, and a
  * category with no target can never be overfunded, so there's nothing left
  * to check once that's true.
+ *
+ * Overfunded also requires `row.neededCents === 0`. Without it, Overfunded
+ * and Underfunded aren't mutually exclusive: `availableCents` counts this
+ * month's activity (e.g. a refund landing today), while `neededCents` is
+ * measured from what carried in plus what's been assigned — so a category
+ * can out-earn its target on `available` while `neededCents` still says it
+ * needs money by the target's own reckoning. Without this clause such a row
+ * would show up under the Overfunded chip with its own status line reading
+ * "$X.XX more needed" — a filter contradicting the row it selected, which is
+ * worse than no filter at all. Keep this clause; it came out of the plan for
+ * exactly this reason, not by accident.
  */
 export function matchesBudgetFilter(row: CategoryMonth, filter: BudgetFilter): boolean {
   switch (filter) {
     case 'overspent': return row.availableCents < 0
     case 'underfunded': return row.neededCents > 0
-    case 'overfunded': return row.targetCents !== null && row.availableCents > row.targetCents
+    case 'overfunded':
+      return row.targetCents !== null && row.availableCents > row.targetCents && row.neededCents === 0
     case 'available': return row.availableCents > 0
     case 'all': return true
   }
@@ -152,6 +164,11 @@ export default function BudgetTable({
       const visible = section.entries.filter((e) => matchesBudgetFilter(e.row, filter))
       return { section, sums, visible }
     })
+    // A group whose filter leaves zero visible rows is dropped from the
+    // render entirely — a decision beyond the brief, made here rather than
+    // left implicit: the alternative is a group header still showing its
+    // real (whole-month) totals sitting above zero rows, which reads as a
+    // broken table rather than a filtered one.
     .filter(({ visible }) => visible.length > 0)
 
   if (rendered.length === 0) {
