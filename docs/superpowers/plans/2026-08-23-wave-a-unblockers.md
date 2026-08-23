@@ -116,7 +116,11 @@ and so the $400 punch-list item (Temporary Transfer) becomes possible.
 | Owner Transactions | Charitable Giving | 42 | **false** | false | false |
 | Owner Transactions | Owner Investment, Pay, and Personal Expenses *(exists — resort)* | 43 | | | |
 | Owner Transactions | Money Due Wood and Waves | 44 | **false** | false | false |
-| Hidden Categories | Apple Music / Waves / YNAB / Mexico | 910–913 | true | false | **true** |
+
+**Not restored, on Dan's direction:** YNAB's four hidden categories (Apple
+Music, Waves, YNAB, Mexico). Verified against his register export: zero 2026
+transactions in any of them. The migration's comment should note the
+omission and why, so nobody later reads it as an oversight.
 
 Rationale to carry into the migration's comment: `Lodging` is renamed rather
 than duplicated — it is hidden with zero transactions and it IS Hotels under
@@ -125,8 +129,7 @@ money-movement categories and Charitable Giving default **non-deductible**
 per the chart's standing doctrine ("overstating deductions is the one
 direction this tool must never fail" — the CPA flips what belongs to him).
 Computers is equipment for the §179/depreciation surfacing, same as Audio
-Tools. The hidden four go to the 900-block (0040's convention) so no active
-group can ever collide with them.
+Tools.
 
 - [ ] **Step 1: Write the migration**
 
@@ -156,11 +159,7 @@ select o.owner_id, v.name, v.grp, v.sort, v.deductible, v.is_equipment, v.hidden
    ('Temporary Transfer',       'Owner Transactions', 40, false, false, false),
    ('Loan to Wood and Waves',   'Owner Transactions', 41, false, false, false),
    ('Charitable Giving',        'Owner Transactions', 42, false, false, false),
-   ('Money Due Wood and Waves', 'Owner Transactions', 44, false, false, false),
-   ('Apple Music',              'Hidden Categories', 910, true,  false, true),
-   ('Waves',                    'Hidden Categories', 911, true,  false, true),
-   ('YNAB',                     'Hidden Categories', 912, true,  false, true),
-   ('Mexico',                   'Hidden Categories', 913, true,  false, true)
+   ('Money Due Wood and Waves', 'Owner Transactions', 44, false, false, false)
  ) as v(name, grp, sort, deductible, is_equipment, hidden)
  on conflict (owner_id, name) do nothing;
 ```
@@ -178,9 +177,7 @@ must return **zero rows**.
 fresh install matches: Lodging's line becomes
 `c('Hotels', 'Expenses', 25)`, and the seven active categories above are
 added with the same sorts/flags (`c('Temporary Transfer', 'Owner Transactions', 40, false)` etc.).
-**The hidden four are deliberately NOT seeded** — they are Dan's personal
-history, not a starting chart; say so in a comment where they would have
-gone. Update `scripts/test/ledgerCategories.test.ts`'s expectations, and its
+Update `scripts/test/ledgerCategories.test.ts`'s expectations, and its
 sort-uniqueness and owner-pay tests must still pass unchanged in meaning.
 
 - [ ] **Step 4: Gates and commit**
