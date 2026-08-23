@@ -20,6 +20,7 @@
 import { readFileSync } from 'node:fs'
 import pg from 'pg'
 import { parseYnabPlan } from '../../lib/ynabPlan.ts'
+import { OPENING_MONTH } from '../../lib/budget.ts'
 
 // Money arrives as integer cents and must stay that way; stop node-postgres
 // handing back bigint as a JS number that could lose precision silently.
@@ -43,6 +44,19 @@ const USAGE = `Usage: node --env-file=.env.local scripts/import/ynab-plan.mjs [-
                contradiction.
 `
 
+// A flag's value must not itself look like a flag — without this, `--start
+// --commit` (a `--start` with nothing after it, immediately followed by the
+// next real flag) silently eats "--commit" as if it were the month, leaving
+// out.start = '--commit' and out.commit still false: a run that LOOKS like
+// it committed but was actually, silently, a dry run (item 6).
+function takeValue(argv, i, flagName) {
+  const v = argv[i + 1]
+  if (v === undefined || v.startsWith('--')) {
+    throw new Error(`${flagName} needs a value (got ${v === undefined ? 'nothing' : `"${v}"`}).`)
+  }
+  return v
+}
+
 function parseArgs(argv) {
   const out = { prod: false, commit: false, dry: false, help: false, csvPath: null, start: null }
   for (let i = 0; i < argv.length; i += 1) {
@@ -51,8 +65,8 @@ function parseArgs(argv) {
     if (a === '--prod') { out.prod = true; continue }
     if (a === '--commit') { out.commit = true; continue }
     if (a === '--dry') { out.dry = true; continue }
-    if (a === '--file') { out.csvPath = argv[i += 1] ?? null; continue }
-    if (a === '--start') { out.start = argv[i += 1] ?? null; continue }
+    if (a === '--file') { out.csvPath = takeValue(argv, i, '--file'); i += 1; continue }
+    if (a === '--start') { out.start = takeValue(argv, i, '--start'); i += 1; continue }
     if (a.startsWith('--')) throw new Error(`Unknown flag: ${a}`)
     if (out.csvPath !== null) throw new Error(`Unexpected extra argument: "${a}"`)
     out.csvPath = a
@@ -189,6 +203,26 @@ async function main() {
   }
   if (!/^\d{4}-\d{2}$/.test(opts.start)) {
     console.error(`--start "${opts.start}" isn't YYYY-MM.`)
+    process.exitCode = 1
+    return
+  }
+  // I3: this script and lib/budget.ts's buildBudget only agree on where the
+  // opening seed lives by convention — buildBudget always starts its
+  // carry-in at the hardcoded OPENING_MONTH, no matter what --start this
+  // script was run with. They happen to agree for --start 2026-01, and
+  // nothing enforced that. With a later --start, the delete below (`month >=
+  // opening month`) would no longer reach the PREVIOUS run's real opening
+  // rows — those stay in the table, and this run's own opening rows for the
+  // new (wrong) opening month get written alongside them, so the carry-in is
+  // counted twice and every later month inflates. Refuse outright instead.
+  const openingMonth = monthBefore(opts.start)
+  if (openingMonth !== OPENING_MONTH) {
+    console.error(
+      `--start ${opts.start} opens at ${openingMonth}, but lib/budget.ts's OPENING_MONTH is `
+      + `${OPENING_MONTH}. buildBudget always starts its carry-in at OPENING_MONTH, so the two `
+      + 'must agree — otherwise this run\'s delete misses the previous run\'s real opening rows '
+      + 'and the carry-in gets written twice.',
+    )
     process.exitCode = 1
     return
   }
