@@ -61,9 +61,10 @@ const EXPECTED_HEADER = [
  * RFC4180-ish CSV -> rows of raw string fields. Handles quoted fields that
  * contain commas, embedded newlines (a multiline memo), and escaped quotes
  * ("" inside a quoted field). Blank lines (a lone empty field) are dropped —
- * YNAB's export often ends the file with one.
+ * YNAB's export often ends the file with one. Shared by lib/ynabPlan.ts so
+ * the two YNAB importers cannot drift on CSV mechanics.
  */
-function parseCsvRows(text: string): string[][] {
+export function parseCsvRows(text: string): string[][] {
   const rows: string[][] = []
   let row: string[] = []
   let field = ''
