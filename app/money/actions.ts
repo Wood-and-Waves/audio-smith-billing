@@ -94,50 +94,6 @@ export async function ensureDefaultCategories(): Promise<Fail | { ok: true; seed
   return { ok: true, seeded: DEFAULT_CATEGORIES.length }
 }
 
-// Dan's actual YNAB Savings funds, in the order he already thinks of them.
-const DEFAULT_ENVELOPES = ['Taxes', 'Tax Prep', 'Retained Earnings']
-
-/**
- * Seeds the three savings-fund envelopes Dan already runs in YNAB the first
- * time this owner opens the ledger, and never again — same idempotent-by-
- * count shape as ensureDefaultCategories above, not name-matching, so an
- * envelope he's since renamed isn't mistaken for "missing" and reseeded next
- * to itself.
- */
-export async function ensureDefaultEnvelopes(): Promise<Fail | { ok: true; seeded: number }> {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not signed in.' }
-
-  const { count, error: countError } = await supabase
-    .from('ledger_envelopes')
-    .select('id', { count: 'exact', head: true })
-  if (countError) return { error: countError.message }
-  if ((count ?? 0) > 0) return { ok: true, seeded: 0 }
-
-  const { error } = await supabase.from('ledger_envelopes').insert(
-    DEFAULT_ENVELOPES.map((name, sort) => ({ owner_id: user.id, name, sort })),
-  )
-  if (error) {
-    // Same race ensureDefaultCategories guards against, closed here by
-    // migration 0030's (owner_id, name) unique index instead of 0028's: two
-    // first loads can both read zero envelopes and both attempt to seed. The
-    // second writer's bulk insert now fails on that index instead of
-    // doubling every envelope — that's this call losing the race, not a real
-    // failure, so it reports the same "already seeded" outcome as the count
-    // check above.
-    if (error.code === '23505') return { ok: true, seeded: 0 }
-    return { error: error.message }
-  }
-
-  // No revalidatePath('/money') here — this runs during app/money/page.tsx's
-  // own render (Next 16 throws if a revalidation runs mid-render, since it's
-  // meant for the aftermath of a user-triggered Server Action, not a page's
-  // own data loading), and that same render is about to read the envelopes
-  // it just seeded fresh anyway, so there's nothing stale left to fix.
-  return { ok: true, seeded: DEFAULT_ENVELOPES.length }
-}
-
 /**
  * Creates or edits a category. A null id creates one, appended to the end of
  * its group (max sort in that group, plus one) so a new category never
@@ -284,16 +240,15 @@ export async function saveEnvelope(input: {
       hidden: input.hidden,
     })
     if (error) {
-      // Migration 0030's unique index (owner_id, name) — same race
-      // ensureDefaultEnvelopes already guards against, but here it's a
-      // genuine duplicate name Dan typed by hand, not a seeding race, so it
-      // gets a message he can read instead of Postgres's raw constraint text.
+      // Migration 0030's unique index (owner_id, name) — a genuine duplicate
+      // name Dan typed by hand, so it gets a message he can read instead of
+      // Postgres's raw constraint text.
       if (error.code === '23505') return { error: `You already have an envelope named "${name}".` }
       return { error: error.message }
     }
   } else {
-    // BudgetPanel's own checkbox disable is a hint, not the invariant — a
-    // stale second tab (still showing a balance that's since changed) or a
+    // A client-side checkbox disable is a hint, not the invariant — a stale
+    // second tab (still showing a balance that's since changed) or a
     // request replayed by hand must not be able to strand money in a hidden
     // envelope, since the Move Selects stop offering a hidden-and-empty row
     // as a source the moment it's hidden. Un-hiding never hits this: making
