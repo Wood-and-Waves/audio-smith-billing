@@ -3,6 +3,70 @@
 The canonical list of deferred work. Each item carries just enough design that a
 future session can build it without re-discovery. Dated when added.
 
+## Dan's dev walkthrough findings (2026-08-23) — the eleven, in waves
+
+Dan ran the budget + register against his live YNAB and filed eleven findings.
+Decisions made with him: he runs YNAB **alongside** the app while this is worked
+through (YNAB stays authoritative); splits and pending are deferred until waves
+A and B land; the backfilled Jan–Aug months prove transcription only — **the
+real proof is September**, budgeted independently in both tools and compared at
+month end. Ship-to-prod timing revisits after Wave A.
+
+### Wave A — small unblockers (build first, no design needed)
+
+1. **Ledger stops at 4/17 — his #1.** `RENDER_CAP = 200` in
+   `app/money/page.tsx:31` draws only the newest 200 of 325 rows. Display cap,
+   not data loss — balances already compute over the full paged set. Lift or
+   page it so every transaction is reachable.
+2. **Eight categories missing from the converged chart.** The 0039 convergence
+   scoped to categories with 2026 activity in the export; Dan assigns to more.
+   Missing: Hotels (app has "Lodging" hidden — same thing, different name),
+   Office Expenses, Computers, Education, Temporary Transfer, Loan to Wood and
+   Waves, Charitable Giving, Money Due Wood and Waves; plus YNAB's own hidden
+   four (Apple Music, Waves, YNAB, Mexico). Needs migration 0041. NOTE:
+   restoring **Temporary Transfer** un-blocks punch-list item 4 (the $400
+   round trip), currently written off as impossible.
+3. **The budget table has no column headers.** Nothing labels Assigned /
+   Activity / Available. See his YNAB screenshot; unreadable without them.
+4. **Ledger headers don't stick.** Date/Payee/Category/etc. scroll away; the
+   whole header row should pin while the register scrolls.
+
+### Wave B — the register's editing experience (one coherent redesign)
+
+Five findings that all touch `components/MoneyRegister.tsx`; do as one pass:
+
+5. **Edit row is out of order with the headers.** Fields don't sit under their
+   columns (his screenshot: date/kind/payee/amount/category/show/memo vs the
+   header order date/payee/category/memo/outflow/inflow). YNAB's edit row
+   aligns 1:1 under its headers, including separate outflow/inflow boxes.
+6. **Category picker should look like YNAB's** (screenshot on file): a
+   combobox with search, grouped by category group with each category's
+   current *budget* balance shown on the right, a "New Category" affordance,
+   and Payment/Transfer + Split buttons at the bottom.
+7. **The income/expense/owner-pay kind dropdown is redundant.** Kind is
+   derivable: category + which box (outflow/inflow) the amount is in.
+   CAUTION: a transfer has no category, so it can't be inferred — YNAB routes
+   that through the Payment/Transfer button inside the picker (item 6).
+   Ripples into P&L (`lib/ledgerReports.ts` branches on kind), forecast, payee
+   memory. Wants a design pass, not a quick deletion.
+8. **The show tag ("TEST SHOW — …") clutters the ledger.** Partly a dev
+   artifact (prod has real shows), but consider whether the register needs the
+   show on the row at all, or tucked into the detail/edit view.
+9. **Math in money boxes.** Typing `24.36+45.72` in an amount field should
+   enter 70.08. YNAB does this; parseUSD is the entry point.
+
+### Wave C — model gaps (each needs brainstorm + migration; deferred by Dan)
+
+10. **Split transactions.** He has real transactions spanning two categories
+    that cannot reconcile without them. Phase-one scoping ("one split in all
+    of 2026") underestimated; his own use makes them recurring. Touches
+    schema, register UI, budget activity math, importer.
+11. **Pending transactions.** Imported-but-unposted rows should NOT move the
+    budget until accepted — YNAB shows them in a Pending group with an
+    "Enter Now" control. The app has no pending concept at all today; that is
+    why he deleted the Fairmont rows from dev. Touches importer, register,
+    budget activity, reconciliation.
+
 ## Per-month budgeting — PHASE ONE SHIPPED 2026-08-23
 
 Dan's ask: *"I want to be able to budget per month and move between the months.
