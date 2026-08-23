@@ -52,3 +52,38 @@ test('an unparseable month is refused with its line number', () => {
     /line 2/,
   )
 })
+
+test('an empty file is refused, not silently imported as zero rows', () => {
+  assert.throws(
+    () => parseYnabPlan(''),
+    /empty/i,
+  )
+})
+
+test('a row with more fields than the header throws, naming the line', () => {
+  assert.throws(
+    () => parseYnabPlan(csv('"Aug 2026","Bills: Insurance","Bills","Insurance",$427.00,$0.00,$35.00,"extra"')),
+    /line 2/,
+  )
+})
+
+test('a row with fewer fields than the header throws', () => {
+  assert.throws(
+    () => parseYnabPlan(csv('"Aug 2026","Bills: Insurance","Bills","Insurance",$427.00')),
+    /expected 7 fields, got 5/,
+  )
+})
+
+test('a money field with invalid characters throws, naming the line and field', () => {
+  assert.throws(
+    () => parseYnabPlan(csv('"Aug 2026","Bills: Insurance","Bills","Insurance",$abc.99,$0.00,$35.00')),
+    /line 2.*Assigned/,
+  )
+})
+
+test('a money field with three decimal places throws rather than silently rounding', () => {
+  assert.throws(
+    () => parseYnabPlan(csv('"Aug 2026","Bills: Insurance","Bills","Insurance",$1.234,$0.00,$35.00')),
+    /line 2/,
+  )
+})

@@ -10,6 +10,7 @@
 // No '@/' imports and no JSX — exercised by node --test.
 
 import { parseCsvRows } from './ynabRegister.ts'
+import { roundCents } from './money.ts'
 
 export type YnabPlanRow = {
   /** 'YYYY-MM'. */
@@ -51,12 +52,12 @@ function toCents(raw: string, lineNo: number, field: string): number {
   if (!/^-?\d+(\.\d{1,2})?$/.test(cleaned)) {
     throw new Error(`line ${lineNo}: cannot read "${raw}" as ${field}`)
   }
-  return Math.round(Number(cleaned) * 100)
+  return roundCents(Number(cleaned) * 100)
 }
 
 export function parseYnabPlan(csv: string): YnabPlanRow[] {
   const rows = parseCsvRows(csv)
-  if (rows.length === 0) return []
+  if (rows.length === 0) throw new Error('YNAB Plan CSV is empty.')
 
   const header = rows[0].map((h) => h.trim())
   const matches = header.length === EXPECTED_HEADER.length
