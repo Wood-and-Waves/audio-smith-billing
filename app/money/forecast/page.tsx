@@ -398,11 +398,20 @@ export default async function MoneyForecastPage() {
   const today = todayInChicago()
 
   const workingBalanceCents = workingBalance(accountRow.opening_balance_cents, txnRows)
-  // Same "available to allocate" figure /money/budget computes — see that
-  // page's own call to this helper. Sharing it (rather than reimplementing
-  // workingBalance - netAllocated inline, as this page used to) is what
-  // keeps the two screens' starting-balance math structurally identical
-  // instead of coincidentally identical.
+  // I4 (comment fix, behavior deliberately unchanged): this used to say
+  // /money/budget computes the same figure via its own call to this helper.
+  // It no longer does — /money/budget doesn't import lib/envelopes at all.
+  // `moveRows` comes from ledger_envelope_moves, which the 0030 envelope
+  // feature shipped empty and nothing writes to any more (see
+  // components/BudgetPanel.tsx and app/money/actions.ts's own history —
+  // both since removed as dead code), so netAllocated(moveRows) is always 0
+  // and this always equals workingBalanceCents exactly. In particular it
+  // does NOT subtract money the real budget (lib/budget.ts) has already
+  // assigned to a category this month — so this figure can present money
+  // Dan already gave a job as still free to spend. That's a real gap, not
+  // this page's math being wrong for what it's actually computing; closing
+  // it (making the forecast budget-aware) is deliberately deferred, not
+  // fixed here.
   const availableCents = availableToAllocate(workingBalanceCents, moveRows as EnvelopeMoveLike[])
 
   const clients: ForecastClient[] = (clientRows ?? []).map((c) => ({
