@@ -11,6 +11,7 @@ import { parseOfx, type ParsedOfx } from '@/lib/ofx'
 import { planImport, type ExistingTxn } from '@/lib/ledgerImport'
 import { normalizePayee, rememberedCategories, memoryKey } from '@/lib/payeeMemory'
 import { validateTxnShape, isSaneLedgerDate, type LedgerKind } from '@/lib/ledgerRules'
+import { decideIncomeRoleChange } from '@/lib/incomeRoleGuard'
 
 type Fail = { error: string }
 
@@ -95,6 +96,47 @@ export async function ensureDefaultCategories(): Promise<Fail | { ok: true; seed
 }
 
 /**
+ * Guards saveCategory's write against exactly the hazard
+ * lib/incomeRoleGuard.ts's own comment describes: flipping an existing
+ * category to budget_role 'income' silently drops it out of buildBudget's
+ * spendingIds for every month, past included. Only called from the update
+ * branch, and only when the caller asked for 'income' — a brand-new
+ * category (id === null) can't have prior moves or a target yet, so it
+ * never needs this.
+ *
+ * All three reads (current role, moves, targets) run even when the
+ * category turns out to already be 'income' — decideIncomeRoleChange
+ * short-circuits on that case, but fetching unconditionally keeps this
+ * function simple and the query cost is one row each, nowhere near hot.
+ * `error` on the current-role read is checked and returned on before
+ * touching `current` at all, same fail-closed rule decideIncomeRoleChange
+ * itself applies to the other two reads.
+ */
+async function incomeRoleChangeAllowed(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  categoryId: string,
+): Promise<Fail | null> {
+  const [
+    { data: current, error: currentError },
+    moves,
+    targets,
+  ] = await Promise.all([
+    supabase.from('ledger_categories').select('budget_role').eq('id', categoryId).maybeSingle(),
+    supabase
+      .from('ledger_budget_moves')
+      .select('id')
+      .or(`from_category_id.eq.${categoryId},to_category_id.eq.${categoryId}`)
+      .is('undone_at', null)
+      .limit(1),
+    supabase.from('ledger_category_targets').select('id').eq('category_id', categoryId).limit(1),
+  ])
+  if (currentError) return { error: currentError.message }
+  const currentRole = (current?.budget_role === 'income' ? 'income' : 'spending') as 'spending' | 'income'
+
+  return decideIncomeRoleChange(currentRole, moves, targets)
+}
+
+/**
  * Creates or edits a category. A null id creates one, appended to the end of
  * its group (max sort in that group, plus one) so a new category never
  * jumps ahead of the ones the owner already ordered by hand.
@@ -153,6 +195,17 @@ export async function saveCategory(input: {
       return { error: error.message }
     }
   } else {
+    // Flipping to 'income' can silently rewrite every month buildBudget's
+    // spendingIds covers (lib/incomeRoleGuard.ts has the full hazard) — a
+    // strictly bigger version of the hazard saveEnvelope already refuses
+    // server-side for hiding an envelope that holds money. Checked before
+    // the write, not instead of it: a client-side confirmation is a hint,
+    // this is the invariant.
+    if (input.budgetRole === 'income') {
+      const guardError = await incomeRoleChangeAllowed(supabase, input.id)
+      if (guardError) return guardError
+    }
+
     const { error } = await supabase
       .from('ledger_categories')
       .update({

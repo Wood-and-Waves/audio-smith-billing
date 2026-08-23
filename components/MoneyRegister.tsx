@@ -1206,7 +1206,14 @@ export default function MoneyRegister({
     }
 
     const editable = t.cleared !== 'reconciled' && t.kind !== 'transfer'
-    const inlineCategory = t.category_id === null && (t.kind === 'income' || t.kind === 'expense')
+    // owner_pay included: updateLedgerTransaction refuses reconciled rows
+    // outright, and setTransactionCategory (the write this picker calls) is
+    // the one category write exempt from that lock — so a reconciled,
+    // uncategorised owner-pay row would otherwise have no path to a category
+    // at all. No such row exists today (owner-pay rows auto-default), but
+    // there's no reason to leave the corner unreachable.
+    const inlineCategory = t.category_id === null
+      && (t.kind === 'income' || t.kind === 'expense' || t.kind === 'owner_pay')
     const outflowCents = t.amount_cents < 0 ? -t.amount_cents : 0
     const inflowCents = t.amount_cents > 0 ? t.amount_cents : 0
     // A reconciled (or transfer) row can't be opened for edit, so it never
@@ -1324,7 +1331,14 @@ export default function MoneyRegister({
     }
 
     const editable = t.cleared !== 'reconciled' && t.kind !== 'transfer'
-    const inlineCategory = t.category_id === null && (t.kind === 'income' || t.kind === 'expense')
+    // owner_pay included: updateLedgerTransaction refuses reconciled rows
+    // outright, and setTransactionCategory (the write this picker calls) is
+    // the one category write exempt from that lock — so a reconciled,
+    // uncategorised owner-pay row would otherwise have no path to a category
+    // at all. No such row exists today (owner-pay rows auto-default), but
+    // there's no reason to leave the corner unreachable.
+    const inlineCategory = t.category_id === null
+      && (t.kind === 'income' || t.kind === 'expense' || t.kind === 'owner_pay')
     const outflowCents = t.amount_cents < 0 ? -t.amount_cents : 0
     const inflowCents = t.amount_cents > 0 ? t.amount_cents : 0
     // Same escape hatch as renderDesktopRow's — see its own comment.

@@ -3,8 +3,10 @@
 // the newest categorized row teaches the category, and imports of that payee
 // arrive pre-categorized. A convenience, never an authority: it only fills
 // category on NEW rows, never overwrites, never touches kind, and never
-// learns from owner-pay/transfer rows (those carry no category by design)
-// or from uncategorized rows (nothing to teach).
+// learns from owner-pay/transfer rows (transfer rows carry no category by
+// design; owner-pay rows do carry one since migration 0038, but the OFX
+// importer this map exists for never produces an owner-pay row, so a memory
+// key can never need one) or from uncategorized rows (nothing to teach).
 //
 // No '@/' imports and no JSX — exercised by node --test.
 
