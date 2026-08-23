@@ -1,5 +1,5 @@
 import { formatUSD } from '@/lib/money'
-import type { CategoryMonth, CategoryTarget, TargetStatus } from '@/lib/budget'
+import { progressPct, type CategoryMonth, type CategoryTarget, type TargetStatus } from '@/lib/budget'
 import TargetEditor from '@/components/TargetEditor'
 
 /**
@@ -43,15 +43,11 @@ function statusLine(status: TargetStatus): { text: string; className: string } |
 
 /**
  * The 3px progress bar under a category's name — only when it has a target
- * (`targetCents` null means nothing to show progress toward). `funded` is
- * what has gone INTO the category so far this cycle, deliberately excluding
- * what came back out: `availableCents + max(0, -activityCents)` adds back
- * this month's spending (activity is negative when money leaves) so a
- * category that has since been drawn down still shows how much of its
- * target was actually funded, not how much is left sitting in it. Width is
- * clamped to [0, 100] — funded can be negative in edge cases (a large
- * category-to-category move out with little carried in), and the DB's own
- * `amount_cents > 0` check on targets rules out a divide-by-zero.
+ * (`targetCents` null means nothing to show progress toward, and
+ * `progressPct` returns 0 for that case rather than this component ever
+ * dividing by it). The fill's width is `progressPct(row)` — lib/budget.ts is
+ * this arithmetic's one home, validated against 1,421 rows of Dan's real
+ * export; this component only reads what it's handed.
  *
  * The fill renders in `bg-danger` instead of `bg-good` when the row is
  * overspent — the one color signal the bar itself carries, beyond what the
@@ -60,8 +56,7 @@ function statusLine(status: TargetStatus): { text: string; className: string } |
  */
 function TargetProgressBar({ row }: { row: CategoryMonth }) {
   if (row.targetCents === null) return null
-  const funded = row.availableCents + Math.max(0, -row.activityCents)
-  const pct = Math.max(0, Math.min(100, Math.round((100 * funded) / row.targetCents)))
+  const pct = progressPct(row)
   const fillClass = row.status.kind === 'overspent' ? 'bg-danger' : 'bg-good'
   return (
     <div aria-hidden className="mt-1 h-[3px] w-full rounded-pill bg-accent-wash overflow-hidden">

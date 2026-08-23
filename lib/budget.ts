@@ -122,6 +122,29 @@ export type MonthBudget = {
   underfundedCents: number
 }
 
+/**
+ * How full a category's progress bar should read, as a whole-number
+ * percentage clamped to [0, 100] — the one home for this arithmetic, so
+ * components/BudgetRow.tsx's `TargetProgressBar` only ever calls it rather
+ * than recomputing it. 0 when the row has no target (nothing to show
+ * progress toward, and dividing by a null target would be meaningless
+ * rather than merely zero).
+ *
+ * `funded` is what has gone INTO the category so far this cycle,
+ * deliberately excluding what came back out: `availableCents +
+ * max(0, -activityCents)` adds back this month's spending (activity is
+ * negative when money leaves) so a category that has since been drawn down
+ * still shows how much of its target was actually funded, not how much is
+ * left sitting in it. The clamp covers both ends: funded can run negative
+ * (a large category-to-category move out with little carried in) and can
+ * exceed the target (funded past 100%, which still reads as a full bar).
+ */
+export function progressPct(row: CategoryMonth): number {
+  if (row.targetCents === null) return 0
+  const funded = row.availableCents + Math.max(0, -row.activityCents)
+  return Math.max(0, Math.min(100, Math.round((100 * funded) / row.targetCents)))
+}
+
 /** Inclusive month count from `month` to `dueDate`'s month; never below 1. */
 function monthsUntil(month: string, dueDate: string): number {
   const [my, mm] = month.split('-').map(Number)

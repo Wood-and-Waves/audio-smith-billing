@@ -128,6 +128,7 @@ export default function TargetEditor({
                 <input
                   type="radio"
                   name={`target-kind-${uid}`}
+                  value="monthly"
                   className="h-3.5 w-3.5 accent-accent"
                   checked={kind === 'monthly'}
                   disabled={pending}
@@ -139,6 +140,7 @@ export default function TargetEditor({
                 <input
                   type="radio"
                   name={`target-kind-${uid}`}
+                  value="by_date"
                   className="h-3.5 w-3.5 accent-accent"
                   checked={kind === 'by_date'}
                   disabled={pending}

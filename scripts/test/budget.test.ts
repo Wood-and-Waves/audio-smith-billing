@@ -8,8 +8,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildBudget,
-  type BudgetCategory, type BudgetMove, type BudgetTxn, type CategoryTarget,
+  buildBudget, progressPct,
+  type BudgetCategory, type BudgetMove, type BudgetTxn, type CategoryMonth, type CategoryTarget,
 } from '../../lib/budget.ts'
 
 const cat = (id: string, over: Partial<BudgetCategory> = {}): BudgetCategory => ({
@@ -321,4 +321,41 @@ test('a toMonth no addMonths step can ever land on still terminates, covering ex
 test('a toMonth earlier than fromMonth returns an empty map instead of looping', () => {
   const b = build({ fromMonth: '2026-03', toMonth: '2026-01' })
   assert.deepEqual([...b.keys()], [])
+})
+
+// --- progressPct — the progress bar's fill, moved out of BudgetRow.tsx so
+// this arithmetic has the same one home as everything else on this screen ---
+
+const monthRow = (over: Partial<CategoryMonth> = {}): CategoryMonth => ({
+  categoryId: 'a', assignedCents: 0, activityCents: 0, availableCents: 0,
+  status: { kind: 'none' }, neededCents: 0, targetCents: null, hidden: false, ...over,
+})
+
+test('progressPct is 0 for a row with no target', () => {
+  assert.equal(progressPct(monthRow({ targetCents: null, availableCents: 5_000 })), 0)
+})
+
+test('progressPct reports how much of a partially funded target has come in', () => {
+  // funded = available + max(0, -activity) = 5,000 + 0 -> 25% of a 20,000 target.
+  assert.equal(progressPct(monthRow({ targetCents: 20_000, availableCents: 5_000, activityCents: 0 })), 25)
+})
+
+test('progressPct is 100 when the target is exactly met', () => {
+  assert.equal(progressPct(monthRow({ targetCents: 20_000, availableCents: 20_000, activityCents: 0 })), 100)
+})
+
+test('progressPct clamps to 100 when funded exceeds the target, never reporting above it', () => {
+  assert.equal(progressPct(monthRow({ targetCents: 20_000, availableCents: 35_000, activityCents: 0 })), 100)
+})
+
+test('progressPct for a row whose activity is net positive adds nothing back for the inflow', () => {
+  // A refund landing with no matching spend this month: activity is +3,000, so
+  // max(0, -activity) is 0 and funded is just what is available -> 50%.
+  assert.equal(progressPct(monthRow({ targetCents: 20_000, availableCents: 10_000, activityCents: 3_000 })), 50)
+})
+
+test('progressPct clamps to 0 for a row with negative available, never reporting a negative percentage', () => {
+  // A large category-to-category move out with little carried in: funded
+  // itself goes negative (-5,000 of a 20,000 target).
+  assert.equal(progressPct(monthRow({ targetCents: 20_000, availableCents: -5_000, activityCents: 0 })), 0)
 })
