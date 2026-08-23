@@ -7,20 +7,33 @@ import {
   type BudgetCategory, type BudgetMove, type BudgetTxn, type CategoryTarget,
 } from '@/lib/budget'
 import AppShell from '@/components/AppShell'
-import BudgetTable from '@/components/BudgetTable'
+import BudgetTable, { parseBudgetFilter, type BudgetFilter } from '@/components/BudgetTable'
+import BudgetSummary from '@/components/BudgetSummary'
 
 export const dynamic = 'force-dynamic'
 
 // The reports/calendar idiom (app/calendar/page.tsx): a bad or absent `m`
 // falls back to the current month rather than 404ing or crashing a date
-// helper on garbage input. `f` isn't read yet — Task 8's filter chips land
-// on this same query param, and the type is shaped for that now so this
-// page's signature doesn't change again when they do.
+// helper on garbage input. `f` (Task 8's filter chips) follows the same
+// idiom one level down, in parseBudgetFilter (components/BudgetTable.tsx):
+// anything unrecognised reads as All rather than 404ing.
 // The month component is constrained to 01-12 (not just \d{2}) so a value
 // like "2026-13" reads as malformed rather than as a real month greater
 // than every legitimate one — that used to slip past the FIRST_BUDGET_MONTH
 // clamp below and fall straight into buildBudget as toMonth.
 const MONTH_KEY = /^\d{4}-(0[1-9]|1[0-2])$/
+
+// The five chips above the table, in Dan's own order (design doc: "All,
+// Overspent, Underfunded, Overfunded, Money Available"). `all` renders
+// without an `f` param at all — cleaner URL, and parseBudgetFilter already
+// treats a missing `f` the same as an explicit `all`.
+const FILTER_CHIPS: { key: BudgetFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'overspent', label: 'Overspent' },
+  { key: 'underfunded', label: 'Underfunded' },
+  { key: 'overfunded', label: 'Overfunded' },
+  { key: 'available', label: 'Money Available' },
+]
 
 // Supabase selects silently cap at 1000 rows (PostgREST's max_rows) with no
 // error. ledger_transactions is already past 300 rows and grows every month,
@@ -255,6 +268,14 @@ export default async function MoneyBudgetPage({
     undoneAt: m.undone_at,
   }))
 
+  // Every month from the opening seed forward to whichever is later, today
+  // or the month being viewed — navigating ahead of the calendar still needs
+  // a real MonthBudget in the map, and the arithmetic already handles
+  // assigning into a future month. Computed here (rather than beside
+  // `budget` below, its only other use) because the opening-balance seed
+  // just below needs it too.
+  const last = month > today.slice(0, 7) ? month : today.slice(0, 7)
+
   // The account's opening balance is not a transaction, but it is money that
   // arrived and needs a job — so Ready to Assign has to see it. Injected in
   // the month the account opened. This is precisely why January shows $1.01
@@ -262,15 +283,24 @@ export default async function MoneyBudgetPage({
   // $584.74, the difference being a penny stranded in a Novo account this
   // app does not carry.
   //
-  // Clamped to the later of OPENING_MONTH and the account's own opening
-  // month: buildBudget only ever consults income for months inside
-  // [fromMonth, toMonth], which below is always [OPENING_MONTH, last]. If
-  // opening_date's month ever fell before OPENING_MONTH — a data-entry
-  // mistake, a replaced account, a future migration — the seed would land
-  // outside the built range and the opening balance would vanish from Ready
-  // to Assign in every month, with nothing on screen to say so.
+  // Clamped on BOTH ends to the range buildBudget is actually about to walk,
+  // [OPENING_MONTH, last]: it only ever consults income for months inside
+  // whatever range it's given, so a seed month outside that range means the
+  // opening balance vanishes from Ready to Assign in every visible month,
+  // with nothing on screen to say so — the very failure this comment used to
+  // describe for the lower bound alone. The upper bound needs the same
+  // guard for the same reason, not a hypothetical one: `last` is only ever
+  // `month` or `today`, and `month` is a value Dan reaches by clicking
+  // "Next month" through MAX_MONTHS_AHEAD's own ceiling — nowhere near
+  // `opening_date`, but a future account replacement or a fat-fingered
+  // opening_date could still push `openingMonth` past whatever `last`
+  // happens to be, and this clamp is what keeps that honest instead of
+  // silent.
   const openingMonth = accountRow.opening_date.slice(0, 7)
-  const seedMonth = openingMonth > OPENING_MONTH ? openingMonth : OPENING_MONTH
+  const seedMonth =
+    openingMonth < OPENING_MONTH ? OPENING_MONTH :
+    openingMonth > last ? last :
+    openingMonth
   const txns: BudgetTxn[] = [
     {
       month: seedMonth,
@@ -291,15 +321,16 @@ export default async function MoneyBudgetPage({
     dueDate: t.due_date,
   }))
 
-  // Every month from the opening seed forward to whichever is later, today
-  // or the month being viewed — navigating ahead of the calendar still needs
-  // a real MonthBudget in the map, and the arithmetic already handles
-  // assigning into a future month.
-  const last = month > today.slice(0, 7) ? month : today.slice(0, 7)
   const budget = buildBudget({ categories, moves, txns, targets, fromMonth: OPENING_MONTH, toMonth: last })
   const current = budget.get(month)!
 
   const rta = current.readyToAssignCents
+  const filter = parseBudgetFilter(params.f)
+  // Overspent is the one chip that shows a count (Dan's own "3 Overspent").
+  // Counted over the whole month's rows, same as every other total on this
+  // page — never the filtered subset, and never affected by which chip (if
+  // any) happens to be active right now.
+  const overspentCount = current.rows.filter((r) => r.availableCents < 0).length
 
   return (
     <AppShell current="money">
@@ -318,13 +349,15 @@ export default async function MoneyBudgetPage({
             </Link>
           )}
           <h2 className="eyebrow text-ink">{monthLabel(month)}</h2>
-          <Link
-            href={`/money/budget?m=${addMonths(month, 1)}`}
-            aria-label="Next month"
-            className="text-muted hover:text-ink transition-colors text-lg leading-none"
-          >
-            ›
-          </Link>
+          {month !== ceiling && (
+            <Link
+              href={`/money/budget?m=${addMonths(month, 1)}`}
+              aria-label="Next month"
+              className="text-muted hover:text-ink transition-colors text-lg leading-none"
+            >
+              ›
+            </Link>
+          )}
         </div>
 
         {rta > 0 && (
@@ -347,7 +380,48 @@ export default async function MoneyBudgetPage({
         )}
       </header>
 
-      <BudgetTable month={current} categories={categories} targets={targets} />
+      {/* Right column at `lg` and up (design doc: "Right panel"); above the
+          table below `lg`, where it reads as a strip (design doc: "The
+          summary becomes a strip at the top"). Plain DOM order puts
+          BudgetSummary first so mobile — no `order` in play there — stacks
+          it on top by default; `lg:order-*` below reassigns which grid
+          track each side lands in once there are two, without moving
+          either block's markup or duplicating either component. */}
+      <div className="grid lg:grid-cols-[1fr_20rem] gap-8">
+        <div className="lg:order-2">
+          <BudgetSummary month={current} />
+        </div>
+
+        <div className="lg:order-1 min-w-0">
+          <nav aria-label="Filter categories" className="flex flex-wrap gap-2 mb-4">
+            {FILTER_CHIPS.map((chip) => {
+              const active = chip.key === filter
+              const label =
+                chip.key === 'overspent' && overspentCount > 0
+                  ? `${overspentCount} Overspent`
+                  : chip.label
+              const href =
+                chip.key === 'all'
+                  ? `/money/budget?m=${month}`
+                  : `/money/budget?m=${month}&f=${chip.key}`
+              return (
+                <Link
+                  key={chip.key}
+                  href={href}
+                  aria-current={active ? 'true' : undefined}
+                  className={`rounded-pill px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    active ? 'bg-accent-wash text-accent' : 'text-muted hover:text-ink'
+                  }`}
+                >
+                  {label}
+                </Link>
+              )
+            })}
+          </nav>
+
+          <BudgetTable month={current} categories={categories} targets={targets} filter={filter} />
+        </div>
+      </div>
     </AppShell>
   )
 }

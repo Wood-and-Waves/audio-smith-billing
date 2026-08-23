@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { isPlainDate } from '@/lib/dates'
+import { decideCategoryOwnership } from '@/lib/categoryOwnership'
 
 /**
  * Same return shape everywhere in this file, spelled out by Task 7's own
@@ -28,6 +29,13 @@ type Result = { ok: true } | { ok: false; error: string }
  * a failed read must fail closed. Checking `!data` first would read a
  * blown-up query the same as "no such category," and calmly let the caller
  * carry on into the write it was supposed to block.
+ *
+ * The read lives here (it needs a live Supabase client); the decision on
+ * what to do with it is `decideCategoryOwnership` (lib/categoryOwnership.ts)
+ * — pulled out so that exact branch, including the fail-closed ordering,
+ * runs under node --test without a database. This action is otherwise
+ * deliberately untested, same as every other Server Action in this app; this
+ * one check earns the exception (see that file's own comment for why).
  */
 async function categoryOwnedByCaller(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -39,11 +47,7 @@ async function categoryOwnedByCaller(
     .select('owner_id')
     .eq('id', categoryId)
     .maybeSingle()
-  if (error) return { ok: false, error: error.message }
-  if (!data || data.owner_id !== ownerId) {
-    return { ok: false, error: 'That category does not belong to you.' }
-  }
-  return null
+  return decideCategoryOwnership(data, error, ownerId)
 }
 
 /**

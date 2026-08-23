@@ -5,10 +5,41 @@ import type { MonthBudget, BudgetCategory, CategoryMonth, CategoryTarget } from 
 type Entry = { row: CategoryMonth; name: string; sort: number; target: CategoryTarget | null }
 type Section = { name: string; sort: number; entries: Entry[] }
 
+/** The five chips above the table. Anything unrecognised (missing param,
+ *  typo, a stale link) reads as All — the same fallback idiom the page's
+ *  own `m` param already uses rather than 404ing on a bad query string. */
+export type BudgetFilter = 'all' | 'overspent' | 'underfunded' | 'overfunded' | 'available'
+
+/** Parses `searchParams.f`. */
+export function parseBudgetFilter(f: string | undefined): BudgetFilter {
+  return f === 'overspent' || f === 'underfunded' || f === 'overfunded' || f === 'available' ? f : 'all'
+}
+
+/**
+ * Which rows a chip keeps. Overfunded reads `row.targetCents` straight off
+ * the row rather than looking its category up in `targets` a second time —
+ * `targetCents` is null exactly when a category carries no target, and a
+ * category with no target can never be overfunded, so there's nothing left
+ * to check once that's true.
+ */
+export function matchesBudgetFilter(row: CategoryMonth, filter: BudgetFilter): boolean {
+  switch (filter) {
+    case 'overspent': return row.availableCents < 0
+    case 'underfunded': return row.neededCents > 0
+    case 'overfunded': return row.targetCents !== null && row.availableCents > row.targetCents
+    case 'available': return row.availableCents > 0
+    case 'all': return true
+  }
+}
+
 // Same grid every row in this table uses (BudgetRow's own template, repeated
 // here rather than imported so a group header's four cells line up under a
 // category row's four cells without either file reaching into the other).
-const GRID = 'grid grid-cols-[1fr_7rem_7rem_8rem] gap-x-4 items-center'
+// `hidden sm:grid`: Task 8's phone layout drops the per-group name+sums row
+// entirely below `sm` rather than trying to summarize a group across the
+// cards underneath it — the rest of GRID's classes are harmless while
+// hidden and take over once `sm:grid` turns display back on.
+const GRID = 'hidden sm:grid grid-cols-[1fr_7rem_7rem_8rem] gap-x-4 items-center'
 
 /**
  * The month's category rows, grouped by `grp` and ordered by each group's
@@ -37,13 +68,28 @@ const GRID = 'grid grid-cols-[1fr_7rem_7rem_8rem] gap-x-4 items-center'
  * BudgetRow, which threads it on to TargetEditor. This is presentation-path
  * plumbing only: `lib/budget.ts` and `CategoryMonth.targetCents` (still what
  * the progress bar reads) are untouched by it.
+ *
+ * `filter` (Task 8) hides ROWS ONLY. A section's `sums` below are always
+ * folded over its full, unfiltered `entries` — never the visible subset —
+ * and BudgetSummary (the right-hand panel) reads `month` directly and never
+ * sees `filter` at all. This isn't a style choice: the whole reason this
+ * screen exists is to reconcile against YNAB figure for figure, and a total
+ * that silently narrowed to whatever happens to be on screen would make
+ * that check lie the instant Dan clicked a chip — the same reasoning
+ * `CategoryMonth.hidden`'s own comment in lib/budget.ts gives for why
+ * hiding a category never touches what buildBudget sums. A section with no
+ * row left standing after the filter is dropped from the render entirely
+ * (its header would otherwise show real totals above zero visible rows,
+ * which reads as broken rather than filtered); if every section drops out,
+ * the "nothing matches" message below stands in for the grid.
  */
 export default function BudgetTable({
-  month, categories, targets,
+  month, categories, targets, filter,
 }: {
   month: MonthBudget
   categories: BudgetCategory[]
   targets: CategoryTarget[]
+  filter: BudgetFilter
 }) {
   const catById = new Map(categories.map((c) => [c.id, c]))
   const targetByCategoryId = new Map(targets.map((t) => [t.categoryId, t]))
@@ -91,34 +137,49 @@ export default function BudgetTable({
     })
   }
 
+  const rendered = sections
+    .map((section) => {
+      // Full month, not the filtered subset — see this component's own doc
+      // comment above for why that isn't negotiable.
+      const sums = section.entries.reduce(
+        (acc, e) => ({
+          assigned: acc.assigned + e.row.assignedCents,
+          activity: acc.activity + e.row.activityCents,
+          available: acc.available + e.row.availableCents,
+        }),
+        { assigned: 0, activity: 0, available: 0 },
+      )
+      const visible = section.entries.filter((e) => matchesBudgetFilter(e.row, filter))
+      return { section, sums, visible }
+    })
+    .filter(({ visible }) => visible.length > 0)
+
+  if (rendered.length === 0) {
+    return (
+      <p className="text-muted border-l-2 border-line pl-4 py-2">
+        {filter === 'all' ? 'No categories yet.' : 'No categories match this filter.'}
+      </p>
+    )
+  }
+
   return (
     <div className="overflow-x-auto">
-      <div className="min-w-[34rem]">
-        {sections.map((section) => {
-          const sums = section.entries.reduce(
-            (acc, e) => ({
-              assigned: acc.assigned + e.row.assignedCents,
-              activity: acc.activity + e.row.activityCents,
-              available: acc.available + e.row.availableCents,
-            }),
-            { assigned: 0, activity: 0, available: 0 },
-          )
-          return (
-            <section key={section.name} className="mb-6 last:mb-0">
-              <div className={`${GRID} border-b border-line pb-1.5 mb-1`}>
-                <h3 className="eyebrow">{section.name}</h3>
-                <span className="tabular text-right text-xs text-muted">{formatUSD(sums.assigned)}</span>
-                <span className="tabular text-right text-xs text-muted">{formatUSD(sums.activity)}</span>
-                <span className="tabular text-right text-xs text-muted">{formatUSD(sums.available)}</span>
-              </div>
-              <div className="divide-y divide-line">
-                {section.entries.map((e) => (
-                  <BudgetRow key={e.row.categoryId} row={e.row} name={e.name} target={e.target} />
-                ))}
-              </div>
-            </section>
-          )
-        })}
+      <div className="sm:min-w-[34rem]">
+        {rendered.map(({ section, sums, visible }) => (
+          <section key={section.name} className="mb-6 last:mb-0">
+            <div className={`${GRID} border-b border-line pb-1.5 mb-1`}>
+              <h3 className="eyebrow">{section.name}</h3>
+              <span className="tabular text-right text-xs text-muted">{formatUSD(sums.assigned)}</span>
+              <span className="tabular text-right text-xs text-muted">{formatUSD(sums.activity)}</span>
+              <span className="tabular text-right text-xs text-muted">{formatUSD(sums.available)}</span>
+            </div>
+            <div className="divide-y divide-line">
+              {visible.map((e) => (
+                <BudgetRow key={e.row.categoryId} row={e.row} name={e.name} target={e.target} />
+              ))}
+            </div>
+          </section>
+        ))}
       </div>
     </div>
   )

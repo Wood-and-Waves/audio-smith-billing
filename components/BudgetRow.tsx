@@ -175,8 +175,9 @@ function AvailablePill({ row }: { row: CategoryMonth }) {
 /**
  * One category's line in the month grid: name, target status, progress bar,
  * assigned/activity, and the Available pill — everything BudgetTable's grid
- * expects, still under the same `grid-cols-[1fr_7rem_7rem_8rem]` template so
- * a category's figures land under the group's summed ones above it.
+ * expects, still under the same `grid-cols-[1fr_7rem_7rem_8rem]` template at
+ * `sm` and up so a category's figures land under the group's summed ones
+ * above it.
  *
  * `target` is the fix for a real gap in Task 7's first pass: `row`
  * (CategoryMonth, from lib/budget.ts) carries a target's *amount* but never
@@ -187,6 +188,14 @@ function AvailablePill({ row }: { row: CategoryMonth }) {
  * every call site); `BudgetTable` is the only real caller and always passes
  * one or the other explicitly. `lib/budget.ts` itself is untouched — this is
  * presentation-path plumbing, not new arithmetic.
+ *
+ * Below `sm` the SAME markup reflows into a card, with responsive classes
+ * rather than a forked second component that could drift from this one: the
+ * grid collapses to a single column, so the name/status block — already its
+ * own cell — becomes the card's first two lines (name+status, then the
+ * progress bar) for free; the three desktop cells (`hidden sm:…`) drop out;
+ * and one `sm:hidden` three-up row of Assigned/Activity/Available, each
+ * with a small label above its figure, takes their place.
  */
 export default function BudgetRow({
   row, name, target,
@@ -197,7 +206,7 @@ export default function BudgetRow({
 }) {
   const status = statusLine(row.status)
   return (
-    <div className="grid grid-cols-[1fr_7rem_7rem_8rem] gap-x-4 items-center py-2 text-sm">
+    <div className="grid grid-cols-1 sm:grid-cols-[1fr_7rem_7rem_8rem] gap-x-4 gap-y-2 items-center py-2 text-sm">
       <div className="min-w-0">
         <div className="flex items-baseline gap-2">
           <span className="truncate min-w-0">{name}</span>
@@ -208,10 +217,26 @@ export default function BudgetRow({
         </div>
         <TargetProgressBar row={row} />
       </div>
-      <span className="tabular text-right">{formatUSD(row.assignedCents)}</span>
-      <span className="tabular text-right">{formatUSD(row.activityCents)}</span>
-      <div className="flex justify-end">
+
+      <span className="hidden sm:block tabular text-right">{formatUSD(row.assignedCents)}</span>
+      <span className="hidden sm:block tabular text-right">{formatUSD(row.activityCents)}</span>
+      <div className="hidden sm:flex justify-end">
         <AvailablePill row={row} />
+      </div>
+
+      <div className="sm:hidden grid grid-cols-3 gap-2">
+        <div>
+          <p className="text-xs text-muted">Assigned</p>
+          <p className="tabular">{formatUSD(row.assignedCents)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted">Activity</p>
+          <p className="tabular">{formatUSD(row.activityCents)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted">Available</p>
+          <AvailablePill row={row} />
+        </div>
       </div>
     </div>
   )
