@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 import { formatAmount, formatUSD, parseUSD } from '@/lib/money'
 import { formatDateLong, formatDateShort, todayInChicago } from '@/lib/dates'
 import { normalizePayee } from '@/lib/payeeMemory'
+import { OWNER_PAY_CATEGORY_NAME } from '@/lib/ledgerCategories'
 import { type Quad } from '@/lib/receiptQuad'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select from '@/components/ui/Select'
@@ -59,11 +60,13 @@ const KIND_OPTIONS = [
   { value: 'owner_pay', label: 'Owner pay' },
 ] as const
 
-// Owner pay and transfer never carry a category (the DB agrees — see
-// lt_nocat_for_owner_or_transfer, migration 0027), so a row of either kind
-// shows its kind here instead of a category name. Transfer has no UI path to
-// create one yet (schema-ready for phase 2 account pairing only), but a row
-// of that kind still has to render something sane if one ever shows up.
+// Transfer never carries a category (the DB agrees — lt_nocat_for_transfer,
+// migration 0038), so a transfer row shows its kind here instead of a
+// category name (see CategoryText below). It has no UI path to create one
+// yet (schema-ready for phase 2 account pairing only), but a row of that
+// kind still has to render something sane if one ever shows up. Owner pay
+// DOES carry a category now (0038 relaxed that; 0040 backfilled it) — its
+// entry here backs the Kind Select's own label instead.
 const KIND_LABEL: Record<string, string> = {
   income: 'Income', expense: 'Expense', owner_pay: 'Owner pay', transfer: 'Transfer',
 }
@@ -257,18 +260,24 @@ function ReceiptControl({
 }
 
 /**
- * "Group: Name" — a categorized row's category, muted-group. Owner pay and
- * transfer rows show their kind instead (see KIND_LABEL's own comment); an
- * uncategorized income/expense row is never passed here at all (its cell
- * renders the inline Select instead — see inlineCategory in both row
- * renderers below). The group comes from `categories` (the page's own
- * not-hidden list, which already carries grp for the Select) matched by
- * category_id — a row whose category has since been hidden or deleted still
- * has its plain categoryName (denormalized on the row itself) to fall back
- * to, just without the group prefix.
+ * "Group: Name" — a categorized row's category, muted-group. Only transfer
+ * rows show their kind instead (see KIND_LABEL's own comment) — a transfer
+ * never carries a category, so there is nothing else to show. Owner pay
+ * carries a real category since 0038/0040 (C1: the app used to null it on
+ * every write, which silently undid that migration and threw the row's whole
+ * assignment into Ready to Assign) and renders exactly like an income/expense
+ * row below, "Uncategorized" fallback included for the rare row that
+ * genuinely has none. An uncategorized income/expense row is never passed
+ * here at all (its cell renders the inline Select instead — see
+ * inlineCategory in both row renderers below); owner_pay has no such inline
+ * picker, so an uncategorized one DOES reach here. The group comes from
+ * `categories` (the page's own not-hidden list, which already carries grp
+ * for the Select) matched by category_id — a row whose category has since
+ * been hidden or deleted still has its plain categoryName (denormalized on
+ * the row itself) to fall back to, just without the group prefix.
  */
 function CategoryText({ row, categories }: { row: LedgerTxnRow; categories: CategoryOption[] }) {
-  if (row.kind === 'owner_pay' || row.kind === 'transfer') {
+  if (row.kind === 'transfer') {
     return <span className="text-muted">{KIND_LABEL[row.kind]}</span>
   }
   if (!row.categoryName) return <span className="text-muted">Uncategorized</span>
@@ -631,6 +640,13 @@ export default function MoneyRegister({
     { value: '', label: '—' },
     ...shows.map((s) => ({ value: s.id, label: s.label })),
   ]
+  // C1: owner_pay carries a real category since 0038/0040. Looked up by name
+  // (matching migration 0039's insert/0040's backfill exactly — see
+  // OWNER_PAY_CATEGORY_NAME's own comment) so switching the Kind Select to
+  // "Owner pay" can default the picker to it instead of leaving it blank.
+  // undefined when the owner has renamed or deleted that category — the
+  // picker just starts blank in that case, same as any other kind.
+  const ownerPayCategoryId = categories.find((c) => c.name === OWNER_PAY_CATEGORY_NAME)?.id
 
   function add() {
     setError(null)
@@ -652,7 +668,7 @@ export default function MoneyRegister({
         date,
         amountCents,
         kind,
-        categoryId: kind === 'owner_pay' ? null : (categoryId || null),
+        categoryId: categoryId || null,
         showId: showId || null,
         payee,
         memo,
@@ -789,10 +805,12 @@ export default function MoneyRegister({
         date: editDate,
         amountCents,
         kind: editKind,
-        // Owner pay never carries a category (lt_nocat_for_owner_or_transfer)
-        // — send categoryId: null outright rather than trusting the picker
-        // to have already been cleared client-side.
-        categoryId: editKind === 'owner_pay' ? null : (editCategoryId || null),
+        // C1: this used to force categoryId: null whenever editKind was
+        // owner_pay, which nulled out a REAL, already-assigned category on
+        // every single edit of an owner_pay row — quietly undoing 0038/0040
+        // one save at a time. Owner pay carries a category like any other
+        // kind now; only the picker's own value goes here.
+        categoryId: editCategoryId || null,
         showId: editShowId || null,
         payee: editPayee,
         memo: editMemo,
@@ -1060,7 +1078,18 @@ export default function MoneyRegister({
             ariaLabel="Kind"
             value={editKind}
             disabled={pending}
-            onChange={(v) => setEditKind(v as LedgerKind)}
+            onChange={(v) => {
+              const nextKind = v as LedgerKind
+              setEditKind(nextKind)
+              // C1: same default the add row gets — switching Kind to
+              // owner_pay defaults the picker to the Owner Pay category
+              // rather than leaving whatever was there from the row's
+              // previous kind. Editing INTO owner_pay from a different kind
+              // is the only path that reaches this; startEdit already seeds
+              // editCategoryId from the row's own real category_id when the
+              // row already IS owner_pay, so this never clobbers that.
+              if (nextKind === 'owner_pay' && ownerPayCategoryId) setEditCategoryId(ownerPayCategoryId)
+            }}
             options={KIND_OPTIONS}
           />
           <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={editPayee}
@@ -1068,11 +1097,17 @@ export default function MoneyRegister({
           <input aria-label="Amount" inputMode="decimal" placeholder="0.00"
                  className={`${FIELD_FULL} tabular text-right`} value={editAmount} disabled={pending}
                  onChange={(e) => setEditAmount(e.target.value)} />
+          {/* C1: owner_pay can carry a category now — this used to hide/
+              disable the picker for that kind and force-null it in saveEdit,
+              which quietly stripped a real, already-assigned category on
+              every edit. Transfer still cannot carry one, but nothing in
+              this edit form can select transfer (see KIND_OPTIONS) — a
+              transfer row that reaches here keeps whatever editKind
+              startEdit fell it back to (income/expense/owner_pay only). */}
           <Select
             ariaLabel="Category"
-            className={editKind === 'owner_pay' ? 'invisible' : undefined}
             value={editCategoryId}
-            disabled={pending || editKind === 'owner_pay'}
+            disabled={pending}
             onChange={setEditCategoryId}
             options={editCategoryOptions}
           />
@@ -1502,7 +1537,14 @@ export default function MoneyRegister({
           ariaLabel="Kind"
           value={kind}
           disabled={pending}
-          onChange={(v) => setKind(v as LedgerKind)}
+          onChange={(v) => {
+            const nextKind = v as LedgerKind
+            setKind(nextKind)
+            // C1: default the picker to the Owner Pay category the moment
+            // Kind switches to owner_pay, rather than leaving it blank the
+            // way this used to force it null outright.
+            if (nextKind === 'owner_pay' && ownerPayCategoryId) setCategoryId(ownerPayCategoryId)
+          }}
           options={KIND_OPTIONS}
         />
         <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={payee} disabled={pending}
@@ -1510,15 +1552,16 @@ export default function MoneyRegister({
         <input aria-label="Amount" inputMode="decimal" placeholder="0.00"
                className={`${FIELD_FULL} tabular text-right`} value={amount} disabled={pending}
                onChange={(e) => setAmount(e.target.value)} />
-        {/* visibility, not removal from the DOM — an owner-pay row never
-            carries a category (lt_nocat_for_owner_or_transfer), but hiding it
-            this way keeps the grid's fixed sm+ column template aligned
-            instead of shifting every field after it one slot to the left. */}
+        {/* Every kind offered here can carry a category now (C1: owner_pay
+            got one back in 0038/0040 — this used to hide/disable the picker
+            for that kind, which is exactly the bug that let the app keep
+            nulling it out on every write). Transfer still cannot, but
+            nothing in this add form ever creates a transfer row (see
+            KIND_OPTIONS), so there is no kind left here to hide this for. */}
         <Select
           ariaLabel="Category"
-          className={kind === 'owner_pay' ? 'invisible' : undefined}
           value={categoryId}
-          disabled={pending || kind === 'owner_pay'}
+          disabled={pending}
           onChange={setCategoryId}
           options={categoryOptions}
         />

@@ -5,6 +5,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseYnabRegister, mapYnabRow, ALIASES, type YnabRow } from '../../lib/ynabRegister.ts'
+import { OWNER_PAY_CATEGORY_NAME } from '../../lib/ledgerCategories.ts'
 
 const HEADER = '"Account","Flag","Date","Payee","Category Group/Category","Category Group","Category","Memo","Outflow","Inflow","Cleared"'
 
@@ -168,13 +169,13 @@ test('a genuinely zero row (both amounts blank) is skipped zero-amount', () => {
 
 // -- mapYnabRow: owner group --------------------------------------------------
 
-test('Owner Transactions outflow maps to owner_pay, negative, uncategorized', () => {
+test('Owner Transactions outflow maps to owner_pay, negative, and books to the Owner Pay category regardless of YNAB\'s own per-row text', () => {
   const outcome = mapYnabRow(row({ categoryGroup: 'Owner Transactions', category: 'Owner Draw', outflowCents: 20000, inflowCents: 0 }), OPTS)
   assert.equal(outcome.kind, 'txn')
   if (outcome.kind !== 'txn') return
   assert.equal(outcome.txn.kind, 'owner_pay')
   assert.equal(outcome.txn.amountCents, -20000)
-  assert.equal(outcome.txn.categoryName, null)
+  assert.equal(outcome.txn.categoryName, OWNER_PAY_CATEGORY_NAME)
 })
 
 test('Owner Transactions inflow maps to transfer (an owner investment, not income), positive, uncategorized', () => {
@@ -188,13 +189,13 @@ test('Owner Transactions inflow maps to transfer (an owner investment, not incom
 
 // -- mapYnabRow: Transfer-payee rule ------------------------------------------
 
-test('a "Transfer : X" payee outflow maps to owner_pay by the same rule as the owner group', () => {
+test('a "Transfer : X" payee outflow maps to owner_pay by the same rule as the owner group, category included', () => {
   const outcome = mapYnabRow(row({ payee: 'Transfer : Savings', categoryGroup: '', category: '', outflowCents: 30000, inflowCents: 0 }), OPTS)
   assert.equal(outcome.kind, 'txn')
   if (outcome.kind !== 'txn') return
   assert.equal(outcome.txn.kind, 'owner_pay')
   assert.equal(outcome.txn.amountCents, -30000)
-  assert.equal(outcome.txn.categoryName, null)
+  assert.equal(outcome.txn.categoryName, OWNER_PAY_CATEGORY_NAME)
 })
 
 test('a "Transfer : X" payee inflow maps to transfer', () => {
@@ -305,12 +306,12 @@ test('every expense outcome has amountCents < 0', () => {
   assert.ok(outcome.txn.amountCents < 0)
 })
 
-test('every owner_pay outcome has amountCents < 0 and a null category', () => {
+test('every owner_pay outcome has amountCents < 0 and the Owner Pay category', () => {
   const outcome = mapYnabRow(row({ categoryGroup: 'Owner Transactions', outflowCents: 100, inflowCents: 0 }), OPTS)
   assert.equal(outcome.kind, 'txn')
   if (outcome.kind !== 'txn') return
   assert.ok(outcome.txn.amountCents < 0)
-  assert.equal(outcome.txn.categoryName, null)
+  assert.equal(outcome.txn.categoryName, OWNER_PAY_CATEGORY_NAME)
 })
 
 test('every transfer outcome has a null category', () => {

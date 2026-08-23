@@ -417,9 +417,14 @@ export default async function MoneyPage({
   const balanceInputs: BalanceLike[] = allTxns.map((t) => ({ amount_cents: t.amount_cents, cleared: t.cleared }))
   const workingBalanceCents = workingBalance(accountRow.opening_balance_cents, balanceInputs)
   const clearedBalanceCents = clearedBalance(accountRow.opening_balance_cents, balanceInputs)
-  // Owner pay and transfers never carry a category (lt_nocat_for_owner_or_transfer,
-  // migration 0027) — counting them here would inflate the queue with rows
-  // that can never be categorized in the first place.
+  // This is the "uncategorized queue" count, which the inline picker and its
+  // apply-to-same-payee sweep both scope to income/expense (see
+  // setTransactionCategory's own doc comment in app/money/actions.ts) —
+  // transfer never carries a category (lt_nocat_for_transfer, migration
+  // 0038) and owner_pay, though it can carry one since that same migration,
+  // is categorized through the edit form rather than this queue. Counting
+  // either kind here would inflate the queue with rows this workflow was
+  // never meant to surface.
   const uncategorizedCount = allTxns.filter(
     (t) => t.category_id === null && (t.kind === 'income' || t.kind === 'expense'),
   ).length

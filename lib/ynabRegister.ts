@@ -14,6 +14,7 @@
 // No '@/' imports and no JSX — exercised by node --test.
 
 import { roundCents } from './money.ts'
+import { OWNER_PAY_CATEGORY_NAME } from './ledgerCategories.ts'
 
 export type YnabRow = {
   account: string
@@ -201,8 +202,11 @@ function assertInvariants(txn: MappedTxn): void {
   if ((txn.kind === 'expense' || txn.kind === 'owner_pay') && !(txn.amountCents < 0)) {
     throw new Error(`ynabRegister bug: ${txn.kind} row has non-negative amount (${txn.amountCents}).`)
   }
-  if ((txn.kind === 'owner_pay' || txn.kind === 'transfer') && txn.categoryName !== null) {
-    throw new Error(`ynabRegister bug: ${txn.kind} row carries a category ("${txn.categoryName}").`)
+  // Only transfer is nocat now (the DB's own lt_nocat_for_transfer, migration
+  // 0038). Owner pay carries a category as of the same migration — it is
+  // deliberately absent from this check.
+  if (txn.kind === 'transfer' && txn.categoryName !== null) {
+    throw new Error(`ynabRegister bug: transfer row carries a category ("${txn.categoryName}").`)
   }
 }
 
@@ -236,9 +240,13 @@ export function mapYnabRow(row: YnabRow, opts: { accountName: string; startDate:
   // e.g. "Transfer : Savings") — on a one-account business budget, both mean
   // money moving to or from Dan's own pockets, never the business's income
   // or a deduction. Same rule for both: outflow is Dan paying himself
-  // (owner_pay), inflow is Dan putting his own money IN (an owner
-  // investment, not income — hence 'transfer', not 'income'). Never
-  // categorized: paying/funding yourself isn't a line item.
+  // (owner_pay) — since 0038 that is a real budget category, so it books to
+  // OWNER_PAY_CATEGORY_NAME regardless of whatever YNAB's own per-row
+  // category text said (mirroring how every plain inflow below books to the
+  // single Show Income category rather than trusting YNAB's text). Inflow is
+  // Dan putting his own money IN (an owner investment, not income — hence
+  // 'transfer', not 'income'), and a transfer still never carries a category
+  // — the DB still enforces that (lt_nocat_for_transfer, migration 0038).
   const isOwnerLike = row.categoryGroup === OWNER_GROUP || row.payee.startsWith('Transfer')
   if (isOwnerLike) {
     const txn: MappedTxn = {
@@ -247,7 +255,7 @@ export function mapYnabRow(row: YnabRow, opts: { accountName: string; startDate:
       memo,
       amountCents: net,
       kind: net > 0 ? 'transfer' : 'owner_pay',
-      categoryName: null,
+      categoryName: net > 0 ? null : OWNER_PAY_CATEGORY_NAME,
       cleared,
     }
     assertInvariants(txn)

@@ -1,9 +1,13 @@
 // Ledger transaction rules, pure. Two independent checks live here:
 //
 // validateTxnShape mirrors the DB's own check constraints (lt_income_positive,
-// lt_outflow_negative, lt_nocat_for_owner_or_transfer — migration 0027) so a
-// bad row is refused with a message a human can read, before it ever reaches
-// Postgres's raw constraint-violation text. Moved out of app/money/actions.ts
+// lt_outflow_negative, lt_nocat_for_transfer) so a bad row is refused with a
+// message a human can read, before it ever reaches Postgres's raw
+// constraint-violation text. lt_nocat_for_transfer (migration 0038) replaced
+// the old lt_nocat_for_owner_or_transfer (migration 0027): owner pay got its
+// own budget category in 0038/0040 (it is Dan's largest budget line, and the
+// screen cannot add up without it), so only transfer still forbids one. Moved
+// out of app/money/actions.ts
 // so the whole matrix — every valid kind/sign/category combination, and every
 // way to violate it — is pinned by node --test instead of only exercised
 // through a live Server Action.
@@ -42,11 +46,13 @@ export function validateTxnShape(input: {
   if (input.kind === 'owner_pay' && input.amountCents >= 0) {
     return { error: 'Owner pay must be a negative amount.' }
   }
-  // Paying yourself is not a deduction, and a transfer moves money between
-  // your own accounts — neither ever carries a category (the DB agrees: see
-  // lt_nocat_for_owner_or_transfer).
-  if ((input.kind === 'owner_pay' || input.kind === 'transfer') && input.categoryId !== null) {
-    return { error: 'Owner pay and transfers do not use a category.' }
+  // A transfer moves money between your own accounts, never a category (the
+  // DB still enforces this: lt_nocat_for_transfer, migration 0038). Owner pay
+  // USED to be nocat too, but 0038 relaxed that — it is a real budget
+  // category now (0040 backfilled it onto every existing owner_pay row), so
+  // it is deliberately absent from this check.
+  if (input.kind === 'transfer' && input.categoryId !== null) {
+    return { error: 'Transfers do not use a category.' }
   }
   return null
 }

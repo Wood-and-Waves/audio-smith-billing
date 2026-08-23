@@ -1,10 +1,22 @@
 // The seed chart of accounts for an S-Corp audio business. A STARTING POINT,
 // not doctrine: every row is editable/hideable in /money/categories, and
 // Dan's CPA's own chart reshapes it when he gets it. Income categories are
-// not deductions, so they carry deductible: false; owner pay is a
-// transaction KIND (with a null category), so it has no category here.
+// not deductions, so they carry deductible: false. Owner pay is a
+// transaction KIND, but — unlike a transfer — it DOES carry a category
+// (migration 0038 relaxed the old nocat rule; 0040 backfilled it onto every
+// existing owner_pay row): OWNER_PAY_CATEGORY_NAME below is that category,
+// the budget's largest line.
 //
 // No '@/' imports and no JSX — exercised by node --test.
+
+/**
+ * The one category an owner_pay transaction carries, when it carries one at
+ * all — named to match migration 0039's insert and 0040's backfill exactly,
+ * so a name-based lookup (lib/ynabRegister.ts's mapYnabRow, MoneyRegister's
+ * add/edit forms defaulting the picker) resolves to the real row instead of
+ * silently matching nothing.
+ */
+export const OWNER_PAY_CATEGORY_NAME = 'Owner Investment, Pay, and Personal Expenses'
 
 export type CategorySeed = {
   name: string
@@ -45,7 +57,7 @@ export const DEFAULT_CATEGORIES: CategorySeed[] = [
   c('Flights', 'Expenses', 24),
   c('Audio Tools', 'Purchases', 30, true, true),
   c('Misc Business Expenses', 'Purchases', 31),
-  c('Owner Investment, Pay, and Personal Expenses', 'Owner Transactions', 40, false),
+  c(OWNER_PAY_CATEGORY_NAME, 'Owner Transactions', 40, false),
   c('Tax Prep', 'Savings', 50),
   c('State License Fee', 'Savings', 51),
   c('Taxes', 'Savings', 52, false),

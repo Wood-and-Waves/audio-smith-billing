@@ -1317,10 +1317,12 @@ async function fetchUncategorizedSamePayeeCandidates(
  * categorized by hand there can already be a pile of older uncategorized
  * rows for it sitting in the register. Turning this on backfills exactly
  * those — fetchUncategorizedSamePayeeCandidates above already limits the
- * pool to uncategorized income/expense rows, so a row that already has a
- * category, or an owner_pay/transfer row, is never touched. Off, or
- * `categoryId` null (clearing a category isn't something to fan out), it's
- * a no-op and `applied` reports 0.
+ * pool to uncategorized income/expense rows, and the sweep below is gated
+ * the same way, so a row that already has a category, a transfer row, or an
+ * owner_pay row is never touched by the SWEEP (owner_pay can be categorized
+ * directly, same as income/expense — see the guard below — it just isn't
+ * part of payee memory's fan-out). Off, or `categoryId` null (clearing a
+ * category isn't something to fan out), it's a no-op and `applied` reports 0.
  */
 export async function setTransactionCategory(
   id: string,
@@ -1334,12 +1336,13 @@ export async function setTransactionCategory(
   const { data: existing } = await supabase
     .from('ledger_transactions').select('kind, account_id, payee').eq('id', id).maybeSingle()
   if (!existing) return { error: 'That transaction no longer exists.' }
-  // Same rule updateLedgerTransaction's validateTxnShape enforces on write
-  // (lt_nocat_for_owner_or_transfer, migration 0027): paying yourself is not
-  // a deduction and a transfer moves money between your own accounts, so
-  // neither kind ever carries a category.
-  if (existing.kind === 'owner_pay' || existing.kind === 'transfer') {
-    return { error: 'Owner pay and transfers do not use a category.' }
+  // A transfer moves money between your own accounts and never carries a
+  // category (the DB still enforces this: lt_nocat_for_transfer, migration
+  // 0038). Owner pay USED to be refused here too, but 0038 made it a real
+  // budget category — this guard is deliberately narrower than
+  // updateLedgerTransaction's validateTxnShape used to require.
+  if (existing.kind === 'transfer') {
+    return { error: 'Transfers do not use a category.' }
   }
 
   if (categoryId !== null && !(await belongsToCaller(supabase, 'ledger_categories', categoryId))) {
@@ -1357,12 +1360,19 @@ export async function setTransactionCategory(
   // and sweeping every other payee-less row would categorize rows that share
   // no payee at all — the same rule rememberedCategories applies when it
   // refuses to learn from a blank payee.
-  if (applyToSamePayee && categoryId !== null && normalizePayee(existing.payee) !== '') {
-    // existing.kind is narrowed to 'income' | 'expense' here — the
-    // owner_pay/transfer guard above already returned for either of the
-    // other two kinds. Passed through so the sweep can never cross from an
-    // expense row into that payee's income rows (or the reverse) — the same
-    // kind-aware rule payeeMemory's memoryKey enforces on the import side.
+  if (
+    applyToSamePayee && categoryId !== null && normalizePayee(existing.payee) !== ''
+    && (existing.kind === 'income' || existing.kind === 'expense')
+  ) {
+    // existing.kind is checked again here, not just excluded above — only
+    // transfer is refused outright now, so owner_pay reaches this point too,
+    // and fetchUncategorizedSamePayeeCandidates below is typed to exactly
+    // 'income' | 'expense'. Passed through so the sweep can never cross from
+    // an expense row into that payee's income rows (or the reverse) — the
+    // same kind-aware rule payeeMemory's memoryKey enforces on the import
+    // side. Narrowing here also keeps the sweep scoped to income/expense on
+    // purpose: payee memory was never meant to fan out across owner_pay rows,
+    // which the UI itself never offers this sweep for anyway.
     const { rows: candidates, error: candidatesError } =
       await fetchUncategorizedSamePayeeCandidates(supabase, existing.account_id, id, existing.kind)
     if (candidatesError) return { error: candidatesError }

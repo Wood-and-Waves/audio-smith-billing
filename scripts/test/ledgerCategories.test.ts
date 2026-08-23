@@ -4,7 +4,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_CATEGORIES } from '../../lib/ledgerCategories.ts'
+import { DEFAULT_CATEGORIES, OWNER_PAY_CATEGORY_NAME } from '../../lib/ledgerCategories.ts'
 
 test('every category has a non-blank name and group', () => {
   for (const cat of DEFAULT_CATEGORIES) {
@@ -45,4 +45,6 @@ test('owner pay is a real category and is never deductible', () => {
   const owner = DEFAULT_CATEGORIES.find((c) => c.grp === 'Owner Transactions')
   assert.ok(owner, 'owner pay must have a category — the budget cannot add up without one')
   assert.equal(owner.deductible, false, 'paying yourself is not a deduction')
+  assert.equal(owner.name, OWNER_PAY_CATEGORY_NAME,
+    'must match migration 0039\'s insert and 0040\'s backfill verbatim, or a name lookup silently matches nothing')
 })
