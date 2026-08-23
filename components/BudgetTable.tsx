@@ -3,7 +3,12 @@ import BudgetRow from '@/components/BudgetRow'
 import type { MonthBudget, BudgetCategory, CategoryMonth, CategoryTarget } from '@/lib/budget'
 
 type Entry = { row: CategoryMonth; name: string; sort: number; target: CategoryTarget | null }
-type Section = { name: string; sort: number; entries: Entry[] }
+// `key` is a React key, distinct from `name` (which is display text and
+// duplicable — see the synthetic "Hidden" section below): every real group's
+// key is prefixed `group:`, which a section built from `category.grp` can
+// never collide with the sentinel `synthetic:hidden` key used for the
+// catch-all section, even if an owner names a real group "Hidden" verbatim.
+type Section = { key: string; name: string; sort: number; entries: Entry[] }
 
 /** The five chips above the table. Anything unrecognised (missing param,
  *  typo, a stale link) reads as All — the same fallback idiom the page's
@@ -47,10 +52,14 @@ export function matchesBudgetFilter(row: CategoryMonth, filter: BudgetFilter): b
 // Same grid every row in this table uses (BudgetRow's own template, repeated
 // here rather than imported so a group header's four cells line up under a
 // category row's four cells without either file reaching into the other).
-// `hidden sm:grid`: Task 8's phone layout drops the per-group name+sums row
-// entirely below `sm` rather than trying to summarize a group across the
-// cards underneath it — the rest of GRID's classes are harmless while
-// hidden and take over once `sm:grid` turns display back on.
+// `hidden sm:grid`: this four-cell layout doesn't fit the phone card idiom
+// BudgetRow's own rows collapse into below `sm`, so it's hidden there — but
+// the group boundary itself (name and totals) still has to render somehow,
+// or a phone reader loses the section headers entirely (a bug this table
+// used to have: see the `sm:hidden` header rendered just above this grid,
+// which is what fills that gap with the same 3-up small-label idiom
+// BudgetRow uses for a row's own figures). The rest of GRID's classes are
+// harmless while hidden and take over once `sm:grid` turns display back on.
 const GRID = 'hidden sm:grid grid-cols-[1fr_7rem_7rem_8rem] gap-x-4 items-center'
 
 /**
@@ -131,7 +140,9 @@ export default function BudgetTable({
       existing.entries.push(entry)
       existing.sort = Math.min(existing.sort, category.sort)
     } else {
-      sectionsByGroup.set(category.grp, { name: category.grp, sort: category.sort, entries: [entry] })
+      sectionsByGroup.set(category.grp, {
+        key: `group:${category.grp}`, name: category.grp, sort: category.sort, entries: [entry],
+      })
     }
   }
 
@@ -140,9 +151,13 @@ export default function BudgetTable({
 
   // Always last, regardless of what sort value its members carry — it isn't
   // a real category group, it's a catch-all for whatever hidden rows still
-  // have money in them this month.
+  // have money in them this month. `key: 'synthetic:hidden'` (not `name`,
+  // which is what actually renders): a real group can be named "Hidden" by
+  // hand, and every real section's key is prefixed `group:`, so the two can
+  // never collide the way two sections keyed on `name` would.
   if (hiddenEntries.length > 0) {
     sections.push({
+      key: 'synthetic:hidden',
       name: 'Hidden',
       sort: Infinity,
       entries: hiddenEntries.sort((a, b) => a.sort - b.sort),
@@ -183,7 +198,31 @@ export default function BudgetTable({
     <div className="overflow-x-auto">
       <div className="sm:min-w-[34rem]">
         {rendered.map(({ section, sums, visible }) => (
-          <section key={section.name} className="mb-6 last:mb-0">
+          <section key={section.key} className="mb-6 last:mb-0">
+            {/* Phone: BudgetRow's own card layout collapses to one column
+                below `sm`, and GRID (below) is hidden there too — without a
+                phone header, the group boundary disappears entirely: name
+                included, so the screen becomes an unlabelled flat list and
+                the synthetic "Hidden" section reads as just another group.
+                Same 3-up small-label idiom BudgetRow's own `sm:hidden` block
+                uses for a category row's own figures. */}
+            <div className="sm:hidden border-b border-line pb-1.5 mb-1">
+              <h3 className="eyebrow">{section.name}</h3>
+              <div className="grid grid-cols-3 gap-2 mt-1">
+                <div>
+                  <p className="text-xs text-muted">Assigned</p>
+                  <p className="tabular text-xs">{formatUSD(sums.assigned)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted">Activity</p>
+                  <p className="tabular text-xs">{formatUSD(sums.activity)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted">Available</p>
+                  <p className="tabular text-xs">{formatUSD(sums.available)}</p>
+                </div>
+              </div>
+            </div>
             <div className={`${GRID} border-b border-line pb-1.5 mb-1`}>
               <h3 className="eyebrow">{section.name}</h3>
               <span className="tabular text-right text-xs text-muted">{formatUSD(sums.assigned)}</span>
