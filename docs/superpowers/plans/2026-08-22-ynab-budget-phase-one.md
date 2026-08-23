@@ -1512,6 +1512,19 @@ Ready to Assign sits centred beneath, in three states driven by
 
 - [ ] **Step 3: Build `components/BudgetTable.tsx`**
 
+**Hidden categories.** `buildBudget` returns a row for **every** spending
+category, hidden ones included, each carrying a `hidden: boolean` — hiding is a
+presentation concern and never an accounting one, so a hidden category's money
+still counts in every month total. That makes the filtering this table's job:
+
+- A hidden row that is **completely empty** for the month — zero assigned, zero
+  activity, zero available — is simply not rendered. This is the normal case:
+  Bank Fees, Lodging and Subscriptions are all retired with nothing in them.
+- A hidden row that still holds money or saw activity **is** rendered, in a
+  `Hidden` group at the bottom of the table. Otherwise the visible rows would not
+  sum to the month totals, and a reader checking the arithmetic by hand would
+  find money that appears from nowhere.
+
 A server component. Groups the month's rows by their category's `grp`, ordered by
 the lowest `sort` in each group, and renders one section per group:
 
@@ -1649,8 +1662,9 @@ Read from `searchParams.f`, one of `overspent`, `underfunded`, `overfunded`,
 | Money Available | `availableCents > 0` |
 
 Filtering hides rows only — **group totals and the summary panel always describe
-the whole month**, never the filtered subset. A filter that silently changed the
-totals would make the parity check lie. Add a comment saying so.
+the whole month**, never the filtered subset. This is the same rule the hidden-row
+handling in Task 6 follows, and for the same reason: a total that silently ranged
+over a subset would make the parity check lie. Add a comment saying so.
 
 The active chip carries `aria-current="true"` and `bg-accent-wash text-accent`;
 the rest are `text-muted hover:text-ink`. The Overspent chip shows its count when
