@@ -192,9 +192,14 @@ test('a row carries its target\'s figure so the bar and the filters need not ref
   assert.equal(row(build(), '2026-01', 'a').targetCents, null)
 })
 
-test('hidden categories stay out of the budget entirely', () => {
+test('a hidden category still gets a row — hiding is presentation, not accounting', () => {
   const b = build({ categories: [cat('a'), cat('gone', { hidden: true })] })
-  assert.deepEqual(b.get('2026-01')!.rows.map((r) => r.categoryId), ['a'])
+  const rows = b.get('2026-01')!.rows
+  assert.deepEqual(rows.map((r) => r.categoryId), ['a', 'gone'],
+    'the row count reflects every spending category, hidden or not')
+  assert.equal(rows.find((r) => r.categoryId === 'a')!.hidden, false)
+  assert.equal(rows.find((r) => r.categoryId === 'gone')!.hidden, true,
+    'the flag is copied through for the presentation layer to act on — it never filters a row or a total')
 })
 
 test('month totals are the sum of their rows', () => {
@@ -207,4 +212,92 @@ test('month totals are the sum of their rows', () => {
   assert.equal(m.assignedCents, 80_000)
   assert.equal(m.activityCents, -20_000)
   assert.equal(m.availableCents, 60_000)
+})
+
+// --- hidden is a presentation concern, never an accounting one ---
+
+test('a hidden spending category counts its transactions as activity, not income, and Ready to Assign ignores the hidden flag', () => {
+  const hiddenScenario = build({
+    categories: [cat('a'), cat('h', { hidden: true })],
+    moves: [assign('2026-01', 'h', 50_000)],
+    txns: [spend('2026-01', 'h', -20_000)],
+  })
+  const visibleScenario = build({
+    categories: [cat('a'), cat('h', { hidden: false })],
+    moves: [assign('2026-01', 'h', 50_000)],
+    txns: [spend('2026-01', 'h', -20_000)],
+  })
+
+  const r = row(hiddenScenario, '2026-01', 'h')
+  assert.equal(r.activityCents, -20_000, 'the transaction is activity, not income')
+  assert.equal(r.availableCents, 30_000)
+  assert.equal(r.hidden, true)
+  assert.equal(hiddenScenario.get('2026-01')!.readyToAssignCents, -50_000,
+    'assigning 50,000 into a hidden category still pulls it out of Ready to Assign')
+  assert.equal(hiddenScenario.get('2026-01')!.readyToAssignCents,
+    visibleScenario.get('2026-01')!.readyToAssignCents,
+    'hidden is presentation-only — it must not change Ready to Assign')
+})
+
+test('a move into a hidden category reduces Ready to Assign exactly as it would for a visible one', () => {
+  const b = build({
+    categories: [cat('vis'), cat('hid', { hidden: true })],
+    txns: [spend('2026-01', null, 100_000)],
+    moves: [assign('2026-01', 'hid', 40_000)],
+  })
+  assert.equal(b.get('2026-01')!.readyToAssignCents, 60_000)
+  assert.equal(row(b, '2026-01', 'hid').assignedCents, 40_000)
+  assert.equal(row(b, '2026-01', 'hid').availableCents, 40_000)
+})
+
+// --- spentCents never reports a negative ---
+
+test('a funded category whose activity is net positive (a refund landing after the purchase) reports zero spent, never negative', () => {
+  const b = build({
+    targets: [monthly('a', 20_000)],
+    moves: [assign('2026-01', 'a', 20_000)],
+    txns: [spend('2026-01', 'a', 3_000)],
+  })
+  assert.deepEqual(row(b, '2026-01', 'a').status, { kind: 'funded', spentCents: 0, targetCents: 20_000 })
+})
+
+test('an overspent category with zero activity reports zero spent, not negative zero', () => {
+  const b = build({
+    targets: [monthly('a', 20_000)],
+    moves: [{ month: '2026-01', fromCategoryId: 'a', toCategoryId: null, amountCents: 5_000 }],
+  })
+  assert.deepEqual(row(b, '2026-01', 'a').status,
+    { kind: 'overspent', spentCents: 0, assignedCents: -5_000 })
+})
+
+// --- the cases that only show up once a year ---
+
+test('a range spanning December into January carries balances and Ready to Assign correctly across the year boundary', () => {
+  const b = buildBudget({
+    categories: [cat('a')], targets: [],
+    txns: [spend('2025-12', null, 50_000), spend('2025-12', 'a', -8_000)],
+    moves: [assign('2025-12', 'a', 20_000)],
+    fromMonth: '2025-12', toMonth: '2026-01',
+  })
+  assert.equal(row(b, '2025-12', 'a').availableCents, 12_000)
+  assert.equal(row(b, '2026-01', 'a').availableCents, 12_000,
+    'December\'s balance carries into January across the year boundary')
+  assert.equal(row(b, '2026-01', 'a').assignedCents, 0)
+  assert.equal(b.get('2025-12')!.readyToAssignCents, 30_000)
+  assert.equal(b.get('2026-01')!.readyToAssignCents, 30_000,
+    'nothing overspent in December, so January\'s Ready to Assign carries in unchanged')
+  assert.deepEqual([...b.keys()], ['2025-12', '2026-01'])
+})
+
+test('a by-date target due in a later year divides its shortfall across the right number of months', () => {
+  // 30,000 wanted by the end of January 2027, nothing saved, starting November 2026:
+  // Nov, Dec, Jan is three months, so 10,000 a month — even though the due
+  // date's year differs from the start month's.
+  const b = buildBudget({
+    categories: [cat('a')], moves: [], txns: [],
+    targets: [{ categoryId: 'a', kind: 'by_date', amountCents: 30_000, dueDate: '2027-01-31' }],
+    fromMonth: '2026-11', toMonth: '2027-01',
+  })
+  assert.equal(row(b, '2026-11', 'a').neededCents, 10_000)
+  assert.deepEqual(row(b, '2026-11', 'a').status, { kind: 'needed_eventually', remainingCents: 30_000 })
 })

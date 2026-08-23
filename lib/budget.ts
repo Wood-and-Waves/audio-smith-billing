@@ -91,6 +91,11 @@ export type CategoryMonth = {
    *  and the Overfunded filter both need it, and neither should have to be
    *  handed the raw targets list a second time. */
   targetCents: number | null
+  /** Copied straight from the category. Hidden is a presentation concern —
+   *  every cent in this row is still real, counted money — so this field
+   *  exists purely for the UI to decide what to show or fold away. It must
+   *  never be used to filter what a total sums over. */
+  hidden: boolean
 }
 
 export type MonthBudget = {
@@ -136,7 +141,7 @@ function statusFor(
 
   // Red beats everything: an overspent category is the one thing Dan has to act on.
   if (available < 0) {
-    return { status: { kind: 'overspent', spentCents: -activity, assignedCents: assigned }, needed }
+    return { status: { kind: 'overspent', spentCents: Math.max(0, -activity), assignedCents: assigned }, needed }
   }
   if (needed > 0) {
     return target.kind === 'monthly'
@@ -152,9 +157,14 @@ function statusFor(
   // figure across the target's whole window, which this does not model, and a
   // wrong cumulative number would be worse than an honest monthly one.
   return {
-    // `-activity || 0` avoids reporting -0 when nothing was spent — `-0` is a
-    // distinct value from `0` under strict-equality assertions.
-    status: { kind: 'funded', spentCents: -activity || 0, targetCents: target.amountCents },
+    // Math.max(0, -activity) clamps two distinct cases to the same honest
+    // answer: nothing spent (-activity is -0, a value strict-equality
+    // assertions treat as distinct from 0) and net-positive activity, e.g. a
+    // refund landing in a later month than its purchase (-activity is
+    // genuinely negative). Neither is "Dan overspent a funded category" —
+    // that's what the `overspent` branch above already reports — so both
+    // read as zero spent here.
+    status: { kind: 'funded', spentCents: Math.max(0, -activity), targetCents: target.amountCents },
     needed: 0,
   }
 }
@@ -169,8 +179,15 @@ export function buildBudget(input: {
 }): Map<string, MonthBudget> {
   const { categories, moves, txns, targets, fromMonth, toMonth } = input
 
+  // Hidden is a presentation concern, never an accounting one: a hidden
+  // category's money is still real money. It must stay in spendingIds so
+  // its moves and transactions are still counted as assigned/activity
+  // instead of leaking into Ready to Assign as if they were untagged income
+  // — and so hiding a category never rewrites a single past month's Ready
+  // to Assign. Do not add `&& !c.hidden` back here; that is exactly the bug
+  // this comment exists to stop.
   const spending = categories
-    .filter((c) => c.budgetRole === 'spending' && !c.hidden)
+    .filter((c) => c.budgetRole === 'spending')
     .sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name))
   const spendingIds = new Set(spending.map((c) => c.id))
   const targetOf = new Map(targets.map((t) => [t.categoryId, t]))
@@ -230,6 +247,7 @@ export function buildBudget(input: {
         categoryId: c.id, assignedCents: a, activityCents: act,
         availableCents: available, status, neededCents: needed,
         targetCents: targetOf.get(c.id)?.amountCents ?? null,
+        hidden: c.hidden,
       })
 
       tAssigned += a
