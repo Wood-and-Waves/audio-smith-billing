@@ -270,6 +270,20 @@ test('an overspent category with zero activity reports zero spent, not negative 
     { kind: 'overspent', spentCents: 0, assignedCents: -5_000 })
 })
 
+test('an overspent category with genuinely net-positive activity (a refund) also reports zero spent, never negative', () => {
+  // A large category-to-category move OUT (30,000) leaves the category
+  // overspent even after a 3,000 refund lands the same month — activity
+  // itself is +3,000, genuinely positive, not the -0 the test above covers.
+  const b = build({
+    targets: [monthly('a', 20_000)],
+    moves: [{ month: '2026-01', fromCategoryId: 'a', toCategoryId: null, amountCents: 30_000 }],
+    txns: [spend('2026-01', 'a', 3_000)],
+  })
+  assert.equal(row(b, '2026-01', 'a').availableCents, -27_000, 'still overspent overall')
+  assert.deepEqual(row(b, '2026-01', 'a').status,
+    { kind: 'overspent', spentCents: 0, assignedCents: -30_000 })
+})
+
 // --- the cases that only show up once a year ---
 
 test('a range spanning December into January carries balances and Ready to Assign correctly across the year boundary', () => {

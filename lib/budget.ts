@@ -176,6 +176,13 @@ function statusFor(
 
   // Red beats everything: an overspent category is the one thing Dan has to act on.
   if (available < 0) {
+    // Same Math.max(0, -activity) clamp as the `funded` branch below, and
+    // the same two cases: nothing spent this month (-activity is -0) reads
+    // as zero, and net-positive activity (a refund) also reads as zero
+    // rather than negative — a category can be overspent AND have net-
+    // positive activity at once (e.g. a large category-to-category move out
+    // leaves `available` negative even after a refund lands), and "spent"
+    // has no honest negative meaning either way.
     return { status: { kind: 'overspent', spentCents: Math.max(0, -activity), assignedCents: assigned }, needed }
   }
   if (needed > 0) {
