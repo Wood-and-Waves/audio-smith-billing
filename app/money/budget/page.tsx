@@ -145,11 +145,13 @@ type RawTargetRow = {
   due_date: string | null
 }
 
-// Empty today — 0038 shipped the table, but nothing writes to it until
-// Task 7's editor. Fetched (and paged) anyway rather than stubbed: every row
-// buildBudget hands back simply carries `status: { kind: 'none' }` until
-// then, which is the honest result of "no targets exist yet," not a
-// shortcut this page is taking.
+// 0038 shipped the table; components/TargetEditor.tsx (via
+// app/money/budget/actions.ts's setCategoryTarget/clearCategoryTarget) is
+// the editor that writes to it now, so this can be genuinely empty for an
+// owner who hasn't set any targets yet, or full for one who has. Fetched
+// (and paged) either way rather than stubbed: a category with no target
+// simply carries `status: { kind: 'none' }` out of buildBudget, which is the
+// honest result of "no target exists," not a shortcut this page is taking.
 async function fetchAllCategoryTargets(
   supabase: Awaited<ReturnType<typeof createClient>>,
 ): Promise<{ rows: RawTargetRow[]; error: string | null }> {
