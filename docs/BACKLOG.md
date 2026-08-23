@@ -81,6 +81,25 @@ books agree to the penny — every one was confirmed against the underlying rows
 
 **And his 17 targets need entering by hand** — YNAB has no target export.
 
+**Month picker (added 2026-08-23, `components/MonthPicker.tsx`).** The month label
+opens a YNAB-style popover: a `‹ 2026 ›` year row over a 4x3 month grid, current
+month filled with the accent, future-but-reachable months subdued, out-of-range
+months greyed and genuinely `disabled` rather than hidden — Dan's explicit
+instruction, from YNAB's own behaviour. Year arrows grey when the adjacent year
+has no month in range. The header arrows now grey at the boundary instead of
+vanishing, and month navigation carries the active filter forward, which it
+previously dropped. Polish left open, all reviewed as Minor:
+- `yearInRange` and the availability check are pure functions with no unit tests;
+  they were verified by hand and in the browser across 2026-2028 including both
+  boundaries, so this is a regression gap rather than a correctness one. Extracting
+  them to a lib (the `lib/categoryOwnership.ts` pattern) would close it.
+- Clicking a header arrow while the picker is open returns focus to the picker's
+  trigger rather than the arrow clicked; navigation still happens correctly.
+- `MonthPicker`'s `filterQuery` guards on `filter !== 'all'`, which the page has
+  already normalised to `undefined` — a dead half-condition.
+- The year-stepper arrows look the same at rest whether enabled or disabled; they
+  differ only on hover. Mirrors the app's pre-existing header-arrow idiom.
+
 **Two things the design doc specifies that phase one did not build**, recorded
 here so they are deferred rather than forgotten:
 - **The wide canvas.** The spec puts the budget "on the wide canvas the register
