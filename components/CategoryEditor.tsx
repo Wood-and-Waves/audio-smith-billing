@@ -13,6 +13,12 @@ export type CategoryRow = {
   hidden: boolean
   isEquipment: boolean
   deductible: boolean
+  /** 'income' rows are inflows to Ready to Assign, never budget rows — see
+   *  lib/budget.ts's own BudgetCategory.budgetRole comment. Surfaced here
+   *  (I2) so a category seeded or renamed into the wrong role is
+   *  correctable instead of silently landing on the DB's 'spending'
+   *  default forever. */
+  budgetRole: 'spending' | 'income'
 }
 
 /**
@@ -61,7 +67,7 @@ export default function CategoryEditor({ categories }: { categories: CategoryRow
     start(async () => {
       const result = await saveCategory({
         id: row.id, name, grp: row.grp, hidden: row.hidden, isEquipment: row.isEquipment,
-        deductible: row.deductible,
+        deductible: row.deductible, budgetRole: row.budgetRole,
       })
       if ('error' in result) { setError(result.error); return }
       setNames((prev) => { const next = { ...prev }; delete next[row.id]; return next })
@@ -69,7 +75,10 @@ export default function CategoryEditor({ categories }: { categories: CategoryRow
     })
   }
 
-  function toggle(row: CategoryRow, patch: { hidden?: boolean; isEquipment?: boolean; deductible?: boolean }) {
+  function toggle(
+    row: CategoryRow,
+    patch: { hidden?: boolean; isEquipment?: boolean; deductible?: boolean; budgetRole?: 'spending' | 'income' },
+  ) {
     setError(null)
     start(async () => {
       const result = await saveCategory({
@@ -79,6 +88,7 @@ export default function CategoryEditor({ categories }: { categories: CategoryRow
         hidden: patch.hidden ?? row.hidden,
         isEquipment: patch.isEquipment ?? row.isEquipment,
         deductible: patch.deductible ?? row.deductible,
+        budgetRole: patch.budgetRole ?? row.budgetRole,
       })
       if ('error' in result) { setError(result.error); return }
       router.refresh()
@@ -93,7 +103,14 @@ export default function CategoryEditor({ categories }: { categories: CategoryRow
       // Deductible defaults on for a new category, income group included —
       // Dan can untick it right away for an Income-group addition (income
       // rows are never a deduction), same as he can with Hidden/Equipment.
-      const result = await saveCategory({ id: null, name, grp, hidden: false, isEquipment: false, deductible: true })
+      // budgetRole defaults from the group it's being added to (I2) — a
+      // sensible starting guess for the common case of adding to the Income
+      // group, not a substitute for the explicit per-row toggle below, which
+      // is what actually makes a wrong guess correctable afterward.
+      const result = await saveCategory({
+        id: null, name, grp, hidden: false, isEquipment: false, deductible: true,
+        budgetRole: grp === 'Income' ? 'income' : 'spending',
+      })
       if ('error' in result) { setError(result.error); return }
       setNewNames((prev) => ({ ...prev, [grp]: '' }))
       router.refresh()
@@ -132,6 +149,16 @@ export default function CategoryEditor({ categories }: { categories: CategoryRow
                   <input type="checkbox" className="h-4 w-4 accent-accent" checked={row.deductible}
                          disabled={pending} onChange={(e) => toggle(row, { deductible: e.target.checked })} />
                   Deductible
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-muted">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-accent"
+                    checked={row.budgetRole === 'income'}
+                    disabled={pending}
+                    onChange={(e) => toggle(row, { budgetRole: e.target.checked ? 'income' : 'spending' })}
+                  />
+                  Income (lands in Ready to Assign, never a budget row)
                 </label>
               </li>
             ))}

@@ -4,7 +4,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_CATEGORIES, OWNER_PAY_CATEGORY_NAME } from '../../lib/ledgerCategories.ts'
+import { DEFAULT_CATEGORIES, OWNER_PAY_CATEGORY_NAME, seedCategoryRows } from '../../lib/ledgerCategories.ts'
 
 test('every category has a non-blank name and group', () => {
   for (const cat of DEFAULT_CATEGORIES) {
@@ -47,4 +47,20 @@ test('owner pay is a real category and is never deductible', () => {
   assert.equal(owner.deductible, false, 'paying yourself is not a deduction')
   assert.equal(owner.name, OWNER_PAY_CATEGORY_NAME,
     'must match migration 0039\'s insert and 0040\'s backfill verbatim, or a name lookup silently matches nothing')
+})
+
+// seedCategoryRows is the exact row shape ensureDefaultCategories inserts —
+// pinned here so a future edit that drops a column from that mapping (e.g.
+// budget_role) fails this test instead of only surfacing as Ready to Assign
+// quietly disagreeing with YNAB once a new income category gets seeded.
+test('seedCategoryRows carries every seed field through to the insert payload, budget_role included', () => {
+  const rows = seedCategoryRows('owner-1')
+  assert.equal(rows.length, DEFAULT_CATEGORIES.length)
+  for (const row of rows) {
+    assert.equal(row.owner_id, 'owner-1')
+    assert.ok('budget_role' in row, `${row.name} insert payload is missing budget_role`)
+  }
+  const incomeNames = rows.filter((r) => r.budget_role === 'income').map((r) => r.name).sort()
+  assert.deepEqual(incomeNames, ['Other Income', 'Show Income'],
+    'exactly the Income-group categories should reach the DB as budget_role \'income\'')
 })

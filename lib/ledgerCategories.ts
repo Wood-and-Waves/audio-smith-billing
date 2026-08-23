@@ -63,3 +63,30 @@ export const DEFAULT_CATEGORIES: CategorySeed[] = [
   c('Taxes', 'Savings', 52, false),
   c('Retained Earnings', 'Savings', 53),
 ]
+
+/**
+ * owner_id + the seed list -> the exact row shape ensureDefaultCategories
+ * inserts. The one place that shape is built, so a future edit that drops a
+ * column (budget_role, say) breaks this function's own test in under a
+ * second, instead of only showing up as Ready to Assign quietly disagreeing
+ * with YNAB months later.
+ */
+export function seedCategoryRows(ownerId: string): Array<{
+  owner_id: string
+  name: string
+  grp: string
+  sort: number
+  deductible: boolean
+  is_equipment: boolean
+  budget_role: 'spending' | 'income'
+}> {
+  return DEFAULT_CATEGORIES.map((cat) => ({
+    owner_id: ownerId,
+    name: cat.name,
+    grp: cat.grp,
+    sort: cat.sort,
+    deductible: cat.deductible,
+    is_equipment: cat.is_equipment,
+    budget_role: cat.budget_role,
+  }))
+}

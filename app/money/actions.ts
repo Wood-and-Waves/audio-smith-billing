@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { isPlainDate, todayInChicago } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
-import { DEFAULT_CATEGORIES } from '@/lib/ledgerCategories'
+import { DEFAULT_CATEGORIES, seedCategoryRows } from '@/lib/ledgerCategories'
 import { clearedBalance, type BalanceLike } from '@/lib/ledgerBalance'
 import { envelopeBalances, type EnvelopeMoveLike } from '@/lib/envelopes'
 import { parseOfx, type ParsedOfx } from '@/lib/ofx'
@@ -68,16 +68,12 @@ export async function ensureDefaultCategories(): Promise<Fail | { ok: true; seed
   if (countError) return { error: countError.message }
   if ((count ?? 0) > 0) return { ok: true, seeded: 0 }
 
-  const { error } = await supabase.from('ledger_categories').insert(
-    DEFAULT_CATEGORIES.map((c) => ({
-      owner_id: user.id,
-      name: c.name,
-      grp: c.grp,
-      sort: c.sort,
-      deductible: c.deductible,
-      is_equipment: c.is_equipment,
-    })),
-  )
+  // seedCategoryRows (lib/ledgerCategories) is the one place that builds this
+  // shape — including budget_role, which a hand-written insert here dropped
+  // before (I2): every seeded category landed on the DB's 'spending' default,
+  // silently, with no visible symptom until Ready to Assign stopped matching
+  // YNAB.
+  const { error } = await supabase.from('ledger_categories').insert(seedCategoryRows(user.id))
   if (error) {
     // Migration 0028's unique index (owner_id, name) is the backstop for the
     // race this function's count-then-insert can't close on its own: two
@@ -154,6 +150,12 @@ export async function saveCategory(input: {
   hidden: boolean
   isEquipment: boolean
   deductible: boolean
+  /** 'income' rows are inflows to Ready to Assign, never budget rows (see
+   *  lib/budget.ts's own BudgetCategory.budgetRole comment). Threaded
+   *  through explicitly rather than inferred from `grp` — the DB column
+   *  comment says why: group names are free text the owner can rename at
+   *  will (I2). */
+  budgetRole: 'spending' | 'income'
 }): Promise<Fail | { ok: true }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -184,6 +186,7 @@ export async function saveCategory(input: {
       hidden: input.hidden,
       is_equipment: input.isEquipment,
       deductible: input.deductible,
+      budget_role: input.budgetRole,
     })
     if (error) {
       // Migration 0028's unique index (owner_id, name) — same race
@@ -196,7 +199,10 @@ export async function saveCategory(input: {
   } else {
     const { error } = await supabase
       .from('ledger_categories')
-      .update({ name, grp, hidden: input.hidden, is_equipment: input.isEquipment, deductible: input.deductible })
+      .update({
+        name, grp, hidden: input.hidden, is_equipment: input.isEquipment, deductible: input.deductible,
+        budget_role: input.budgetRole,
+      })
       .eq('id', input.id)
     if (error) {
       if (error.code === '23505') return { error: `You already have a category named "${name}".` }
