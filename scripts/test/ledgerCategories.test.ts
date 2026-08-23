@@ -33,3 +33,16 @@ test('sort orders are unique so the editor renders deterministically', () => {
   const sorts = DEFAULT_CATEGORIES.map((c) => c.sort)
   assert.equal(new Set(sorts).size, sorts.length)
 })
+
+test('income categories are inflows, never budget rows', () => {
+  for (const cat of DEFAULT_CATEGORIES) {
+    assert.equal(cat.budget_role === 'income', cat.grp === 'Income',
+      `${cat.name} should be income-role exactly when it is in the Income group`)
+  }
+})
+
+test('owner pay is a real category and is never deductible', () => {
+  const owner = DEFAULT_CATEGORIES.find((c) => c.grp === 'Owner Transactions')
+  assert.ok(owner, 'owner pay must have a category — the budget cannot add up without one')
+  assert.equal(owner.deductible, false, 'paying yourself is not a deduction')
+})

@@ -219,22 +219,20 @@ test('a plain inflow maps to income, Show Income, with the payee preserved', () 
 
 // -- mapYnabRow: expenses, aliases --------------------------------------------
 
-test('Spotify aliases to Subscriptions', () => {
-  assert.equal(ALIASES['Spotify'], 'Subscriptions')
-  const outcome = mapYnabRow(row({ payee: 'Spotify', category: 'Spotify', outflowCents: 999, inflowCents: 0 }), OPTS)
-  assert.equal(outcome.kind, 'txn')
-  if (outcome.kind !== 'txn') return
-  assert.equal(outcome.txn.categoryName, 'Subscriptions')
-  assert.equal(outcome.txn.kind, 'expense')
-  assert.equal(outcome.txn.amountCents, -999)
-})
+test('Spotify and Clear are real categories now (0039 converged the lists) and pass through unchanged', () => {
+  assert.deepEqual(ALIASES, {})
 
-test('Clear aliases to Subscriptions', () => {
-  assert.equal(ALIASES['Clear'], 'Subscriptions')
-  const outcome = mapYnabRow(row({ category: 'Clear', outflowCents: 1999, inflowCents: 0 }), OPTS)
-  assert.equal(outcome.kind, 'txn')
-  if (outcome.kind !== 'txn') return
-  assert.equal(outcome.txn.categoryName, 'Subscriptions')
+  const spotify = mapYnabRow(row({ payee: 'Spotify', category: 'Spotify', outflowCents: 999, inflowCents: 0 }), OPTS)
+  assert.equal(spotify.kind, 'txn')
+  if (spotify.kind !== 'txn') return
+  assert.equal(spotify.txn.categoryName, 'Spotify')
+  assert.equal(spotify.txn.kind, 'expense')
+  assert.equal(spotify.txn.amountCents, -999)
+
+  const clear = mapYnabRow(row({ category: 'Clear', outflowCents: 1999, inflowCents: 0 }), OPTS)
+  assert.equal(clear.kind, 'txn')
+  if (clear.kind !== 'txn') return
+  assert.equal(clear.txn.categoryName, 'Clear')
 })
 
 test('an unknown category name passes through unchanged (caller resolves/tallies it)', () => {

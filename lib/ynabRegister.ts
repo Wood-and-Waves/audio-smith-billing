@@ -41,15 +41,11 @@ export type MapOutcome =
   | { kind: 'txn'; txn: MappedTxn }
   | { kind: 'skip'; reason: 'zero-amount' | 'starting-balance' | 'before-start' | 'other-account' }
 
-// YNAB spells a couple of category names differently than Dan's seeded chart
-// (lib/ledgerCategories.ts). This is a NAME rewrite only — the caller is the
-// one that turns a name into a category_id, and it leaves anything not
-// listed here (and anything this doesn't rewrite to a real chart name)
-// uncategorized rather than guess.
-export const ALIASES: Record<string, string> = {
-  Spotify: 'Subscriptions',
-  Clear: 'Subscriptions',
-}
+// YNAB spells category names exactly as Dan's chart does since 0039 converged
+// the two lists, so nothing needs rewriting today. Kept because the moment YNAB
+// and the chart disagree again, this is where the rewrite belongs — and leaving
+// an unlisted name uncategorised is still better than guessing.
+export const ALIASES: Record<string, string> = {}
 
 // The YNAB category group Dan uses for moving money to/from his own pockets
 // (owner draws, owner investments) rather than the business's. Transactions

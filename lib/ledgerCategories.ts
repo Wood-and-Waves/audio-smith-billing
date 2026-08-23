@@ -12,13 +12,17 @@ export type CategorySeed = {
   sort: number
   deductible: boolean
   is_equipment: boolean
+  budget_role: 'spending' | 'income'
 }
 
 const c = (
   name: string, grp: string, sort: number,
   deductible = true, is_equipment = false,
-): CategorySeed => ({ name, grp, sort, deductible, is_equipment })
+  budget_role: 'spending' | 'income' = 'spending',
+): CategorySeed => ({ name, grp, sort, deductible, is_equipment, budget_role })
 
+// This list is a copy of Dan's own 2026 YNAB categories (0039 converged the
+// two), so the budget screen can be checked row-for-row against YNAB.
 export const DEFAULT_CATEGORIES: CategorySeed[] = [
   // Dan's own chart, lifted from the business YNAB budget he ran before this
   // module existed (ynab-reflect export, 2026-08-19) — his words, his groups.
@@ -27,21 +31,23 @@ export const DEFAULT_CATEGORIES: CategorySeed[] = [
   // federal estimates are not a business deduction, and overstating
   // deductions is the one direction this tool must never fail — his CPA can
   // flip it if his state taxes belong there.
-  c('Show Income', 'Income', 0, false),
-  c('Other Income', 'Income', 1, false),
+  c('Show Income', 'Income', 0, false, false, 'income'),
+  c('Other Income', 'Income', 1, false, false, 'income'),
   c('Insurance', 'Bills', 10),
   c('Workers Comp', 'Bills', 11),
-  c('Software', 'Bills', 12),
-  c('Subscriptions', 'Bills', 13),
-  c('Bank Fees', 'Bills', 14),
-  c('Meals and Entertainment', 'Expenses', 20),
-  c('Gig Expenses', 'Expenses', 21),
-  c('Transportation', 'Expenses', 22),
-  c('Flights', 'Expenses', 23),
-  c('Lodging', 'Expenses', 24),
-  c('Mileage Reimbursement', 'Expenses', 25),
+  c('Spotify', 'Bills', 12),
+  c('Clear', 'Bills', 13),
+  c('Software', 'Bills', 14),
+  c('Mileage Reimbursement', 'Expenses', 20),
+  c('Meals and Entertainment', 'Expenses', 21),
+  c('Gig Expenses', 'Expenses', 22),
+  c('Transportation', 'Expenses', 23),
+  c('Flights', 'Expenses', 24),
   c('Audio Tools', 'Purchases', 30, true, true),
   c('Misc Business Expenses', 'Purchases', 31),
-  c('Tax Prep', 'Taxes', 40),
-  c('Taxes', 'Taxes', 41, false),
+  c('Owner Investment, Pay, and Personal Expenses', 'Owner Transactions', 40, false),
+  c('Tax Prep', 'Savings', 50),
+  c('State License Fee', 'Savings', 51),
+  c('Taxes', 'Savings', 52, false),
+  c('Retained Earnings', 'Savings', 53),
 ]
