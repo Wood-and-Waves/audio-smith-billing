@@ -197,6 +197,15 @@ export default function BudgetTable({
   return (
     <div className="overflow-x-auto">
       <div className="sm:min-w-[34rem]">
+        {/* Column headers — desktop only: GRID is `hidden sm:grid`, and the phone
+            cards already label each figure inline. Named after YNAB's own header
+            row, which is what Dan reads this screen against. */}
+        <div className={`${GRID} border-b border-line pb-1.5 mb-2`}>
+          <span className="eyebrow">Category</span>
+          <span className="eyebrow text-right">Assigned</span>
+          <span className="eyebrow text-right">Activity</span>
+          <span className="eyebrow text-right">Available</span>
+        </div>
         {rendered.map(({ section, sums, visible }) => (
           <section key={section.key} className="mb-6 last:mb-0">
             {/* Phone: BudgetRow's own card layout collapses to one column
