@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { todayInChicago, monthLabel, addMonths } from '@/lib/dates'
+import { todayInChicago, addMonths } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
 import {
   buildBudget, FIRST_BUDGET_MONTH, OPENING_MONTH, MAX_MONTHS_AHEAD,
@@ -9,6 +9,7 @@ import {
 import AppShell from '@/components/AppShell'
 import BudgetTable, { parseBudgetFilter, type BudgetFilter } from '@/components/BudgetTable'
 import BudgetSummary from '@/components/BudgetSummary'
+import MonthPicker from '@/components/MonthPicker'
 
 export const dynamic = 'force-dynamic'
 
@@ -328,6 +329,12 @@ export default async function MoneyBudgetPage({
 
   const rta = current.readyToAssignCents
   const filter = parseBudgetFilter(params.f)
+  // Carried onto both header arrows and the month picker below so stepping
+  // months (or picking one from the popover) never silently resets an
+  // active filter chip back to All — before this fix the arrows linked to
+  // `?m=…` alone and dropped `f` on every click. Walking months with
+  // Overspent held on is exactly how you find when a category went red.
+  const filterQuery = filter === 'all' ? '' : `&f=${filter}`
   // Overspent is the one chip that shows a count (Dan's own "3 Overspent").
   // Counted over the whole month's rows, same as every other total on this
   // page — never the filtered subset, and never affected by which chip (if
@@ -341,24 +348,53 @@ export default async function MoneyBudgetPage({
 
       <header className="flex flex-col items-center gap-5 mb-10">
         <div className="flex items-center gap-3">
-          {month !== FIRST_BUDGET_MONTH && (
+          {/* Rendered always, greyed and non-interactive at the boundary
+              rather than vanishing (YNAB greys these too, and a control
+              that disappears shifts the layout right under the pointer). A
+              `disabled` `<button>` instead of a link at the boundary — same
+              "not a link" idiom MonthPicker's own out-of-range months use —
+              so it's unreachable by keyboard, not merely grey. */}
+          {month !== FIRST_BUDGET_MONTH ? (
             <Link
-              href={`/money/budget?m=${addMonths(month, -1)}`}
+              href={`/money/budget?m=${addMonths(month, -1)}${filterQuery}`}
               aria-label="Previous month"
               className="text-muted hover:text-ink transition-colors text-lg leading-none"
             >
               ‹
             </Link>
+          ) : (
+            <button
+              type="button"
+              disabled
+              aria-label="Previous month"
+              className="text-muted transition-colors text-lg leading-none"
+            >
+              ‹
+            </button>
           )}
-          <h2 className="eyebrow text-ink">{monthLabel(month)}</h2>
-          {month !== ceiling && (
+          <MonthPicker
+            month={month}
+            today={today.slice(0, 7)}
+            lastMonth={ceiling}
+            filter={filter === 'all' ? undefined : filter}
+          />
+          {month !== ceiling ? (
             <Link
-              href={`/money/budget?m=${addMonths(month, 1)}`}
+              href={`/money/budget?m=${addMonths(month, 1)}${filterQuery}`}
               aria-label="Next month"
               className="text-muted hover:text-ink transition-colors text-lg leading-none"
             >
               ›
             </Link>
+          ) : (
+            <button
+              type="button"
+              disabled
+              aria-label="Next month"
+              className="text-muted transition-colors text-lg leading-none"
+            >
+              ›
+            </button>
           )}
         </div>
 
