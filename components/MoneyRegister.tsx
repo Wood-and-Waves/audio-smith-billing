@@ -1651,7 +1651,7 @@ export default function MoneyRegister({
           <div className="hidden sm:block">
             <div
               style={{ gridTemplateColumns: gridTemplate }}
-              className="grid gap-x-3 pl-3 -ml-3 pr-3 pb-2 mb-1 border-b border-line select-none
+              className="grid gap-x-3 pl-3 -ml-3 pr-3 pt-3 pb-2 mb-1 border-b border-line select-none
                          sticky top-16 z-10 bg-bg"
             >
               <span aria-hidden />
