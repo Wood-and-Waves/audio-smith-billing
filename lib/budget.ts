@@ -25,6 +25,18 @@ import { addMonths } from './dates.ts'
 export const FIRST_BUDGET_MONTH = '2026-01'
 
 /**
+ * How far past today the viewable month may reach. Budgeting two years out
+ * is already beyond anything this screen's design contemplates, and without
+ * a ceiling `?m=9999-12` is a real month — buildBudget's loop would still
+ * terminate, but only after ~95,000 iterations of per-category work to get
+ * there. A plain number, not a month string, because lib/*.ts takes no
+ * clock reads; the caller (which has `today`) turns this into a month.
+ * Read together with FIRST_BUDGET_MONTH, this is the other half of the
+ * viewable window.
+ */
+export const MAX_MONTHS_AHEAD = 24
+
+/**
  * Where the opening seed lives. Navigation never reaches it: it exists so that
  * January's carry-in is whatever YNAB was holding at the end of 2025, and so
  * that the account's opening balance has a month to arrive in.
@@ -227,7 +239,16 @@ export function buildBudget(input: {
   let rta = 0
   let carriedOverspend = 0
 
-  for (let m = fromMonth; ; m = addMonths(m, 1)) {
+  // 'YYYY-MM' strings are zero-padded, so a lexical (<=) comparison is a
+  // correct, total ordering over months — unlike the old `m === toMonth`
+  // exit check, it cannot be stepped over by a toMonth that addMonths can
+  // never actually land on (addMonths only ever normalises through
+  // Date.UTC into real zero-padded months; '2026-13' is not one of them).
+  // It also makes a toMonth earlier than fromMonth simply run zero
+  // iterations instead of looping forever trying to reach a month behind
+  // it. A pure function must not hang on bad input, whatever its caller
+  // validates.
+  for (let m = fromMonth; m <= toMonth; m = addMonths(m, 1)) {
     const assigned = assignedBy.get(m) ?? new Map<string, number>()
     const activity = activityBy.get(m) ?? new Map<string, number>()
 
@@ -272,8 +293,6 @@ export function buildBudget(input: {
       availableCents: tAvailable,
       underfundedCents: tUnderfunded,
     })
-
-    if (m === toMonth) break
   }
 
   return out

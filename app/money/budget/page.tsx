@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { todayInChicago, monthLabel, addMonths } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
 import {
-  buildBudget, FIRST_BUDGET_MONTH, OPENING_MONTH,
+  buildBudget, FIRST_BUDGET_MONTH, OPENING_MONTH, MAX_MONTHS_AHEAD,
   type BudgetCategory, type BudgetMove, type BudgetTxn, type CategoryTarget,
 } from '@/lib/budget'
 import AppShell from '@/components/AppShell'
@@ -16,7 +16,11 @@ export const dynamic = 'force-dynamic'
 // helper on garbage input. `f` isn't read yet — Task 8's filter chips land
 // on this same query param, and the type is shaped for that now so this
 // page's signature doesn't change again when they do.
-const MONTH_KEY = /^\d{4}-\d{2}$/
+// The month component is constrained to 01-12 (not just \d{2}) so a value
+// like "2026-13" reads as malformed rather than as a real month greater
+// than every legitimate one — that used to slip past the FIRST_BUDGET_MONTH
+// clamp below and fall straight into buildBudget as toMonth.
+const MONTH_KEY = /^\d{4}-(0[1-9]|1[0-2])$/
 
 // Supabase selects silently cap at 1000 rows (PostgREST's max_rows) with no
 // error. ledger_transactions is already past 300 rows and grows every month,
@@ -94,7 +98,10 @@ type RawTxnRow = { date: string; category_id: string | null; amount_cents: numbe
 // fetchAllForecastTxns. Filtered to FIRST_BUDGET_MONTH forward — anything
 // earlier is already folded into the account's opening_balance_cents (see
 // the opening-seed comment below), and reading it again here would
-// double-count it into Ready to Assign.
+// double-count it into Ready to Assign. The single-account `.eq` is also a
+// silent trade, not just a precedent: the moment a second open account
+// exists, its transactions are simply never read here, and the budget
+// understates itself with nothing on screen to say so.
 async function fetchAllBudgetTxns(
   supabase: Awaited<ReturnType<typeof createClient>>,
   accountId: string,
@@ -180,8 +187,15 @@ export default async function MoneyBudgetPage({
 
   const today = todayInChicago()
   const requested = params.m && MONTH_KEY.test(params.m) ? params.m : today.slice(0, 7)
-  // Below the first month there is no ledger, so there is nothing honest to show.
-  const month = requested < FIRST_BUDGET_MONTH ? FIRST_BUDGET_MONTH : requested
+  // Below the first month there is no ledger, so there is nothing honest to
+  // show; above the ceiling there is nothing to plan for yet either, and
+  // without this a viewable month like "9999-12" would still be a real
+  // month — see MAX_MONTHS_AHEAD's own comment for the cost of that.
+  const ceiling = addMonths(today.slice(0, 7), MAX_MONTHS_AHEAD)
+  const month =
+    requested < FIRST_BUDGET_MONTH ? FIRST_BUDGET_MONTH :
+    requested > ceiling ? ceiling :
+    requested
 
   // Same single-account model as the register: the one open checking
   // account this ledger runs from, "first" by creation, same tie-break the
@@ -247,9 +261,19 @@ export default async function MoneyBudgetPage({
   // to assign: the opening balance is $585.75 and YNAB's carry-in is
   // $584.74, the difference being a penny stranded in a Novo account this
   // app does not carry.
+  //
+  // Clamped to the later of OPENING_MONTH and the account's own opening
+  // month: buildBudget only ever consults income for months inside
+  // [fromMonth, toMonth], which below is always [OPENING_MONTH, last]. If
+  // opening_date's month ever fell before OPENING_MONTH — a data-entry
+  // mistake, a replaced account, a future migration — the seed would land
+  // outside the built range and the opening balance would vanish from Ready
+  // to Assign in every month, with nothing on screen to say so.
+  const openingMonth = accountRow.opening_date.slice(0, 7)
+  const seedMonth = openingMonth > OPENING_MONTH ? openingMonth : OPENING_MONTH
   const txns: BudgetTxn[] = [
     {
-      month: accountRow.opening_date.slice(0, 7),
+      month: seedMonth,
       categoryId: null,
       amountCents: accountRow.opening_balance_cents,
     },

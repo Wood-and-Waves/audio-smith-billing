@@ -301,3 +301,24 @@ test('a by-date target due in a later year divides its shortfall across the righ
   assert.equal(row(b, '2026-11', 'a').neededCents, 10_000)
   assert.deepEqual(row(b, '2026-11', 'a').status, { kind: 'needed_eventually', remainingCents: 30_000 })
 })
+
+// --- loop termination on bad input: a pure function must not hang no matter
+// what its caller lets through ---
+
+test('a toMonth no addMonths step can ever land on still terminates, covering exactly the months genuinely in range', () => {
+  // '2026-13' isn't a real month, so addMonths (which only ever normalises
+  // through Date.UTC into real zero-padded months) can never produce it —
+  // the old `m === toMonth` exit condition would loop forever. Lexical
+  // '2026-13' sorts after every real 2026 month and before '2027-01', so the
+  // honest answer is exactly the twelve real months of 2026.
+  const b = build({ fromMonth: '2026-01', toMonth: '2026-13' })
+  assert.deepEqual([...b.keys()], [
+    '2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06',
+    '2026-07', '2026-08', '2026-09', '2026-10', '2026-11', '2026-12',
+  ])
+})
+
+test('a toMonth earlier than fromMonth returns an empty map instead of looping', () => {
+  const b = build({ fromMonth: '2026-03', toMonth: '2026-01' })
+  assert.deepEqual([...b.keys()], [])
+})
