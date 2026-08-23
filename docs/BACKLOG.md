@@ -3,34 +3,75 @@
 The canonical list of deferred work. Each item carries just enough design that a
 future session can build it without re-discovery. Dated when added.
 
-## Per-month budgeting with month navigation (2026-08-22, Dan)
+## Per-month budgeting — PHASE ONE SHIPPED 2026-08-23
 
-Dan: *"I want to be able to budget per month and move between the months. My
-plan is to go back to January and set the budgets the same as YNAB to prove
-how they work."* This is the real YNAB Rule-1 model and the biggest gap
-between `/money/budget` and the tool he actually knows.
+Dan's ask: *"I want to be able to budget per month and move between the months.
+My plan is to go back to January and set the budgets the same as YNAB to prove
+how they work."*
 
-- **What exists today:** `ledger_envelopes` + an immutable
-  `ledger_envelope_moves` ledger (0030). Allocation is a single running
-  total — there is no notion of "August's budget" vs "September's", so
-  there is nothing to navigate between and no month-over-month carryover.
-- **What YNAB does:** each envelope gets an *amount budgeted this month*;
-  a month's leftover rolls into the same envelope next month; overspend
-  is handled per category. Available-to-allocate is computed per month
-  from income received that month plus last month's leftover.
-- **Likely shape:** moves already carry dates, so a per-month view can be
-  derived rather than stored — bucket moves by month and show budgeted /
-  activity / available per envelope per month, with ‹ › navigation like
-  `/calendar`'s. Storing a per-month budgeted figure explicitly may still
-  be needed for "budgeted but not yet moved."
-- **His proof plan matters for design:** he intends to backfill January
-  onward and compare against YNAB's own numbers, so the arithmetic has to
-  match YNAB's definitions closely enough to reconcile, and entering a
-  past month's budget must be as easy as the current month's.
-- Brainstorm openers: does a month's leftover roll forward automatically or
-  on a click; how is overspend shown; does the existing immutable-move
-  ledger stay the source of truth (it should) or gain a per-month budgeted
-  table beside it.
+Built as `/money/budget` (design:
+`docs/superpowers/specs/2026-08-22-ynab-budget-design.md`; plan:
+`docs/superpowers/plans/2026-08-22-ynab-budget-phase-one.md`; migrations
+0038-0040). The category list converged on his real YNAB 2026 chart, the
+arithmetic lives in `lib/budget.ts` and reproduces all 1,421 rows of his export
+with zero mismatches, and `scripts/import/ynab-plan.mjs` backfilled Jan-Aug.
+See CLAUDE.md for the two formulas and the rules that must not be re-derived.
+
+**Phase two — assigning and moving money.** Deliberately split out so the
+numbers could be proved before any path existed that changes one:
+- Typing a figure into the Assigned box (writes the difference as a move).
+- Moving money between categories to cover an overspent one — one row, not two
+  edits. The tables and the arithmetic already support it.
+- Undo/Redo via `ledger_budget_moves.undone_at`, which the schema already has
+  and `lib/budget.ts` already honours.
+- Recent Moves — the move table read back.
+
+**Also deferred, with reasons:**
+- **Auto-assign.** Dan uses it in YNAB but did not pick it for phase one.
+  `underfundedCents` is already computed per month, so the number the button
+  needs exists; only the write path is missing.
+- **Target history.** YNAB does not export targets and this stores only their
+  current state, so a past month is judged against today's target. Assigned,
+  Activity and Available stay exact — only the status wording on closed months
+  can read oddly. Versioning targets by month is real work for a cosmetic gain.
+- **Split transactions.** Exactly one occurred in all of 2026 (a 3/5 transfer
+  YNAB split two ways).
+- **Credit-card handling.** No card in the books; YNAB's hardest feature is out
+  of scope by circumstance.
+- **A second budget account.** `fetchAllBudgetTxns` filters to the one open
+  account, matching every sibling `/money/*` page. The moment a second open
+  account exists the budget understates itself with nothing on screen to say
+  so — the source comment says as much.
+- **`components/BudgetPanel.tsx` and the 0030 envelope tables** are now dead:
+  the panel has no caller and the tables shipped empty and stayed empty. Left
+  in place (ADDITIVE ONLY); retire deliberately, not incidentally.
+- **`ensureDefaultEnvelopes`** in `app/money/actions.ts` lost its only caller
+  when the budget page was rewritten.
+- **`app/money/forecast/page.tsx`** still computes "available to allocate" from
+  the empty envelope moves. Harmless — the answer equals the working balance —
+  but it is a stale concept now.
+- **`scripts/import/ynab-backfill.mjs`'s header** claims its CSV mechanics live
+  in `lib/ynabRegister.ts`; nothing outside that module's own test imports it.
+- **Import-script hardening:** `--start` accepts a shape-valid but impossible
+  month like `2026-13`; `--file` silently overwrites an earlier path; and the
+  "idempotent by deletion" claim in its header only holds for a re-run with the
+  same `--start`.
+- **A move's `owner_id` is not tied to the owner of its categories** — exact
+  parity with 0030's `ledger_envelope_moves`, so not a regression, but the same
+  gap the target actions now close by walking the category's own FK.
+
+**Dan's ledger punch list** (independent of the code; doing these makes the two
+books agree to the penny — every one was confirmed against the underlying rows):
+1. Import the **$592.10** Fairmont Hotel Chicago charge (8/20).
+2. Add the missing **$35.00** Insurance refund.
+3. Add the missing **$112.51** of Audio Tools refunds.
+4. Split **$400.00** off the 3/5 owner-pay row to Temporary Transfer; its
+   counterpart is already there — a +$400.00 inflow on 3/2 from Smith Checking,
+   currently an uncategorised `transfer`. A round trip.
+5. Categorise the three **$15.00 Monthly Service Fee** rows (1/30, 2/27, 3/31)
+   to **Retained Earnings**, which is where YNAB books them.
+
+**And his 17 targets need entering by hand** — YNAB has no target export.
 
 ## Show day types — SHIPPED 2026-08-22
 
