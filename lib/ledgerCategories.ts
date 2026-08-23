@@ -34,7 +34,10 @@ const c = (
 ): CategorySeed => ({ name, grp, sort, deductible, is_equipment, budget_role })
 
 // This list is a copy of Dan's own 2026 YNAB categories (0039 converged the
-// two), so the budget screen can be checked row-for-row against YNAB.
+// two; 0041 restored the rest of his chart beyond 2026 activity, minus four
+// categories he keeps hidden in YNAB with zero 2026 transactions — Apple
+// Music, Waves, YNAB, Mexico — omitted on his direction), so the budget
+// screen can be checked row-for-row against YNAB.
 export const DEFAULT_CATEGORIES: CategorySeed[] = [
   // Dan's own chart, lifted from the business YNAB budget he ran before this
   // module existed (ynab-reflect export, 2026-08-19) — his words, his groups.
@@ -55,9 +58,17 @@ export const DEFAULT_CATEGORIES: CategorySeed[] = [
   c('Gig Expenses', 'Expenses', 22),
   c('Transportation', 'Expenses', 23),
   c('Flights', 'Expenses', 24),
+  c('Hotels', 'Expenses', 25),
   c('Audio Tools', 'Purchases', 30, true, true),
-  c('Misc Business Expenses', 'Purchases', 31),
-  c(OWNER_PAY_CATEGORY_NAME, 'Owner Transactions', 40, false),
+  c('Office Expenses', 'Purchases', 31),
+  c('Computers', 'Purchases', 32, true, true),
+  c('Education', 'Purchases', 33),
+  c('Misc Business Expenses', 'Purchases', 34),
+  c('Temporary Transfer', 'Owner Transactions', 40, false),
+  c('Loan to Wood and Waves', 'Owner Transactions', 41, false),
+  c('Charitable Giving', 'Owner Transactions', 42, false),
+  c(OWNER_PAY_CATEGORY_NAME, 'Owner Transactions', 43, false),
+  c('Money Due Wood and Waves', 'Owner Transactions', 44, false),
   c('Tax Prep', 'Savings', 50),
   c('State License Fee', 'Savings', 51),
   c('Taxes', 'Savings', 52, false),

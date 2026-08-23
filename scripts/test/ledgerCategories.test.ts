@@ -24,9 +24,9 @@ test('income categories are never deductions', () => {
   }
 })
 
-test('exactly Audio Tools carries the equipment flag', () => {
+test('exactly Audio Tools and Computers carry the equipment flag', () => {
   const flagged = DEFAULT_CATEGORIES.filter((c) => c.is_equipment)
-  assert.deepEqual(flagged.map((c) => c.name), ['Audio Tools'])
+  assert.deepEqual(flagged.map((c) => c.name), ['Audio Tools', 'Computers'])
 })
 
 test('sort orders are unique so the editor renders deterministically', () => {
@@ -42,11 +42,25 @@ test('income categories are inflows, never budget rows', () => {
 })
 
 test('owner pay is a real category and is never deductible', () => {
-  const owner = DEFAULT_CATEGORIES.find((c) => c.grp === 'Owner Transactions')
+  // Owner Transactions now holds several categories (Temporary Transfer, Loan
+  // to Wood and Waves, Charitable Giving, owner pay, Money Due Wood and
+  // Waves), so find owner pay by its own name rather than by group alone.
+  const owner = DEFAULT_CATEGORIES.find((c) => c.name === OWNER_PAY_CATEGORY_NAME)
   assert.ok(owner, 'owner pay must have a category — the budget cannot add up without one')
+  assert.equal(owner.grp, 'Owner Transactions', 'owner pay belongs in the Owner Transactions group')
   assert.equal(owner.deductible, false, 'paying yourself is not a deduction')
   assert.equal(owner.name, OWNER_PAY_CATEGORY_NAME,
     'must match migration 0039\'s insert and 0040\'s backfill verbatim, or a name lookup silently matches nothing')
+})
+
+test('every money-movement category in Owner Transactions defaults non-deductible', () => {
+  // Temporary Transfer, Loan to Wood and Waves, Charitable Giving, and Money
+  // Due Wood and Waves all default non-deductible per the chart's standing
+  // doctrine: overstating deductions is the one direction this tool must
+  // never fail. The CPA flips what belongs to him.
+  for (const cat of DEFAULT_CATEGORIES.filter((c) => c.grp === 'Owner Transactions')) {
+    assert.equal(cat.deductible, false, `${cat.name} should default non-deductible`)
+  }
 })
 
 // seedCategoryRows is the exact row shape ensureDefaultCategories inserts —
