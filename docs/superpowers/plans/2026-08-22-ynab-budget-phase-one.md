@@ -427,7 +427,7 @@ Both are now real categories, so the map is empty — keep it exported and keep 
 comment, since a future YNAB rename will want it back.
 
 ```ts
-// YNAB spells category names exactly as Dan's chart does since 0039 converged
+// YNAB spells category names exactly as Dan''s chart does since 0039 converged
 // the two lists, so nothing needs rewriting today. Kept because the moment YNAB
 // and the chart disagree again, this is where the rewrite belongs — and leaving
 // an unlisted name uncategorised is still better than guessing.
@@ -603,7 +603,7 @@ figures never enter the repository.
 ```ts
 // The two formulas that run the budget screen, pinned.
 //
-// A wrong number here is a wrong number in Dan's books, and the whole point of
+// A wrong number here is a wrong number in Dan''s books, and the whole point of
 // this screen is that it reconciles against YNAB — so the rollover rule and the
 // Ready to Assign rule each get their own tests, including the cases that only
 // show up once a year.
@@ -652,17 +652,17 @@ test('overspending does NOT roll forward — the category restarts at zero', () 
   const b = build({ moves: [assign('2026-01', 'a', 10_000)], txns: [spend('2026-01', 'a', -15_000)] })
   assert.equal(row(b, '2026-01', 'a').availableCents, -5_000)
   assert.equal(row(b, '2026-02', 'a').availableCents, 0,
-    'February starts clean; January's overspend is Ready to Assign's problem')
+    'February starts clean; January''s overspend is Ready to Assign''s problem')
 })
 
-test('last month's overspending is taken out of this month's Ready to Assign', () => {
+test('last month''s overspending is taken out of this month''s Ready to Assign', () => {
   const b = build({
     moves: [assign('2026-01', 'a', 10_000)],
     txns: [spend('2026-01', null, 100_000), spend('2026-01', 'a', -15_000)],
   })
   // January: 100,000 in, 10,000 assigned -> 90,000 left to assign.
   assert.equal(b.get('2026-01')!.readyToAssignCents, 90_000)
-  // February inherits that, less January's 5,000 of overspending.
+  // February inherits that, less January''s 5,000 of overspending.
   assert.equal(b.get('2026-02')!.readyToAssignCents, 85_000)
 })
 
@@ -754,7 +754,7 @@ test('overspending beats every other status — red wins', () => {
 test('carried money counts towards a monthly target — you do not refund what is already there', () => {
   const b = build({ targets: [monthly('a', 20_000)], moves: [assign('2026-01', 'a', 20_000)] })
   assert.deepEqual(row(b, '2026-02', 'a').status, { kind: 'funded', spentCents: 0, targetCents: 20_000 })
-  assert.equal(row(b, '2026-02', 'a').neededCents, 0, 'February needs nothing — January's money carried')
+  assert.equal(row(b, '2026-02', 'a').neededCents, 0, 'February needs nothing — January''s money carried')
 })
 
 test('a by-date target spreads what is missing across the months remaining', () => {
@@ -767,7 +767,7 @@ test('a by-date target spreads what is missing across the months remaining', () 
   assert.deepEqual(row(b, '2026-01', 'a').status, { kind: 'needed_eventually', remainingCents: 30_000 })
 })
 
-test('a by-date target with this month's share already in reads as on track', () => {
+test('a by-date target with this month''s share already in reads as on track', () => {
   const b = build({
     targets: [{ categoryId: 'a', kind: 'by_date', amountCents: 30_000, dueDate: '2026-03-31' }],
     moves: [assign('2026-01', 'a', 10_000)],
@@ -789,7 +789,7 @@ test('a category with no target has no status and never counts as underfunded', 
   assert.equal(b.get('2026-01')!.underfundedCents, 0)
 })
 
-test('a row carries its target's figure so the bar and the filters need not refetch', () => {
+test('a row carries its target''s figure so the bar and the filters need not refetch', () => {
   const b = build({ targets: [monthly('a', 20_000)] })
   assert.equal(row(b, '2026-01', 'a').targetCents, 20_000)
   assert.equal(row(build(), '2026-01', 'a').targetCents, null)
@@ -824,16 +824,16 @@ Expected: FAIL, `Cannot find module '../../lib/budget.ts'`.
 - [ ] **Step 3: Implement `lib/budget.ts`**
 
 ```ts
-// Budget arithmetic — YNAB's month grid.
+// Budget arithmetic — YNAB''s month grid.
 //
-// Two formulas run this screen, both validated against 1,421 rows of Dan's own
+// Two formulas run this screen, both validated against 1,421 rows of Dan''s own
 // YNAB export before a line of this existed:
 //
 //   available(c, m) = max(0, available(c, m-1)) + assigned(c, m) + activity(c, m)
 //   rta(m) = rta(m-1) + income(m) - SUM assigned(c, m) + SUM min(0, available(c, m-1))
 //
 // The max(0, ...) is the whole trick. A positive balance rolls forward; a
-// negative one does not. Cash overspending is absorbed by the NEXT month's Ready
+// negative one does not. Cash overspending is absorbed by the NEXT month''s Ready
 // to Assign and the category restarts at zero. Letting negatives roll forward
 // instead produces 23 mismatches against that same export, so this is settled by
 // evidence rather than taste.
@@ -852,8 +852,8 @@ export const FIRST_BUDGET_MONTH = '2026-01'
 
 /**
  * Where the opening seed lives. Navigation never reaches it: it exists so that
- * January's carry-in is whatever YNAB was holding at the end of 2025, and so
- * that the account's opening balance has a month to arrive in.
+ * January''s carry-in is whatever YNAB was holding at the end of 2025, and so
+ * that the account''s opening balance has a month to arrive in.
  */
 export const OPENING_MONTH = '2025-12'
 
@@ -913,7 +913,7 @@ export type CategoryMonth = {
   status: TargetStatus
   /** What it would take to satisfy the target this month. Drives Underfunded. */
   neededCents: number
-  /** The target's figure, or null when the category has none. The progress bar
+  /** The target''s figure, or null when the category has none. The progress bar
    *  and the Overfunded filter both need it, and neither should have to be
    *  handed the raw targets list a second time. */
   targetCents: number | null
@@ -923,7 +923,7 @@ export type MonthBudget = {
   month: string
   rows: CategoryMonth[]
   readyToAssignCents: number
-  /** Sum of what carried in — the summary panel's "Left Over from Last Month". */
+  /** Sum of what carried in — the summary panel''s "Left Over from Last Month". */
   leftOverCents: number
   assignedCents: number
   activityCents: number
@@ -931,7 +931,7 @@ export type MonthBudget = {
   underfundedCents: number
 }
 
-/** Inclusive month count from `month` to `dueDate`'s month; never below 1. */
+/** Inclusive month count from `month` to `dueDate`''s month; never below 1. */
 function monthsUntil(month: string, dueDate: string): number {
   const [my, mm] = month.split('-').map(Number)
   const [dy, dm] = dueDate.slice(0, 7).split('-').map(Number)
@@ -950,7 +950,7 @@ function statusFor(
 
   // What this month is being asked for. A monthly target wants topping up to its
   // figure; a by-date target wants its share of what is still missing, measured
-  // before this month's assignment so that assigning the share clears it.
+  // before this month''s assignment so that assigning the share clears it.
   let needed: number
   if (target.kind === 'monthly') {
     needed = shortfall
@@ -974,8 +974,8 @@ function statusFor(
     return { status: { kind: 'on_track' }, needed: 0 }
   }
   // "Funded" renders bare when nothing was spent, and as "Funded. Spent A of B"
-  // when it was. Only THIS month's spending is reported: YNAB shows a running
-  // figure across the target's whole window, which this does not model, and a
+  // when it was. Only THIS month''s spending is reported: YNAB shows a running
+  // figure across the target''s whole window, which this does not model, and a
   // wrong cumulative number would be worse than an honest monthly one.
   return {
     status: { kind: 'funded', spentCents: -activity, targetCents: target.amountCents },
@@ -1135,7 +1135,7 @@ beyond `ALIASES` (Task 2).
 Create `scripts/test/ynabPlan.test.ts`.
 
 ```ts
-// YNAB's Plan export -> budget rows. Fixtures are invented; Dan's real figures
+// YNAB''s Plan export -> budget rows. Fixtures are invented; Dan''s real figures
 // stay out of the repository.
 
 import { test } from 'node:test'
@@ -1236,7 +1236,7 @@ const MONTHS: Record<string, string> = {
 function toMonth(raw: string, lineNo: number): string {
   const [name, year] = raw.trim().split(/\s+/)
   const mm = MONTHS[name]
-  if (!mm || !/^\d{4}$/.test(year ?? ')) {
+  if (!mm || !/^\d{4}$/.test(year ?? '')) {
     throw new Error(`line ${lineNo}: cannot read "${raw}" as a month`)
   }
   return `${year}-${mm}`
@@ -1248,7 +1248,7 @@ function toMonth(raw: string, lineNo: number): string {
  * silently truncate $6,682.19 to $6.
  */
 function toCents(raw: string, lineNo: number, field: string): number {
-  const cleaned = raw.trim().replace(/[$,]/g, ')
+  const cleaned = raw.trim().replace(/[$,]/g, '')
   if (!/^-?\d+(\.\d{1,2})?$/.test(cleaned)) {
     throw new Error(`line ${lineNo}: cannot read "${raw}" as ${field}`)
   }
@@ -1336,7 +1336,7 @@ January's carry-in right.
 // Assigned, becomes a single opening move per category, because that is what
 // carries into the first real month.
 //
-// Idempotent by deletion: a committing run first clears this owner's moves from
+// Idempotent by deletion: a committing run first clears this owner''s moves from
 // the opening month onward, then rewrites them. A budget import that half-applied
 // would be worse than one that refused to run twice.
 
@@ -1474,10 +1474,10 @@ Plus the account's `opening_balance_cents` and `opening_date`.
 the whole opening balance:
 
 ```ts
-// The account's opening balance is not a transaction, but it is money that
+// The account''s opening balance is not a transaction, but it is money that
 // arrived and needs a job — so Ready to Assign has to see it. Injected in the
 // month the account opened. This is precisely why January shows $1.01 to assign:
-// the opening balance is $585.75 and YNAB's carry-in is $584.74, the difference
+// the opening balance is $585.75 and YNAB''s carry-in is $584.74, the difference
 // being a penny stranded in a Novo account this app does not carry.
 const txns: BudgetTxn[] = [
   { month: account.opening_date.slice(0, 7), categoryId: null, amountCents: account.opening_balance_cents },
