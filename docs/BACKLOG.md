@@ -65,13 +65,39 @@ books agree to the penny — every one was confirmed against the underlying rows
 1. Import the **$592.10** Fairmont Hotel Chicago charge (8/20).
 2. Add the missing **$35.00** Insurance refund.
 3. Add the missing **$112.51** of Audio Tools refunds.
-4. Split **$400.00** off the 3/5 owner-pay row to Temporary Transfer; its
-   counterpart is already there — a +$400.00 inflow on 3/2 from Smith Checking,
-   currently an uncategorised `transfer`. A round trip.
+4. **The $400 round trip — accept it as a known variance for now.** YNAB splits
+   the 3/5 owner-pay row two ways, $400 of it to "Temporary Transfer"; the app
+   records it whole. Its counterpart is already in the ledger: a **+$400.00**
+   inflow on 3/2 from Smith Checking, sitting as an uncategorised `transfer`.
+   **This one cannot be fixed in the app as it stands** — there is no split UI
+   (deliberately out of scope, one split in all of 2026), there is no "Temporary
+   Transfer" category in the converged chart, and `lt_nocat_for_transfer` still
+   forbids a category on a transfer row. So Owner Pay will read $400 heavier
+   than YNAB for March, and the inflow sits in Ready to Assign. Both are
+   explainable and neither is a defect; closing the gap needs either split
+   support or a decision to record the round trip differently.
 5. Categorise the three **$15.00 Monthly Service Fee** rows (1/30, 2/27, 3/31)
    to **Retained Earnings**, which is where YNAB books them.
 
 **And his 17 targets need entering by hand** — YNAB has no target export.
+
+**Two things the design doc specifies that phase one did not build**, recorded
+here so they are deferred rather than forgotten:
+- **The wide canvas.** The spec puts the budget "on the wide canvas the register
+  already uses"; the page uses the default `AppShell` width (`max-w-5xl`). Not a
+  regression — the pre-rewrite page was the same — but it is why the category
+  column is only ~224px once the summary panel takes its track, which is what
+  forced the name/status truncation trade in `BudgetRow`. Widening the canvas
+  would relieve that directly.
+- **Collapsible groups.** The spec says "Groups collapse and carry roll-up
+  totals." The roll-ups are built; the collapsing is not.
+
+**Also open:** a transaction backdated into 2025 is silently dropped from the
+budget (the page reads `date >= 2026-01-01`) while still counting in the
+register's working balance, with nothing on screen reconciling the gap. And
+`saveEnvelope`/`moveEnvelopeMoney` in `app/money/actions.ts` lost their only
+caller when `BudgetPanel.tsx` was deleted — dead, but left in place because the
+0030 envelope machinery was fenced off during this wave.
 
 ## Show day types — SHIPPED 2026-08-22
 
