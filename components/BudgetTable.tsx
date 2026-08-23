@@ -76,7 +76,7 @@ const GRID = 'hidden sm:grid grid-cols-[1fr_7rem_7rem_8rem] gap-x-4 items-center
  *
  *   - a hidden row that is completely empty this month (nothing assigned, no
  *     activity, nothing available) is simply dropped. This is the normal
- *     case — Bank Fees, Lodging and Subscriptions are all retired with
+ *     case — Bank Fees and Subscriptions are both retired with
  *     nothing left in them.
  *   - a hidden row that still holds money or saw activity is kept, folded
  *     into a synthetic "Hidden" section at the bottom, so the rendered rows

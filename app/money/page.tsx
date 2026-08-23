@@ -24,7 +24,6 @@ export const dynamic = 'force-dynamic'
 // rather than imported because a 'use server' file may only export actions.
 const LEDGER_TXN_PAGE_SIZE = 1000
 
-
 type RawTxnRow = {
   id: string
   date: string

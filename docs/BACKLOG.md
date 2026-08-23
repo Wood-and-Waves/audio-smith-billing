@@ -12,7 +12,18 @@ A and B land; the backfilled Jan–Aug months prove transcription only — **the
 real proof is September**, budgeted independently in both tools and compared at
 month end. Ship-to-prod timing revisits after Wave A.
 
-### Wave A — small unblockers (build first, no design needed)
+### Wave A — DONE ON DEV 2026-08-23 (branch budget; prod at the wave ship gate)
+
+All four landed and verified: the render cap is deleted (all 325 rows reach
+January), migration 0041 restored the eight categories (Hotels via rename of
+the hidden Lodging row; the four money-movement ones non-deductible; Dan's
+YNAB-hidden four deliberately omitted — zero 2026 transactions), the budget
+table names its columns, and the register's header pins below the app bar.
+The $400 punch-list item is now actionable (Temporary Transfer exists).
+Prod migration order at the gate: 0038→0039→0040→0041, then a delta
+whole-branch review of every commit after `de2529e`.
+
+### Wave A items as originally filed (build first, no design needed)
 
 1. **Ledger stops at 4/17 — his #1.** `RENDER_CAP = 200` in
    `app/money/page.tsx:31` draws only the newest 200 of 325 rows. Display cap,
