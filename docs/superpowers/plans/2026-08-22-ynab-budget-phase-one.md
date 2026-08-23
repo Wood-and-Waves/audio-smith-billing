@@ -466,6 +466,103 @@ git add scripts/sql/migrations/0039_budget_categories.sql lib/ledgerCategories.t
 git commit -m "0039: the category list converges on Dan's YNAB budget"
 ```
 
+
+---
+
+## Task 2b: Migration 0040 — owner pay gets its category, retired rows get out of the way
+
+**Files:**
+- Create: `scripts/sql/migrations/0040_owner_pay_category.sql`
+- Modify: `app/money/categories/page.tsx`
+
+**Why this task exists:** two gaps found reviewing Task 2, neither fixable in
+0039 (applied, checksummed, immutable).
+
+1. **Owner pay has no activity.** 0038 made it legal for an `owner_pay`
+   transaction to carry a category and 0039 created the category, but nothing
+   connects them. The budget's largest row — $45,774 assigned in 2026 — would
+   show against **zero** activity, and the parity check would fail on the biggest
+   line in the budget.
+2. **Sort collisions.** 0039 re-sorted the survivors and left the retired
+   categories on their old numbers: Software ties with Bank Fees at 14, Flights
+   ties with Lodging at 24, and Clear ties with Subscriptions at 13.
+   `app/money/categories/page.tsx` orders by `(grp, sort)` with no tertiary key,
+   so a tie renders in whatever order Postgres happens to return.
+
+- [ ] **Step 1: Write the migration**
+
+```sql
+-- 0040 — owner pay gets its category, and retired categories get out of the way
+--
+-- Two gaps 0039 left, both caught in review.
+--
+-- First, owner pay. 0038 made it legal for an owner_pay row to carry a category
+-- and 0039 created the category, but nothing ever put the two together — so the
+-- budget''s largest row would have shown a real assignment against zero activity.
+-- The whole point of this screen is that it reconciles against YNAB, and this is
+-- the line that would have failed first.
+--
+-- Second, sort collisions. 0039 re-sorted the surviving categories and left the
+-- retired ones on their old numbers, so Software tied with Bank Fees, Flights
+-- with Lodging, and Clear with Subscriptions. The categories page orders by
+-- (grp, sort) with no tie-break, which makes a tie render in whatever order
+-- Postgres feels like that day. Retired rows move to 900+, where nothing active
+-- can reach them.
+
+update ledger_transactions t
+   set category_id = (select c.id from ledger_categories c
+                       where c.owner_id = t.owner_id
+                         and c.name = 'Owner Investment, Pay, and Personal Expenses')
+ where t.kind = 'owner_pay'
+   and t.category_id is null
+   and exists (select 1 from ledger_categories c
+                where c.owner_id = t.owner_id
+                  and c.name = 'Owner Investment, Pay, and Personal Expenses');
+
+-- Unconditional, not gated on `hidden`: an owner whose Subscriptions row still
+-- holds transactions keeps it visible, and it must still not tie with Clear.
+-- Sorting last inside its group is the right place for a category being retired.
+update ledger_categories set sort = 900 where name = 'Subscriptions';
+update ledger_categories set sort = 901 where name = 'Bank Fees';
+update ledger_categories set sort = 902 where name = 'Lodging';
+```
+
+- [ ] **Step 2: Apply to DEV and verify both halves**
+
+Run: `npm run db:migrate` (banner must say `dev`).
+
+Then write `/tmp/v40.sql`, run `npm run db:sql -- /tmp/v40.sql`, **delete the file**:
+
+```sql
+select kind, count(*) as n, count(*) filter (where category_id is null) as uncategorised
+  from ledger_transactions group by kind order by kind;
+
+select grp, count(*) as rows_in_group, count(distinct sort) as distinct_sorts
+  from ledger_categories group by grp having count(*) <> count(distinct sort);
+```
+
+Expected: **zero** `owner_pay` rows uncategorised, `transfer` rows still fully
+uncategorised (0038''s constraint forbids otherwise), and the second query
+returning **no rows at all** — no group may contain two categories sharing a sort.
+
+- [ ] **Step 3: Give the categories page a deterministic tie-break**
+
+`app/money/categories/page.tsx` orders by `grp` then `sort`. Add `name` as a
+tertiary key so the list can never reshuffle between renders even if a future
+migration reintroduces a tie:
+
+```ts
+.order('grp').order('sort').order('name')
+```
+
+- [ ] **Step 4: Gates and commit**
+
+```bash
+npm test && rm -f tsconfig.tsbuildinfo .next/cache/.tsbuildinfo && npx tsc --noEmit && npm run build
+git add scripts/sql/migrations/0040_owner_pay_category.sql app/money/categories/page.tsx
+git commit -m "0040: owner pay carries its category; retired categories stop colliding"
+```
+
 ---
 
 ## Task 3: `lib/budget.ts` — the arithmetic (TDD)
