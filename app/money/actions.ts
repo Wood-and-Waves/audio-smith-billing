@@ -6,7 +6,6 @@ import { isPlainDate, todayInChicago } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
 import { DEFAULT_CATEGORIES, seedCategoryRows } from '@/lib/ledgerCategories'
 import { clearedBalance, type BalanceLike } from '@/lib/ledgerBalance'
-import { envelopeBalances, type EnvelopeMoveLike } from '@/lib/envelopes'
 import { parseOfx, type ParsedOfx } from '@/lib/ofx'
 import { planImport, type ExistingTxn } from '@/lib/ledgerImport'
 import { normalizePayee, rememberedCategories, memoryKey } from '@/lib/payeeMemory'
@@ -196,11 +195,9 @@ export async function saveCategory(input: {
     }
   } else {
     // Flipping to 'income' can silently rewrite every month buildBudget's
-    // spendingIds covers (lib/incomeRoleGuard.ts has the full hazard) — a
-    // strictly bigger version of the hazard saveEnvelope already refuses
-    // server-side for hiding an envelope that holds money. Checked before
-    // the write, not instead of it: a client-side confirmation is a hint,
-    // this is the invariant.
+    // spendingIds covers — lib/incomeRoleGuard.ts carries the full hazard.
+    // Checked before the write, not instead of it: a client-side
+    // confirmation is a hint, this is the invariant.
     if (input.budgetRole === 'income') {
       const guardError = await incomeRoleChangeAllowed(supabase, input.id)
       if (guardError) return guardError
@@ -223,110 +220,6 @@ export async function saveCategory(input: {
   return { ok: true }
 }
 
-const ENVELOPE_MOVE_PAGE_SIZE = 1000
-
-/**
- * Every ledger_envelope_moves row that named this envelope on either side,
- * paged past PostgREST's default 1000-row cap — same paged shape as
- * fetchAllLedgerTransactions further down, narrowed to the three columns
- * envelopeBalances (lib/envelopes) needs to add up. A move can only ever
- * name this envelope as its from side, its to side, or both across
- * different moves (never both at once on the SAME move — migration 0030's
- * lem_direction check) — the OR below is exactly "this envelope was one
- * side of the move."
- */
-async function fetchEnvelopeMoves(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  envelopeId: string,
-): Promise<{ rows: EnvelopeMoveLike[]; error: string | null }> {
-  const rows: EnvelopeMoveLike[] = []
-  let from = 0
-  for (;;) {
-    const { data, error } = await supabase
-      .from('ledger_envelope_moves')
-      .select('from_envelope_id, to_envelope_id, amount_cents')
-      .or(`from_envelope_id.eq.${envelopeId},to_envelope_id.eq.${envelopeId}`)
-      .order('created_at', { ascending: true })
-      .order('id', { ascending: true })
-      .range(from, from + ENVELOPE_MOVE_PAGE_SIZE - 1)
-    if (error) return { rows: [], error: error.message }
-    rows.push(...((data ?? []) as EnvelopeMoveLike[]))
-    if (!data || data.length < ENVELOPE_MOVE_PAGE_SIZE) break
-    from += ENVELOPE_MOVE_PAGE_SIZE
-  }
-  return { rows, error: null }
-}
-
-/**
- * Creates or edits an envelope. A null id creates one, appended to the end
- * (max sort across all envelopes, plus one) so a new envelope never jumps
- * ahead of the ones Dan already ordered by hand — same shape as saveCategory
- * above, minus the per-group scoping, since envelopes aren't grouped.
- */
-export async function saveEnvelope(input: {
-  id: string | null
-  name: string
-  hidden: boolean
-}): Promise<Fail | { ok: true }> {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not signed in.' }
-
-  const name = input.name.trim()
-  if (!name) return { error: 'Give the envelope a name.' }
-
-  if (input.id === null) {
-    // RLS already scopes this to the caller's own rows, same as every other
-    // owner-scoped select in this file — no explicit owner_id filter needed.
-    const { data: top, error: sortError } = await supabase
-      .from('ledger_envelopes')
-      .select('sort')
-      .order('sort', { ascending: false })
-      .limit(1)
-    if (sortError) return { error: sortError.message }
-    const nextSort = (top?.[0]?.sort ?? -1) + 1
-
-    const { error } = await supabase.from('ledger_envelopes').insert({
-      owner_id: user.id,
-      name,
-      sort: nextSort,
-      hidden: input.hidden,
-    })
-    if (error) {
-      // Migration 0030's unique index (owner_id, name) — a genuine duplicate
-      // name Dan typed by hand, so it gets a message he can read instead of
-      // Postgres's raw constraint text.
-      if (error.code === '23505') return { error: `You already have an envelope named "${name}".` }
-      return { error: error.message }
-    }
-  } else {
-    // A client-side checkbox disable is a hint, not the invariant — a stale
-    // second tab (still showing a balance that's since changed) or a
-    // request replayed by hand must not be able to strand money in a hidden
-    // envelope, since the Move Selects stop offering a hidden-and-empty row
-    // as a source the moment it's hidden. Un-hiding never hits this: making
-    // an envelope more visible again can't strand anything.
-    if (input.hidden) {
-      const { rows: moves, error: movesError } = await fetchEnvelopeMoves(supabase, input.id)
-      if (movesError) return { error: movesError }
-      const balanceCents = envelopeBalances(moves).get(input.id) ?? 0
-      if (balanceCents !== 0) return { error: 'Empty this envelope before hiding it.' }
-    }
-
-    const { error } = await supabase
-      .from('ledger_envelopes')
-      .update({ name, hidden: input.hidden })
-      .eq('id', input.id)
-    if (error) {
-      if (error.code === '23505') return { error: `You already have an envelope named "${name}".` }
-      return { error: error.message }
-    }
-  }
-
-  revalidatePath('/money')
-  return { ok: true }
-}
-
 /**
  * Verifies a caller-supplied id actually belongs to this owner, the same way
  * createShow scopes a rate_card_id to its client and addExpense scopes a
@@ -337,65 +230,11 @@ export async function saveEnvelope(input: {
  */
 async function belongsToCaller(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  table: 'ledger_categories' | 'shows' | 'ledger_accounts' | 'ledger_envelopes',
+  table: 'ledger_categories' | 'shows' | 'ledger_accounts',
   id: string,
 ): Promise<boolean> {
   const { data } = await supabase.from(table).select('id').eq('id', id).maybeSingle()
   return data !== null
-}
-
-/**
- * Records one move of money between the Available pool (a null envelope id)
- * and/or two envelopes. Migration 0030's ledger_envelope_moves is IMMUTABLE
- * by design — there is no updateEnvelopeMove or deleteEnvelopeMove anywhere
- * in this file, and there never should be: a mistaken move is corrected by
- * entering the opposite move as a new row, the same way a bank statement is
- * never edited after the fact, so the move history stays honest all the way
- * back instead of being rewritten to look like the mistake never happened.
- */
-export async function moveEnvelopeMoney(input: {
-  fromEnvelopeId: string | null
-  toEnvelopeId: string | null
-  amountCents: number
-  note: string
-}): Promise<Fail | { ok: true }> {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not signed in.' }
-
-  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) {
-    return { error: 'Enter an amount to move.' }
-  }
-  if (input.fromEnvelopeId === null && input.toEnvelopeId === null) {
-    return { error: 'Pick where the money moves.' }
-  }
-  // Mirrors migration 0030's lem_direction check constraint — Available ->
-  // Available (or envelope X -> envelope X) would be a no-op pretending to
-  // be a move, so it's refused here with a message Dan can read instead of
-  // letting the insert below fail on Postgres's constraint text.
-  if (input.fromEnvelopeId === input.toEnvelopeId) {
-    return { error: 'Pick two different envelopes.' }
-  }
-
-  if (input.fromEnvelopeId !== null && !(await belongsToCaller(supabase, 'ledger_envelopes', input.fromEnvelopeId))) {
-    return { error: 'That envelope does not belong to you.' }
-  }
-  if (input.toEnvelopeId !== null && !(await belongsToCaller(supabase, 'ledger_envelopes', input.toEnvelopeId))) {
-    return { error: 'That envelope does not belong to you.' }
-  }
-
-  const { error } = await supabase.from('ledger_envelope_moves').insert({
-    owner_id: user.id,
-    from_envelope_id: input.fromEnvelopeId,
-    to_envelope_id: input.toEnvelopeId,
-    amount_cents: input.amountCents,
-    moved_on: todayInChicago(),
-    note: input.note.trim() || null,
-  })
-  if (error) return { error: error.message }
-
-  revalidatePath('/money')
-  return { ok: true }
 }
 
 type LedgerTxnRow = {

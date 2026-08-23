@@ -17,11 +17,17 @@
 // Available leaves every month's total; and Ready to Assign is rewritten
 // for every month, past included. One tick on a category with eight months
 // of history rewrites eight months of reconciliation with no way to tell
-// after the fact that it happened. This is the same hazard class
-// saveEnvelope already refuses server-side for hiding an envelope that
-// still holds money (a strictly smaller version: money stranded in one
-// place, versus months of arithmetic silently rewritten) — this guard
-// follows that precedent.
+// after the fact that it happened.
+//
+// The precedent this follows was the 0030 envelope feature's own
+// saveEnvelope, which refused server-side to hide an envelope that still
+// held money — a strictly smaller version of the same hazard (money
+// stranded in one place, versus months of arithmetic silently rewritten).
+// That action has since been deleted along with the rest of the envelope
+// write path, so the precedent is history rather than something to go and
+// read; the rule it stood for is the one that matters, and it is this: a
+// change that would silently rewrite money already recorded gets refused
+// by the server, not merely warned about by the client.
 //
 // Only an actual transition (current role 'spending', new role 'income')
 // is dangerous. A category that is already 'income' being saved again

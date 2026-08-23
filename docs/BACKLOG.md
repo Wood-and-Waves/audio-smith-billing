@@ -94,10 +94,15 @@ here so they are deferred rather than forgotten:
 
 **Also open:** a transaction backdated into 2025 is silently dropped from the
 budget (the page reads `date >= 2026-01-01`) while still counting in the
-register's working balance, with nothing on screen reconciling the gap. And
-`saveEnvelope`/`moveEnvelopeMoney` in `app/money/actions.ts` lost their only
-caller when `BudgetPanel.tsx` was deleted — dead, but left in place because the
-0030 envelope machinery was fenced off during this wave.
+register's working balance, with nothing on screen reconciling the gap. `saveEnvelope`/`moveEnvelopeMoney` and everything only they used
+(`fetchEnvelopeMoves`, the `envelopeBalances` import, `belongsToCaller`'s
+`ledger_envelopes` case) have since been deleted too — they lost their only
+caller when `BudgetPanel.tsx` went, and deleting TypeScript touches no
+database. **The 0030 tables and `lib/envelopes.ts` stay**: the tables because
+ADDITIVE ONLY, and the library because `app/money/forecast/page.tsx` still
+imports `availableToAllocate` from it. One useful consequence — nothing can
+write `ledger_envelope_moves` any more, so the forecast's `netAllocated` is now
+permanently zero by construction rather than incidentally zero.
 
 ## Show day types — SHIPPED 2026-08-22
 

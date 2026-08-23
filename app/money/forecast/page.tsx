@@ -402,10 +402,11 @@ export default async function MoneyForecastPage() {
   // /money/budget computes the same figure via its own call to this helper.
   // It no longer does — /money/budget doesn't import lib/envelopes at all.
   // `moveRows` comes from ledger_envelope_moves, which the 0030 envelope
-  // feature shipped empty and nothing writes to any more (see
-  // components/BudgetPanel.tsx and app/money/actions.ts's own history —
-  // both since removed as dead code), so netAllocated(moveRows) is always 0
-  // and this always equals workingBalanceCents exactly. In particular it
+  // feature shipped empty and which NOTHING CAN WRITE TO ANY MORE: the last
+  // writer, moveEnvelopeMoney, was deleted with the rest of that feature's
+  // dead write path, so the table is empty by construction rather than by
+  // accident. netAllocated(moveRows) is therefore permanently 0 and this
+  // always equals workingBalanceCents exactly. In particular it
   // does NOT subtract money the real budget (lib/budget.ts) has already
   // assigned to a category this month — so this figure can present money
   // Dan already gave a job as still free to spend. That's a real gap, not
