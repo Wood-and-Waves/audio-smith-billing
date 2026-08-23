@@ -27,6 +27,7 @@ export default async function MoneyCategoriesPage() {
     .select('id, name, grp, sort, hidden, is_equipment, deductible')
     .order('grp', { ascending: true })
     .order('sort', { ascending: true })
+    .order('name', { ascending: true })
   if (error) return <LoadError message={error.message} />
 
   const categories: CategoryRow[] = (data ?? []).map((c) => ({
