@@ -1680,7 +1680,23 @@ a three-up row with small `text-muted` labels above each figure. The desktop
 column headers are `hidden sm:grid`. Achieve this with responsive classes on the
 existing markup — do not fork `BudgetRow` into two components.
 
-- [ ] **Step 4: Verify in the browser**
+- [ ] **Step 4: Two carried-over fixes from Task 6's review**
+
+Both are one-liners in `app/money/budget/page.tsx`, folded here because this task
+already edits that file.
+
+- **The opening-balance clamp guards only its lower bound.** It raises the seed
+  month to `OPENING_MONTH` when the account's opening date precedes it, but does
+  nothing if that date were ever *after* the walked range — in which case the
+  opening balance would vanish from Ready to Assign with nothing on screen to say
+  so, the very failure the clamp's own comment describes. Clamp it down to `last`
+  as well, once `last` exists.
+- **The "Next month" arrow has no ceiling guard.** `MAX_MONTHS_AHEAD` caps how far
+  forward the view goes, but the arrow still renders at the ceiling and re-clamps
+  to the same month — a dead click. The Previous arrow already sets the precedent
+  three lines away by omitting itself at `FIRST_BUDGET_MONTH`; mirror it.
+
+- [ ] **Step 5: Verify in the browser**
 
 Start the dev server through the preview tool (never `npm run dev` in Bash). Check:
 month arrows move between January and August; the previous arrow is absent in
@@ -1688,7 +1704,7 @@ January; each filter chip narrows the rows while the summary figures hold still;
 at 375px wide the cards stack with no horizontal page scroll; both light and dark
 themes render the pills legibly.
 
-- [ ] **Step 5: Gates and commit**
+- [ ] **Step 6: Gates and commit**
 
 ```bash
 npm test && rm -f tsconfig.tsbuildinfo .next/cache/.tsbuildinfo && npx tsc --noEmit && npm run build
