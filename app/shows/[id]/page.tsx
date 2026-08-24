@@ -436,7 +436,7 @@ export default async function ShowPage({ params }: { params: Promise<{ id: strin
               <>
                 <li className="flex items-baseline justify-between gap-x-4 border-b border-line py-2">
                   {/* toFixed(2) then trim: 3000→30, 2750→27.5, 3333→33.33 — never "27.50". */}
-                  <span>Set aside for taxes ({(setasideBp / 100).toFixed(2).replace(/\.?0+$/, '')}%) <Link href="/money/budget" className="text-xs text-muted hover:text-ink transition-colors">→ Taxes envelope</Link></span>
+                  <span>Set aside for taxes ({(setasideBp / 100).toFixed(2).replace(/\.?0+$/, '')}%) <Link href="/money/budget" className="text-xs text-muted hover:text-ink transition-colors">→ Taxes category</Link></span>
                   <span className="tabular whitespace-nowrap">−{formatUSD(profit.setasideCents)}</span>
                 </li>
                 <li className="flex items-baseline justify-between gap-x-4 border-b border-line py-2">

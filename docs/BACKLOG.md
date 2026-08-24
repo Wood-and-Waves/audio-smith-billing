@@ -3,34 +3,217 @@
 The canonical list of deferred work. Each item carries just enough design that a
 future session can build it without re-discovery. Dated when added.
 
-## Per-month budgeting with month navigation (2026-08-22, Dan)
+## Dan's dev walkthrough findings (2026-08-23) — the eleven, in waves
 
-Dan: *"I want to be able to budget per month and move between the months. My
-plan is to go back to January and set the budgets the same as YNAB to prove
-how they work."* This is the real YNAB Rule-1 model and the biggest gap
-between `/money/budget` and the tool he actually knows.
+Dan ran the budget + register against his live YNAB and filed eleven findings.
+Decisions made with him: he runs YNAB **alongside** the app while this is worked
+through (YNAB stays authoritative); splits and pending are deferred until waves
+A and B land; the backfilled Jan–Aug months prove transcription only — **the
+real proof is September**, budgeted independently in both tools and compared at
+month end. Ship-to-prod timing revisits after Wave A.
 
-- **What exists today:** `ledger_envelopes` + an immutable
-  `ledger_envelope_moves` ledger (0030). Allocation is a single running
-  total — there is no notion of "August's budget" vs "September's", so
-  there is nothing to navigate between and no month-over-month carryover.
-- **What YNAB does:** each envelope gets an *amount budgeted this month*;
-  a month's leftover rolls into the same envelope next month; overspend
-  is handled per category. Available-to-allocate is computed per month
-  from income received that month plus last month's leftover.
-- **Likely shape:** moves already carry dates, so a per-month view can be
-  derived rather than stored — bucket moves by month and show budgeted /
-  activity / available per envelope per month, with ‹ › navigation like
-  `/calendar`'s. Storing a per-month budgeted figure explicitly may still
-  be needed for "budgeted but not yet moved."
-- **His proof plan matters for design:** he intends to backfill January
-  onward and compare against YNAB's own numbers, so the arithmetic has to
-  match YNAB's definitions closely enough to reconcile, and entering a
-  past month's budget must be as easy as the current month's.
-- Brainstorm openers: does a month's leftover roll forward automatically or
-  on a click; how is overspend shown; does the existing immutable-move
-  ledger stay the source of truth (it should) or gain a per-month budgeted
-  table beside it.
+### Wave A — DONE ON DEV 2026-08-23 (branch budget; prod at the wave ship gate)
+
+All four landed and verified: the render cap is deleted (all 325 rows reach
+January), migration 0041 restored the eight categories (Hotels via rename of
+the hidden Lodging row; the four money-movement ones non-deductible; Dan's
+YNAB-hidden four deliberately omitted — zero 2026 transactions), the budget
+table names its columns, and the register's header pins below the app bar.
+The $400 punch-list item is *partly* unblocked: Temporary Transfer exists,
+but fixing it is still a hand edit of both legs — see the importer-collapse
+item below.
+Prod migration order at the gate: 0038→0039→0040→0041, then a delta
+whole-branch review of every commit after `de2529e`.
+
+### Wave A items as originally filed (build first, no design needed)
+
+1. **Ledger stops at 4/17 — his #1.** `RENDER_CAP = 200` in
+   `app/money/page.tsx:31` draws only the newest 200 of 325 rows. Display cap,
+   not data loss — balances already compute over the full paged set. Lift or
+   page it so every transaction is reachable.
+2. **Eight categories missing from the converged chart.** The 0039 convergence
+   scoped to categories with 2026 activity in the export; Dan assigns to more.
+   Missing: Hotels (app has "Lodging" hidden — same thing, different name),
+   Office Expenses, Computers, Education, Temporary Transfer, Loan to Wood and
+   Waves, Charitable Giving, Money Due Wood and Waves; plus YNAB's own hidden
+   four (Apple Music, Waves, YNAB, Mexico). Needs migration 0041. NOTE:
+   restoring **Temporary Transfer** un-blocks punch-list item 4 (the $400
+   round trip), currently written off as impossible.
+3. **The budget table has no column headers.** Nothing labels Assigned /
+   Activity / Available. See his YNAB screenshot; unreadable without them.
+4. **Ledger headers don't stick.** Date/Payee/Category/etc. scroll away; the
+   whole header row should pin while the register scrolls.
+
+### Wave B — the register's editing experience (one coherent redesign)
+
+Five findings that all touch `components/MoneyRegister.tsx`; do as one pass:
+
+5. **Edit row is out of order with the headers.** Fields don't sit under their
+   columns (his screenshot: date/kind/payee/amount/category/show/memo vs the
+   header order date/payee/category/memo/outflow/inflow). YNAB's edit row
+   aligns 1:1 under its headers, including separate outflow/inflow boxes.
+6. **Category picker should look like YNAB's** (screenshot on file): a
+   combobox with search, grouped by category group with each category's
+   current *budget* balance shown on the right, a "New Category" affordance,
+   and Payment/Transfer + Split buttons at the bottom.
+7. **The income/expense/owner-pay kind dropdown is redundant.** Kind is
+   derivable: category + which box (outflow/inflow) the amount is in.
+   CAUTION: a transfer has no category, so it can't be inferred — YNAB routes
+   that through the Payment/Transfer button inside the picker (item 6).
+   Ripples into P&L (`lib/ledgerReports.ts` branches on kind), forecast, payee
+   memory. Wants a design pass, not a quick deletion.
+8. **The show tag ("TEST SHOW — …") clutters the ledger.** Partly a dev
+   artifact (prod has real shows), but consider whether the register needs the
+   show on the row at all, or tucked into the detail/edit view.
+9. **Math in money boxes.** Typing `24.36+45.72` in an amount field should
+   enter 70.08. YNAB does this; parseUSD is the entry point.
+
+### Wave C — model gaps (each needs brainstorm + migration; deferred by Dan)
+
+10. **Split transactions.** He has real transactions spanning two categories
+    that cannot reconcile without them. Phase-one scoping ("one split in all
+    of 2026") underestimated; his own use makes them recurring. Touches
+    schema, register UI, budget activity math, importer.
+11. **Pending transactions.** Imported-but-unposted rows should NOT move the
+    budget until accepted — YNAB shows them in a Pending group with an
+    "Enter Now" control. The app has no pending concept at all today; that is
+    why he deleted the Fairmont rows from dev. Touches importer, register,
+    budget activity, reconciliation.
+
+## Per-month budgeting — PHASE ONE SHIPPED 2026-08-23
+
+Dan's ask: *"I want to be able to budget per month and move between the months.
+My plan is to go back to January and set the budgets the same as YNAB to prove
+how they work."*
+
+Built as `/money/budget` (design:
+`docs/superpowers/specs/2026-08-22-ynab-budget-design.md`; plan:
+`docs/superpowers/plans/2026-08-22-ynab-budget-phase-one.md`; migrations
+0038-0040). The category list converged on his real YNAB 2026 chart, the
+arithmetic lives in `lib/budget.ts` and reproduces all 1,421 rows of his export
+with zero mismatches, and `scripts/import/ynab-plan.mjs` backfilled Jan-Aug.
+See CLAUDE.md for the two formulas and the rules that must not be re-derived.
+
+**Phase two — assigning and moving money.** Deliberately split out so the
+numbers could be proved before any path existed that changes one:
+- Typing a figure into the Assigned box (writes the difference as a move).
+- Moving money between categories to cover an overspent one — one row, not two
+  edits. The tables and the arithmetic already support it.
+- Undo/Redo via `ledger_budget_moves.undone_at`, which the schema already has
+  and `lib/budget.ts` already honours.
+- Recent Moves — the move table read back.
+
+**Also deferred, with reasons:**
+- **Auto-assign.** Dan uses it in YNAB but did not pick it for phase one.
+  `underfundedCents` is already computed per month, so the number the button
+  needs exists; only the write path is missing.
+- **Target history.** YNAB does not export targets and this stores only their
+  current state, so a past month is judged against today's target. Assigned,
+  Activity and Available stay exact — only the status wording on closed months
+  can read oddly. Versioning targets by month is real work for a cosmetic gain.
+- **Split transactions.** Exactly one occurred in all of 2026 (a 3/5 transfer
+  YNAB split two ways).
+- **Credit-card handling.** No card in the books; YNAB's hardest feature is out
+  of scope by circumstance.
+- **A second budget account.** `fetchAllBudgetTxns` filters to the one open
+  account, matching every sibling `/money/*` page. The moment a second open
+  account exists the budget understates itself with nothing on screen to say
+  so — the source comment says as much.
+- **The 0030 envelope tables** are dead but stay (ADDITIVE ONLY).
+  `components/BudgetPanel.tsx`, `ensureDefaultEnvelopes`, `saveEnvelope` and
+  `moveEnvelopeMoney` have all since been deleted as dead code; only
+  `lib/envelopes.ts` survives, for the forecast's `availableToAllocate`.
+- **`app/money/forecast/page.tsx`** still computes "available to allocate" from
+  the empty envelope moves. Harmless — the answer equals the working balance —
+  but it is a stale concept now.
+- **`scripts/import/ynab-backfill.mjs`'s header** claims its CSV mechanics live
+  in `lib/ynabRegister.ts`; nothing outside that module's own test imports it.
+- **Import-script hardening:** `--start` accepts a shape-valid but impossible
+  month like `2026-13`; `--file` silently overwrites an earlier path; and the
+  "idempotent by deletion" claim in its header only holds for a re-run with the
+  same `--start`.
+- **A move's `owner_id` is not tied to the owner of its categories** — exact
+  parity with 0030's `ledger_envelope_moves`, so not a regression, but the same
+  gap the target actions now close by walking the category's own FK.
+
+**Dan's ledger punch list** (independent of the code; doing these makes the two
+books agree to the penny — every one was confirmed against the underlying rows):
+1. Import the **$592.10** Fairmont Hotel Chicago charge (8/20).
+2. Add the missing **$35.00** Insurance refund.
+3. Add the missing **$112.51** of Audio Tools refunds.
+4. **The $400 round trip — accept it as a known variance for now.** YNAB splits
+   the 3/5 owner-pay row two ways, $400 of it to "Temporary Transfer"; the app
+   records it whole. Its counterpart is already in the ledger: a **+$400.00**
+   inflow on 3/2 from Smith Checking, sitting as an uncategorised `transfer`.
+   **This one cannot be fixed in the app as it stands** — there is no split UI
+   (deliberately out of scope, one split in all of 2026), there is no "Temporary
+   Transfer" category in the converged chart, and `lt_nocat_for_transfer` still
+   forbids a category on a transfer row. So Owner Pay will read $400 heavier
+   than YNAB for March, and the inflow sits in Ready to Assign. Both are
+   explainable and neither is a defect; closing the gap needs either split
+   support or a decision to record the round trip differently.
+5. Categorise the three **$15.00 Monthly Service Fee** rows (1/30, 2/27, 3/31)
+   to **Retained Earnings**, which is where YNAB books them.
+
+**And his 17 targets need entering by hand** — YNAB has no target export.
+
+**Importer collapse vs the restored Owner Transactions categories (delta
+review, 2026-08-23).** `lib/ynabRegister.ts` maps *every* YNAB row whose group
+is `Owner Transactions` to `kind = owner_pay` on the Owner Pay category
+(outflows) or an uncategorised `transfer` (inflows) — regardless of the row's
+own category. 0041 put four real categories inside exactly that group
+(Temporary Transfer, Loan to Wood and Waves, Charitable Giving, Money Due
+Wood and Waves), so a future register re-import would pool their activity
+onto Owner Pay while `import:plan` happily writes their assignments — four
+budget rows showing Assigned against $0 Activity, surfacing in the September
+YNAB-vs-app comparison. No data is at risk today (the backfill is a guarded
+one-off). **Manual workaround for the $400 item:** edit the 3/5 owner-pay row
+down by $400 and add a $400 expense-kind row on Temporary Transfer (the
+outflow leg), then change the 3/2 inflow's kind off `transfer` (which cannot
+carry a category) and book it to Temporary Transfer too. Fix properly by
+teaching `mapYnabRow` to respect the row's own category within that group.
+
+**Month picker (added 2026-08-23, `components/MonthPicker.tsx`).** The month label
+opens a YNAB-style popover: a `‹ 2026 ›` year row over a 4x3 month grid, current
+month filled with the accent, future-but-reachable months subdued, out-of-range
+months greyed and genuinely `disabled` rather than hidden — Dan's explicit
+instruction, from YNAB's own behaviour. Year arrows grey when the adjacent year
+has no month in range. The header arrows now grey at the boundary instead of
+vanishing, and month navigation carries the active filter forward, which it
+previously dropped. Polish left open, all reviewed as Minor:
+- `yearInRange` and the availability check are pure functions with no unit tests;
+  they were verified by hand and in the browser across 2026-2028 including both
+  boundaries, so this is a regression gap rather than a correctness one. Extracting
+  them to a lib (the `lib/categoryOwnership.ts` pattern) would close it.
+- Clicking a header arrow while the picker is open returns focus to the picker's
+  trigger rather than the arrow clicked; navigation still happens correctly.
+- `MonthPicker`'s `filterQuery` guards on `filter !== 'all'`, which the page has
+  already normalised to `undefined` — a dead half-condition.
+- The year-stepper arrows look the same at rest whether enabled or disabled; they
+  differ only on hover. Mirrors the app's pre-existing header-arrow idiom.
+
+**Two things the design doc specifies that phase one did not build**, recorded
+here so they are deferred rather than forgotten:
+- **The wide canvas.** The spec puts the budget "on the wide canvas the register
+  already uses"; the page uses the default `AppShell` width (`max-w-5xl`). Not a
+  regression — the pre-rewrite page was the same — but it is why the category
+  column is only ~224px once the summary panel takes its track, which is what
+  forced the name/status truncation trade in `BudgetRow`. Widening the canvas
+  would relieve that directly.
+- **Collapsible groups.** The spec says "Groups collapse and carry roll-up
+  totals." The roll-ups are built; the collapsing is not.
+
+**Also open:** a transaction backdated into 2025 is silently dropped from the
+budget (the page reads `date >= 2026-01-01`) while still counting in the
+register's working balance, with nothing on screen reconciling the gap. `saveEnvelope`/`moveEnvelopeMoney` and everything only they used
+(`fetchEnvelopeMoves`, the `envelopeBalances` import, `belongsToCaller`'s
+`ledger_envelopes` case) have since been deleted too — they lost their only
+caller when `BudgetPanel.tsx` went, and deleting TypeScript touches no
+database. **The 0030 tables and `lib/envelopes.ts` stay**: the tables because
+ADDITIVE ONLY, and the library because `app/money/forecast/page.tsx` still
+imports `availableToAllocate` from it. One useful consequence — nothing can
+write `ledger_envelope_moves` any more, so the forecast's `netAllocated` is now
+permanently zero by construction rather than incidentally zero.
 
 ## Show day types — SHIPPED 2026-08-22
 

@@ -153,9 +153,15 @@ export default async function MoneyReportsPage({
 
   // Account-wide, not year-scoped — matches app/money/page.tsx's own
   // uncategorizedCount exactly (same kind filter), so this banner's number
-  // and the register's badge never disagree. Owner pay and transfers never
-  // carry a category (lt_nocat_for_owner_or_transfer, migration 0027) and are
-  // excluded here for the same reason the register excludes them.
+  // and the register's badge never disagree. Transfer never carries a
+  // category (lt_nocat_for_transfer, migration 0038) and owner_pay is
+  // categorized through the edit form rather than this queue (same reasoning
+  // as app/money/page.tsx's own uncategorizedCount) — both are excluded here
+  // for the same reason the register excludes them. Either way, lib/
+  // ledgerReports.ts's own P&L math (plSummary, spendByCategory) is
+  // unaffected by whether an owner_pay row carries a category: both filter
+  // by kind, never by category presence, so owner pay never leaks into
+  // expense/deductible/spend-by-category regardless.
   const uncategorizedCount = allTxns.filter(
     (t) => t.category_id === null && (t.kind === 'income' || t.kind === 'expense'),
   ).length

@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 import { formatAmount, formatUSD, parseUSD } from '@/lib/money'
 import { formatDateLong, formatDateShort, todayInChicago } from '@/lib/dates'
 import { normalizePayee } from '@/lib/payeeMemory'
+import { OWNER_PAY_CATEGORY_NAME } from '@/lib/ledgerCategories'
 import { type Quad } from '@/lib/receiptQuad'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select from '@/components/ui/Select'
@@ -59,11 +60,13 @@ const KIND_OPTIONS = [
   { value: 'owner_pay', label: 'Owner pay' },
 ] as const
 
-// Owner pay and transfer never carry a category (the DB agrees — see
-// lt_nocat_for_owner_or_transfer, migration 0027), so a row of either kind
-// shows its kind here instead of a category name. Transfer has no UI path to
-// create one yet (schema-ready for phase 2 account pairing only), but a row
-// of that kind still has to render something sane if one ever shows up.
+// Transfer never carries a category (the DB agrees — lt_nocat_for_transfer,
+// migration 0038), so a transfer row shows its kind here instead of a
+// category name (see CategoryText below). It has no UI path to create one
+// yet (schema-ready for phase 2 account pairing only), but a row of that
+// kind still has to render something sane if one ever shows up. Owner pay
+// DOES carry a category now (0038 relaxed that; 0040 backfilled it) — its
+// entry here backs the Kind Select's own label instead.
 const KIND_LABEL: Record<string, string> = {
   income: 'Income', expense: 'Expense', owner_pay: 'Owner pay', transfer: 'Transfer',
 }
@@ -257,18 +260,24 @@ function ReceiptControl({
 }
 
 /**
- * "Group: Name" — a categorized row's category, muted-group. Owner pay and
- * transfer rows show their kind instead (see KIND_LABEL's own comment); an
- * uncategorized income/expense row is never passed here at all (its cell
- * renders the inline Select instead — see inlineCategory in both row
- * renderers below). The group comes from `categories` (the page's own
- * not-hidden list, which already carries grp for the Select) matched by
- * category_id — a row whose category has since been hidden or deleted still
- * has its plain categoryName (denormalized on the row itself) to fall back
- * to, just without the group prefix.
+ * "Group: Name" — a categorized row's category, muted-group. Only transfer
+ * rows show their kind instead (see KIND_LABEL's own comment) — a transfer
+ * never carries a category, so there is nothing else to show. Owner pay
+ * carries a real category since 0038/0040 (C1: the app used to null it on
+ * every write, which silently undid that migration and threw the row's whole
+ * assignment into Ready to Assign) and renders exactly like an income/expense
+ * row below, "Uncategorized" fallback included for the rare row that
+ * genuinely has none. An uncategorized income/expense row is never passed
+ * here at all (its cell renders the inline Select instead — see
+ * inlineCategory in both row renderers below); owner_pay has no such inline
+ * picker, so an uncategorized one DOES reach here. The group comes from
+ * `categories` (the page's own not-hidden list, which already carries grp
+ * for the Select) matched by category_id — a row whose category has since
+ * been hidden or deleted still has its plain categoryName (denormalized on
+ * the row itself) to fall back to, just without the group prefix.
  */
 function CategoryText({ row, categories }: { row: LedgerTxnRow; categories: CategoryOption[] }) {
-  if (row.kind === 'owner_pay' || row.kind === 'transfer') {
+  if (row.kind === 'transfer') {
     return <span className="text-muted">{KIND_LABEL[row.kind]}</span>
   }
   if (!row.categoryName) return <span className="text-muted">Uncategorized</span>
@@ -358,20 +367,27 @@ export default function MoneyRegister({
   categories: CategoryOption[]
   shows: ShowOption[]
   /**
-   * Newest first, already capped at the latest 200 — see app/money/page.tsx.
+   * Newest first, optionally filtered by uncategorized status — see app/money/page.tsx.
    * Each row carries the true ledger balance after it posted (balanceCents),
-   * computed there over the full account before this list was capped or
-   * filtered, so it's correct regardless of what subset is being rendered.
+   * computed there over the full account before any filtering, so it's correct
+   * regardless of what subset is being rendered.
    */
   transactions: LedgerTxnRow[]
   workingBalanceCents: number
   clearedBalanceCents: number
   uncategorizedCount: number
   /**
-   * The size of whatever list `transactions` was capped from — the full
-   * account when `uncategorizedOnly` is off, or just its uncategorized
-   * income/expense rows when it's on (app/money/page.tsx filters before
-   * capping, not after, so this is a true count either way).
+   * Always exactly `transactions.length` today — app/money/page.tsx used to
+   * cap `transactions` at the newest 200 rows (RENDER_CAP), which is what
+   * `totalCount` and the `truncated` flag derived from it below existed to
+   * cover; that cap is gone (see git history's "the register renders every
+   * transaction, not the newest 200"), so `transactions` now IS the full
+   * account (or, when `uncategorizedOnly` is on, its full uncategorized
+   * income/expense subset) and `truncated` can no longer be true. Kept as a
+   * separate prop rather than deleted because a paged register was the
+   * other option on the table when the cap came out (docs/BACKLOG.md) and
+   * was passed over for now, not ruled out — if paging returns, this is
+   * already the plumbing it needs.
    */
   totalCount: number
   /**
@@ -473,7 +489,12 @@ export default function MoneyRegister({
   // account (or, on ?filter=uncategorized, of the uncategorized queue) —
   // moved up here, ahead of the functions below, because setRowCategory
   // needs it too: the apply-to-more count it shows is only ever exact when
-  // this is false.
+  // this is false. Provably always false today: `totalCount`'s own doc
+  // comment above explains why — the render cap that could make
+  // `transactions.length` fall short of it is gone. Left wired rather than
+  // deleted so both callers below (the apply-to-more count, and the
+  // "showing N of totalCount" messages) keep working unchanged if a paged
+  // register ever brings the gap back.
   const truncated = transactions.length < totalCount
 
   // Per-device column widths. Server renders the defaults; stored widths
@@ -631,6 +652,13 @@ export default function MoneyRegister({
     { value: '', label: '—' },
     ...shows.map((s) => ({ value: s.id, label: s.label })),
   ]
+  // C1: owner_pay carries a real category since 0038/0040. Looked up by name
+  // (matching migration 0039's insert/0040's backfill exactly — see
+  // OWNER_PAY_CATEGORY_NAME's own comment) so switching the Kind Select to
+  // "Owner pay" can default the picker to it instead of leaving it blank.
+  // undefined when the owner has renamed or deleted that category — the
+  // picker just starts blank in that case, same as any other kind.
+  const ownerPayCategoryId = categories.find((c) => c.name === OWNER_PAY_CATEGORY_NAME)?.id
 
   function add() {
     setError(null)
@@ -652,7 +680,7 @@ export default function MoneyRegister({
         date,
         amountCents,
         kind,
-        categoryId: kind === 'owner_pay' ? null : (categoryId || null),
+        categoryId: categoryId || null,
         showId: showId || null,
         payee,
         memo,
@@ -697,12 +725,9 @@ export default function MoneyRegister({
    *  (not a clear back to blank) also checks the rows already on screen for
    *  the same normalized payee, still uncategorized income/expense — when
    *  there are any, the row grows an "apply to all" offer instead of firing
-   *  the sweep unasked. The count in that offer is only ever a floor: it's
-   *  drawn from the rendered `transactions` list, which is capped at 200
-   *  rows (`truncated`, above), while "Apply to all" itself sweeps every
-   *  matching row across the whole account server-side — so when the list
-   *  is capped, the offer is worded "at least N more" rather than claiming
-   *  N is the exact count. A blank payee is skipped entirely, mirroring the
+   *  the sweep unasked. The count is exact: `transactions` now spans the
+   *  entire filtered set, so the offer counts every matching uncategorized
+   *  row on screen. A blank payee is skipped entirely, mirroring the
    *  server's own refusal to sweep from one (see setTransactionCategory's
    *  doc comment).
    */
@@ -789,10 +814,12 @@ export default function MoneyRegister({
         date: editDate,
         amountCents,
         kind: editKind,
-        // Owner pay never carries a category (lt_nocat_for_owner_or_transfer)
-        // — send categoryId: null outright rather than trusting the picker
-        // to have already been cleared client-side.
-        categoryId: editKind === 'owner_pay' ? null : (editCategoryId || null),
+        // C1: this used to force categoryId: null whenever editKind was
+        // owner_pay, which nulled out a REAL, already-assigned category on
+        // every single edit of an owner_pay row — quietly undoing 0038/0040
+        // one save at a time. Owner pay carries a category like any other
+        // kind now; only the picker's own value goes here.
+        categoryId: editCategoryId || null,
         showId: editShowId || null,
         payee: editPayee,
         memo: editMemo,
@@ -1060,7 +1087,18 @@ export default function MoneyRegister({
             ariaLabel="Kind"
             value={editKind}
             disabled={pending}
-            onChange={(v) => setEditKind(v as LedgerKind)}
+            onChange={(v) => {
+              const nextKind = v as LedgerKind
+              setEditKind(nextKind)
+              // C1: same default the add row gets — switching Kind to
+              // owner_pay defaults the picker to the Owner Pay category
+              // rather than leaving whatever was there from the row's
+              // previous kind. Editing INTO owner_pay from a different kind
+              // is the only path that reaches this; startEdit already seeds
+              // editCategoryId from the row's own real category_id when the
+              // row already IS owner_pay, so this never clobbers that.
+              if (nextKind === 'owner_pay' && ownerPayCategoryId) setEditCategoryId(ownerPayCategoryId)
+            }}
             options={KIND_OPTIONS}
           />
           <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={editPayee}
@@ -1068,11 +1106,17 @@ export default function MoneyRegister({
           <input aria-label="Amount" inputMode="decimal" placeholder="0.00"
                  className={`${FIELD_FULL} tabular text-right`} value={editAmount} disabled={pending}
                  onChange={(e) => setEditAmount(e.target.value)} />
+          {/* C1: owner_pay can carry a category now — this used to hide/
+              disable the picker for that kind and force-null it in saveEdit,
+              which quietly stripped a real, already-assigned category on
+              every edit. Transfer still cannot carry one, but nothing in
+              this edit form can select transfer (see KIND_OPTIONS) — a
+              transfer row that reaches here keeps whatever editKind
+              startEdit fell it back to (income/expense/owner_pay only). */}
           <Select
             ariaLabel="Category"
-            className={editKind === 'owner_pay' ? 'invisible' : undefined}
             value={editCategoryId}
-            disabled={pending || editKind === 'owner_pay'}
+            disabled={pending}
             onChange={setEditCategoryId}
             options={editCategoryOptions}
           />
@@ -1171,7 +1215,14 @@ export default function MoneyRegister({
     }
 
     const editable = t.cleared !== 'reconciled' && t.kind !== 'transfer'
-    const inlineCategory = t.category_id === null && (t.kind === 'income' || t.kind === 'expense')
+    // owner_pay included: updateLedgerTransaction refuses reconciled rows
+    // outright, and setTransactionCategory (the write this picker calls) is
+    // the one category write exempt from that lock — so a reconciled,
+    // uncategorised owner-pay row would otherwise have no path to a category
+    // at all. No such row exists today (owner-pay rows auto-default), but
+    // there's no reason to leave the corner unreachable.
+    const inlineCategory = t.category_id === null
+      && (t.kind === 'income' || t.kind === 'expense' || t.kind === 'owner_pay')
     const outflowCents = t.amount_cents < 0 ? -t.amount_cents : 0
     const inflowCents = t.amount_cents > 0 ? t.amount_cents : 0
     // A reconciled (or transfer) row can't be opened for edit, so it never
@@ -1289,7 +1340,14 @@ export default function MoneyRegister({
     }
 
     const editable = t.cleared !== 'reconciled' && t.kind !== 'transfer'
-    const inlineCategory = t.category_id === null && (t.kind === 'income' || t.kind === 'expense')
+    // owner_pay included: updateLedgerTransaction refuses reconciled rows
+    // outright, and setTransactionCategory (the write this picker calls) is
+    // the one category write exempt from that lock — so a reconciled,
+    // uncategorised owner-pay row would otherwise have no path to a category
+    // at all. No such row exists today (owner-pay rows auto-default), but
+    // there's no reason to leave the corner unreachable.
+    const inlineCategory = t.category_id === null
+      && (t.kind === 'income' || t.kind === 'expense' || t.kind === 'owner_pay')
     const outflowCents = t.amount_cents < 0 ? -t.amount_cents : 0
     const inflowCents = t.amount_cents > 0 ? t.amount_cents : 0
     // Same escape hatch as renderDesktopRow's — see its own comment.
@@ -1384,13 +1442,13 @@ export default function MoneyRegister({
     )
   }
 
-  // Phone grouping, over the same (newest-first, already-capped) list the
-  // desktop table renders: every uncleared row first, under one "Pending"
-  // header, in whatever order they already carry; then the rest bucketed by
-  // date. Bucketing by "does this row's date match the open bucket" rather
-  // than a Map works because `transactions` is already sorted (newest ledger
-  // order first) — same-date rows are always contiguous once the interleaved
-  // uncleared ones are pulled out, so this never needs to re-sort.
+  // Phone grouping, over the same (newest-first) list the desktop table renders:
+  // every uncleared row first, under one "Pending" header, in whatever order they
+  // already carry; then the rest bucketed by date. Bucketing by "does this row's
+  // date match the open bucket" rather than a Map works because `transactions` is
+  // already sorted (newest ledger order first) — same-date rows are always
+  // contiguous once the interleaved uncleared ones are pulled out, so this never
+  // needs to re-sort.
   const pendingRows = transactions.filter((t) => t.cleared === 'uncleared')
   const clearedRows = transactions.filter((t) => t.cleared !== 'uncleared')
   const dateGroups: { date: string; rows: LedgerTxnRow[] }[] = []
@@ -1502,7 +1560,14 @@ export default function MoneyRegister({
           ariaLabel="Kind"
           value={kind}
           disabled={pending}
-          onChange={(v) => setKind(v as LedgerKind)}
+          onChange={(v) => {
+            const nextKind = v as LedgerKind
+            setKind(nextKind)
+            // C1: default the picker to the Owner Pay category the moment
+            // Kind switches to owner_pay, rather than leaving it blank the
+            // way this used to force it null outright.
+            if (nextKind === 'owner_pay' && ownerPayCategoryId) setCategoryId(ownerPayCategoryId)
+          }}
           options={KIND_OPTIONS}
         />
         <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={payee} disabled={pending}
@@ -1510,15 +1575,16 @@ export default function MoneyRegister({
         <input aria-label="Amount" inputMode="decimal" placeholder="0.00"
                className={`${FIELD_FULL} tabular text-right`} value={amount} disabled={pending}
                onChange={(e) => setAmount(e.target.value)} />
-        {/* visibility, not removal from the DOM — an owner-pay row never
-            carries a category (lt_nocat_for_owner_or_transfer), but hiding it
-            this way keeps the grid's fixed sm+ column template aligned
-            instead of shifting every field after it one slot to the left. */}
+        {/* Every kind offered here can carry a category now (C1: owner_pay
+            got one back in 0038/0040 — this used to hide/disable the picker
+            for that kind, which is exactly the bug that let the app keep
+            nulling it out on every write). Transfer still cannot, but
+            nothing in this add form ever creates a transfer row (see
+            KIND_OPTIONS), so there is no kind left here to hide this for. */}
         <Select
           ariaLabel="Category"
-          className={kind === 'owner_pay' ? 'invisible' : undefined}
           value={categoryId}
-          disabled={pending || kind === 'owner_pay'}
+          disabled={pending}
           onChange={setCategoryId}
           options={categoryOptions}
         />
@@ -1597,7 +1663,8 @@ export default function MoneyRegister({
           <div className="hidden sm:block">
             <div
               style={{ gridTemplateColumns: gridTemplate }}
-              className="grid gap-x-3 pl-3 -ml-3 pr-3 pb-2 mb-1 border-b border-line select-none"
+              className="grid gap-x-3 pl-3 -ml-3 pr-3 pt-3 pb-2 mb-1 border-b border-line select-none
+                         sticky top-16 z-10 bg-bg"
             >
               <span aria-hidden />
               <span className="eyebrow relative">Date{columnGrip('b1', 'right')}</span>

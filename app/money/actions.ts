@@ -4,17 +4,25 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { isPlainDate, todayInChicago } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
-import { DEFAULT_CATEGORIES } from '@/lib/ledgerCategories'
+import { DEFAULT_CATEGORIES, seedCategoryRows } from '@/lib/ledgerCategories'
 import { clearedBalance, type BalanceLike } from '@/lib/ledgerBalance'
-import { envelopeBalances, type EnvelopeMoveLike } from '@/lib/envelopes'
 import { parseOfx, type ParsedOfx } from '@/lib/ofx'
 import { planImport, type ExistingTxn } from '@/lib/ledgerImport'
 import { normalizePayee, rememberedCategories, memoryKey } from '@/lib/payeeMemory'
 import { validateTxnShape, isSaneLedgerDate, type LedgerKind } from '@/lib/ledgerRules'
+import { decideIncomeRoleChange } from '@/lib/incomeRoleGuard'
 
 type Fail = { error: string }
 
 const SANE_DATE_ERROR = "That date is outside the ledger's range (1990–2100)."
+
+// Same idiom as app/cal/[token]/route.ts and app/i/[token]/page.tsx: a
+// malformed id is a driver error from Postgres, not a normal "not found" —
+// guarded here because incomeRoleChangeAllowed below interpolates a
+// caller-supplied category id straight into a PostgREST `.or(...)` filter
+// string, which a shape check upstream of the query is cheaper (and safer)
+// than trusting to fail correctly downstream.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** Creates the one checking account a ledger starts from. */
 export async function createLedgerAccount(input: {
@@ -68,16 +76,12 @@ export async function ensureDefaultCategories(): Promise<Fail | { ok: true; seed
   if (countError) return { error: countError.message }
   if ((count ?? 0) > 0) return { ok: true, seeded: 0 }
 
-  const { error } = await supabase.from('ledger_categories').insert(
-    DEFAULT_CATEGORIES.map((c) => ({
-      owner_id: user.id,
-      name: c.name,
-      grp: c.grp,
-      sort: c.sort,
-      deductible: c.deductible,
-      is_equipment: c.is_equipment,
-    })),
-  )
+  // seedCategoryRows (lib/ledgerCategories) is the one place that builds this
+  // shape — including budget_role, which a hand-written insert here dropped
+  // before (I2): every seeded category landed on the DB's 'spending' default,
+  // silently, with no visible symptom until Ready to Assign stopped matching
+  // YNAB.
+  const { error } = await supabase.from('ledger_categories').insert(seedCategoryRows(user.id))
   if (error) {
     // Migration 0028's unique index (owner_id, name) is the backstop for the
     // race this function's count-then-insert can't close on its own: two
@@ -98,48 +102,54 @@ export async function ensureDefaultCategories(): Promise<Fail | { ok: true; seed
   return { ok: true, seeded: DEFAULT_CATEGORIES.length }
 }
 
-// Dan's actual YNAB Savings funds, in the order he already thinks of them.
-const DEFAULT_ENVELOPES = ['Taxes', 'Tax Prep', 'Retained Earnings']
-
 /**
- * Seeds the three savings-fund envelopes Dan already runs in YNAB the first
- * time this owner opens the ledger, and never again — same idempotent-by-
- * count shape as ensureDefaultCategories above, not name-matching, so an
- * envelope he's since renamed isn't mistaken for "missing" and reseeded next
- * to itself.
+ * Guards saveCategory's write against exactly the hazard
+ * lib/incomeRoleGuard.ts's own comment describes: flipping an existing
+ * category to budget_role 'income' silently drops it out of buildBudget's
+ * spendingIds for every month, past included. Only called from the update
+ * branch, and only when the caller asked for 'income' — a brand-new
+ * category (id === null) can't have prior moves, a target, or transactions
+ * yet, so it never needs this.
+ *
+ * The id is shape-checked against UUID before it touches any query: it's
+ * caller-supplied and lands unescaped in the `.or(...)` filter string below,
+ * so a malformed id is refused here rather than trusted to fail safely once
+ * it reaches Postgres.
+ *
+ * All four reads (current role, moves, targets, transactions) run even when
+ * the category turns out to already be 'income' — decideIncomeRoleChange
+ * short-circuits on that case, but fetching unconditionally keeps this
+ * function simple and the query cost is one row each, nowhere near hot.
+ * `error` on the current-role read is checked and returned on before
+ * touching `current` at all, same fail-closed rule decideIncomeRoleChange
+ * itself applies to the other three reads.
  */
-export async function ensureDefaultEnvelopes(): Promise<Fail | { ok: true; seeded: number }> {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not signed in.' }
+async function incomeRoleChangeAllowed(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  categoryId: string,
+): Promise<Fail | null> {
+  if (!UUID.test(categoryId)) return { error: 'That category does not belong to you.' }
 
-  const { count, error: countError } = await supabase
-    .from('ledger_envelopes')
-    .select('id', { count: 'exact', head: true })
-  if (countError) return { error: countError.message }
-  if ((count ?? 0) > 0) return { ok: true, seeded: 0 }
+  const [
+    { data: current, error: currentError },
+    moves,
+    targets,
+    transactions,
+  ] = await Promise.all([
+    supabase.from('ledger_categories').select('budget_role').eq('id', categoryId).maybeSingle(),
+    supabase
+      .from('ledger_budget_moves')
+      .select('id')
+      .or(`from_category_id.eq.${categoryId},to_category_id.eq.${categoryId}`)
+      .is('undone_at', null)
+      .limit(1),
+    supabase.from('ledger_category_targets').select('id').eq('category_id', categoryId).limit(1),
+    supabase.from('ledger_transactions').select('id').eq('category_id', categoryId).limit(1),
+  ])
+  if (currentError) return { error: currentError.message }
+  const currentRole = (current?.budget_role === 'income' ? 'income' : 'spending') as 'spending' | 'income'
 
-  const { error } = await supabase.from('ledger_envelopes').insert(
-    DEFAULT_ENVELOPES.map((name, sort) => ({ owner_id: user.id, name, sort })),
-  )
-  if (error) {
-    // Same race ensureDefaultCategories guards against, closed here by
-    // migration 0030's (owner_id, name) unique index instead of 0028's: two
-    // first loads can both read zero envelopes and both attempt to seed. The
-    // second writer's bulk insert now fails on that index instead of
-    // doubling every envelope — that's this call losing the race, not a real
-    // failure, so it reports the same "already seeded" outcome as the count
-    // check above.
-    if (error.code === '23505') return { ok: true, seeded: 0 }
-    return { error: error.message }
-  }
-
-  // No revalidatePath('/money') here — this runs during app/money/page.tsx's
-  // own render (Next 16 throws if a revalidation runs mid-render, since it's
-  // meant for the aftermath of a user-triggered Server Action, not a page's
-  // own data loading), and that same render is about to read the envelopes
-  // it just seeded fresh anyway, so there's nothing stale left to fix.
-  return { ok: true, seeded: DEFAULT_ENVELOPES.length }
+  return decideIncomeRoleChange(currentRole, moves, targets, transactions)
 }
 
 /**
@@ -154,6 +164,12 @@ export async function saveCategory(input: {
   hidden: boolean
   isEquipment: boolean
   deductible: boolean
+  /** 'income' rows are inflows to Ready to Assign, never budget rows (see
+   *  lib/budget.ts's own BudgetCategory.budgetRole comment). Threaded
+   *  through explicitly rather than inferred from `grp` — the DB column
+   *  comment says why: group names are free text the owner can rename at
+   *  will (I2). */
+  budgetRole: 'spending' | 'income'
 }): Promise<Fail | { ok: true }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -184,6 +200,7 @@ export async function saveCategory(input: {
       hidden: input.hidden,
       is_equipment: input.isEquipment,
       deductible: input.deductible,
+      budget_role: input.budgetRole,
     })
     if (error) {
       // Migration 0028's unique index (owner_id, name) — same race
@@ -194,117 +211,24 @@ export async function saveCategory(input: {
       return { error: error.message }
     }
   } else {
+    // Flipping to 'income' can silently rewrite every month buildBudget's
+    // spendingIds covers — lib/incomeRoleGuard.ts carries the full hazard.
+    // Checked before the write, not instead of it: a client-side
+    // confirmation is a hint, this is the invariant.
+    if (input.budgetRole === 'income') {
+      const guardError = await incomeRoleChangeAllowed(supabase, input.id)
+      if (guardError) return guardError
+    }
+
     const { error } = await supabase
       .from('ledger_categories')
-      .update({ name, grp, hidden: input.hidden, is_equipment: input.isEquipment, deductible: input.deductible })
+      .update({
+        name, grp, hidden: input.hidden, is_equipment: input.isEquipment, deductible: input.deductible,
+        budget_role: input.budgetRole,
+      })
       .eq('id', input.id)
     if (error) {
       if (error.code === '23505') return { error: `You already have a category named "${name}".` }
-      return { error: error.message }
-    }
-  }
-
-  revalidatePath('/money')
-  return { ok: true }
-}
-
-const ENVELOPE_MOVE_PAGE_SIZE = 1000
-
-/**
- * Every ledger_envelope_moves row that named this envelope on either side,
- * paged past PostgREST's default 1000-row cap — same paged shape as
- * fetchAllLedgerTransactions further down, narrowed to the three columns
- * envelopeBalances (lib/envelopes) needs to add up. A move can only ever
- * name this envelope as its from side, its to side, or both across
- * different moves (never both at once on the SAME move — migration 0030's
- * lem_direction check) — the OR below is exactly "this envelope was one
- * side of the move."
- */
-async function fetchEnvelopeMoves(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  envelopeId: string,
-): Promise<{ rows: EnvelopeMoveLike[]; error: string | null }> {
-  const rows: EnvelopeMoveLike[] = []
-  let from = 0
-  for (;;) {
-    const { data, error } = await supabase
-      .from('ledger_envelope_moves')
-      .select('from_envelope_id, to_envelope_id, amount_cents')
-      .or(`from_envelope_id.eq.${envelopeId},to_envelope_id.eq.${envelopeId}`)
-      .order('created_at', { ascending: true })
-      .order('id', { ascending: true })
-      .range(from, from + ENVELOPE_MOVE_PAGE_SIZE - 1)
-    if (error) return { rows: [], error: error.message }
-    rows.push(...((data ?? []) as EnvelopeMoveLike[]))
-    if (!data || data.length < ENVELOPE_MOVE_PAGE_SIZE) break
-    from += ENVELOPE_MOVE_PAGE_SIZE
-  }
-  return { rows, error: null }
-}
-
-/**
- * Creates or edits an envelope. A null id creates one, appended to the end
- * (max sort across all envelopes, plus one) so a new envelope never jumps
- * ahead of the ones Dan already ordered by hand — same shape as saveCategory
- * above, minus the per-group scoping, since envelopes aren't grouped.
- */
-export async function saveEnvelope(input: {
-  id: string | null
-  name: string
-  hidden: boolean
-}): Promise<Fail | { ok: true }> {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not signed in.' }
-
-  const name = input.name.trim()
-  if (!name) return { error: 'Give the envelope a name.' }
-
-  if (input.id === null) {
-    // RLS already scopes this to the caller's own rows, same as every other
-    // owner-scoped select in this file — no explicit owner_id filter needed.
-    const { data: top, error: sortError } = await supabase
-      .from('ledger_envelopes')
-      .select('sort')
-      .order('sort', { ascending: false })
-      .limit(1)
-    if (sortError) return { error: sortError.message }
-    const nextSort = (top?.[0]?.sort ?? -1) + 1
-
-    const { error } = await supabase.from('ledger_envelopes').insert({
-      owner_id: user.id,
-      name,
-      sort: nextSort,
-      hidden: input.hidden,
-    })
-    if (error) {
-      // Migration 0030's unique index (owner_id, name) — same race
-      // ensureDefaultEnvelopes already guards against, but here it's a
-      // genuine duplicate name Dan typed by hand, not a seeding race, so it
-      // gets a message he can read instead of Postgres's raw constraint text.
-      if (error.code === '23505') return { error: `You already have an envelope named "${name}".` }
-      return { error: error.message }
-    }
-  } else {
-    // BudgetPanel's own checkbox disable is a hint, not the invariant — a
-    // stale second tab (still showing a balance that's since changed) or a
-    // request replayed by hand must not be able to strand money in a hidden
-    // envelope, since the Move Selects stop offering a hidden-and-empty row
-    // as a source the moment it's hidden. Un-hiding never hits this: making
-    // an envelope more visible again can't strand anything.
-    if (input.hidden) {
-      const { rows: moves, error: movesError } = await fetchEnvelopeMoves(supabase, input.id)
-      if (movesError) return { error: movesError }
-      const balanceCents = envelopeBalances(moves).get(input.id) ?? 0
-      if (balanceCents !== 0) return { error: 'Empty this envelope before hiding it.' }
-    }
-
-    const { error } = await supabase
-      .from('ledger_envelopes')
-      .update({ name, hidden: input.hidden })
-      .eq('id', input.id)
-    if (error) {
-      if (error.code === '23505') return { error: `You already have an envelope named "${name}".` }
       return { error: error.message }
     }
   }
@@ -323,65 +247,11 @@ export async function saveEnvelope(input: {
  */
 async function belongsToCaller(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  table: 'ledger_categories' | 'shows' | 'ledger_accounts' | 'ledger_envelopes',
+  table: 'ledger_categories' | 'shows' | 'ledger_accounts',
   id: string,
 ): Promise<boolean> {
   const { data } = await supabase.from(table).select('id').eq('id', id).maybeSingle()
   return data !== null
-}
-
-/**
- * Records one move of money between the Available pool (a null envelope id)
- * and/or two envelopes. Migration 0030's ledger_envelope_moves is IMMUTABLE
- * by design — there is no updateEnvelopeMove or deleteEnvelopeMove anywhere
- * in this file, and there never should be: a mistaken move is corrected by
- * entering the opposite move as a new row, the same way a bank statement is
- * never edited after the fact, so the move history stays honest all the way
- * back instead of being rewritten to look like the mistake never happened.
- */
-export async function moveEnvelopeMoney(input: {
-  fromEnvelopeId: string | null
-  toEnvelopeId: string | null
-  amountCents: number
-  note: string
-}): Promise<Fail | { ok: true }> {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not signed in.' }
-
-  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) {
-    return { error: 'Enter an amount to move.' }
-  }
-  if (input.fromEnvelopeId === null && input.toEnvelopeId === null) {
-    return { error: 'Pick where the money moves.' }
-  }
-  // Mirrors migration 0030's lem_direction check constraint — Available ->
-  // Available (or envelope X -> envelope X) would be a no-op pretending to
-  // be a move, so it's refused here with a message Dan can read instead of
-  // letting the insert below fail on Postgres's constraint text.
-  if (input.fromEnvelopeId === input.toEnvelopeId) {
-    return { error: 'Pick two different envelopes.' }
-  }
-
-  if (input.fromEnvelopeId !== null && !(await belongsToCaller(supabase, 'ledger_envelopes', input.fromEnvelopeId))) {
-    return { error: 'That envelope does not belong to you.' }
-  }
-  if (input.toEnvelopeId !== null && !(await belongsToCaller(supabase, 'ledger_envelopes', input.toEnvelopeId))) {
-    return { error: 'That envelope does not belong to you.' }
-  }
-
-  const { error } = await supabase.from('ledger_envelope_moves').insert({
-    owner_id: user.id,
-    from_envelope_id: input.fromEnvelopeId,
-    to_envelope_id: input.toEnvelopeId,
-    amount_cents: input.amountCents,
-    moved_on: todayInChicago(),
-    note: input.note.trim() || null,
-  })
-  if (error) return { error: error.message }
-
-  revalidatePath('/money')
-  return { ok: true }
 }
 
 type LedgerTxnRow = {
@@ -1317,10 +1187,12 @@ async function fetchUncategorizedSamePayeeCandidates(
  * categorized by hand there can already be a pile of older uncategorized
  * rows for it sitting in the register. Turning this on backfills exactly
  * those — fetchUncategorizedSamePayeeCandidates above already limits the
- * pool to uncategorized income/expense rows, so a row that already has a
- * category, or an owner_pay/transfer row, is never touched. Off, or
- * `categoryId` null (clearing a category isn't something to fan out), it's
- * a no-op and `applied` reports 0.
+ * pool to uncategorized income/expense rows, and the sweep below is gated
+ * the same way, so a row that already has a category, a transfer row, or an
+ * owner_pay row is never touched by the SWEEP (owner_pay can be categorized
+ * directly, same as income/expense — see the guard below — it just isn't
+ * part of payee memory's fan-out). Off, or `categoryId` null (clearing a
+ * category isn't something to fan out), it's a no-op and `applied` reports 0.
  */
 export async function setTransactionCategory(
   id: string,
@@ -1334,12 +1206,13 @@ export async function setTransactionCategory(
   const { data: existing } = await supabase
     .from('ledger_transactions').select('kind, account_id, payee').eq('id', id).maybeSingle()
   if (!existing) return { error: 'That transaction no longer exists.' }
-  // Same rule updateLedgerTransaction's validateTxnShape enforces on write
-  // (lt_nocat_for_owner_or_transfer, migration 0027): paying yourself is not
-  // a deduction and a transfer moves money between your own accounts, so
-  // neither kind ever carries a category.
-  if (existing.kind === 'owner_pay' || existing.kind === 'transfer') {
-    return { error: 'Owner pay and transfers do not use a category.' }
+  // A transfer moves money between your own accounts and never carries a
+  // category (the DB still enforces this: lt_nocat_for_transfer, migration
+  // 0038). Owner pay USED to be refused here too, but 0038 made it a real
+  // budget category — this guard is deliberately narrower than
+  // updateLedgerTransaction's validateTxnShape used to require.
+  if (existing.kind === 'transfer') {
+    return { error: 'Transfers do not use a category.' }
   }
 
   if (categoryId !== null && !(await belongsToCaller(supabase, 'ledger_categories', categoryId))) {
@@ -1357,12 +1230,19 @@ export async function setTransactionCategory(
   // and sweeping every other payee-less row would categorize rows that share
   // no payee at all — the same rule rememberedCategories applies when it
   // refuses to learn from a blank payee.
-  if (applyToSamePayee && categoryId !== null && normalizePayee(existing.payee) !== '') {
-    // existing.kind is narrowed to 'income' | 'expense' here — the
-    // owner_pay/transfer guard above already returned for either of the
-    // other two kinds. Passed through so the sweep can never cross from an
-    // expense row into that payee's income rows (or the reverse) — the same
-    // kind-aware rule payeeMemory's memoryKey enforces on the import side.
+  if (
+    applyToSamePayee && categoryId !== null && normalizePayee(existing.payee) !== ''
+    && (existing.kind === 'income' || existing.kind === 'expense')
+  ) {
+    // existing.kind is checked again here, not just excluded above — only
+    // transfer is refused outright now, so owner_pay reaches this point too,
+    // and fetchUncategorizedSamePayeeCandidates below is typed to exactly
+    // 'income' | 'expense'. Passed through so the sweep can never cross from
+    // an expense row into that payee's income rows (or the reverse) — the
+    // same kind-aware rule payeeMemory's memoryKey enforces on the import
+    // side. Narrowing here also keeps the sweep scoped to income/expense on
+    // purpose: payee memory was never meant to fan out across owner_pay rows,
+    // which the UI itself never offers this sweep for anyway.
     const { rows: candidates, error: candidatesError } =
       await fetchUncategorizedSamePayeeCandidates(supabase, existing.account_id, id, existing.kind)
     if (candidatesError) return { error: candidatesError }

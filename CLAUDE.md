@@ -101,7 +101,8 @@ status.
   income|expense|owner_pay|transfer with DB sign/category checks; cleared
   uncleared|cleared|reconciled; unique partial `(owner,account,import_id)`),
   `ledger_reconciliations`, `ledger_envelopes` + immutable
-  `ledger_envelope_moves` (corrections = counter-moves). 0031 adds
+  `ledger_envelope_moves` (0030 — shipped EMPTY, superseded by the budget
+  below; left in place, unused, because ADDITIVE ONLY). 0031 adds
   `receipt_path`/`receipt_original` to ledger_transactions — receipts attach
   to bank rows via the shared capture pipeline; storage paths are
   `{owner_id}/ledger/{stamp}-…` (folder[2]='ledger' can't collide with show
@@ -186,10 +187,48 @@ status.
   source — `compareLedgerOrder` (date asc, created_at asc, id asc; display =
   exact reverse) and `runningBalances` (pinned invariant: top rendered row's
   balance === working balance). Balances are computed over the FULL paged
-  set, never the RENDER_CAP 200 slice — do not "optimize" that.
-- Envelopes: Available-to-allocate = working balance − net allocated; hidden
-  envelopes must stay reachable (the "Hidden (N)" disclosure); hide requires a
-  zero balance, server-enforced.
+  set, and the register renders every row — the old RENDER_CAP was deleted
+  (2026-08-23) precisely because a display cap that looks like completeness
+  is the failure mode this module exists to prevent. Do not reintroduce one.
+- Envelopes (0030): dead. Three rows, zero moves, ever — an envelope
+  transactions never point at can show a balance but never an activity. The
+  budget below puts the budget ON the categories transactions already carry.
+- **The budget (0038-0041, `/money/budget`).** YNAB's month grid, and the two
+  formulas below were validated against 1,421 rows of Dan's own YNAB export
+  BEFORE any code existed — 0 mismatches — so they are settled by evidence,
+  not taste. Do not re-derive them:
+  - `available(c,m) = max(0, available(c,m-1)) + assigned(c,m) + activity(c,m)`
+  - `rta(m) = rta(m-1) + income(m) − Σ assigned(c,m) + Σ min(0, available(c,m-1))`
+  The `max(0, …)` is the whole trick: a positive balance rolls forward, cash
+  overspending does NOT — it hits the next month's Ready to Assign and the
+  category restarts at zero. Letting negatives roll forward gives 23 mismatches
+  against that same export.
+  - `income(m)` is every transaction that does NOT land in a spending category
+    — income-role categories plus uncategorised rows, any kind. Money without a
+    job sits in Ready to Assign until it gets one.
+  - `activity(c,m)` is a SIGNED sum over all transactions carrying `c`,
+    regardless of kind, so refunds net down with no special case.
+  - An assignment is an immutable move in `ledger_budget_moves` (null on either
+    side = Ready to Assign); `assigned` is the sum of moves, never a stored
+    column. Undo marks `undone_at`; it never deletes.
+  - **`hidden` is presentation, never accounting.** Every spending category
+    participates in every total; the TABLE decides what to draw. Putting
+    `&& !c.hidden` back into `spendingIds` reintroduces a bug where a hidden
+    category's spending counted as income and hiding one retroactively rewrote
+    every past month's Ready to Assign.
+  - `budget_role` says which categories are budget rows. It is an explicit
+    column, never inferred from the group name, which is user-editable text.
+  - Filters hide rows only. Group totals and the summary panel ALWAYS describe
+    the whole month — a total ranging over a filtered subset would make the
+    reconciliation against YNAB lie, which defeats the screen's whole purpose.
+  - 0038 replaced `lt_nocat_for_owner_or_transfer` with `lt_nocat_for_transfer`:
+    owner pay is a real budget category (Dan's largest line) and carries
+    `deductible = false`, so the CPA export is unchanged. Transfers still may
+    not carry a category.
+  - Targets (`ledger_category_targets`) are monthly or by-date only, and have
+    NO history — YNAB does not export targets, so Dan enters them by hand and a
+    past month is judged against today's target. Assigned/Activity/Available
+    stay exact; only the status wording on closed months can read oddly.
 
 ## Process that has worked
 
@@ -209,7 +248,7 @@ status.
 
 ## Current state (2026-08-21) & where things are written
 
-- LIVE in prod: billing + full Money module + envelopes; receipt corner
+- LIVE in prod: billing + full Money module; receipt corner
   detection/flattening (CornerAdjuster + loupe; PDFs skip corners); attach/
   replace receipts on expenses AND on ledger rows; original PDF receipts ride
   the invoice as full-fidelity appendices (`lib/mergePdfAppendices.ts`,
@@ -256,11 +295,10 @@ status.
   with `--push` to Vercel and `--probe` diagnostics; secrets never printed).
 - **Backlog:** `docs/BACKLOG.md` (canonical). Module design reference:
   `docs/superpowers/specs/2026-08-18-bookkeeping-module-reference.md` (incl.
-  Dan's CPA homework questions). Next big pieces, filed by Dan 2026-08-22,
-  NONE started: **per-month budgeting with month navigation** — the real
-  YNAB Rule-1 model; he plans to backfill from January and reconcile against
-  YNAB to prove it, so the arithmetic must match YNAB's definitions;
-  **show day types** (travel-only vs travel+work, replacing the forecast's
+  Dan's CPA homework questions). Of the pieces Dan filed 2026-08-22:
+  **per-month budgeting** — phase one SHIPPED (see the budget notes above);
+  phase two (assigning by hand, moving money between categories, undo/redo,
+  Recent Moves) is a separate plan. **show day types** (travel-only vs travel+work, replacing the forecast's
   first/last-day assumption and superseding the deferred 2-day out-of-state
   case); **snap-a-receipt on mobile** (header button → show picker →
   straight to camera; the post-capture flow is explicitly unresolved);

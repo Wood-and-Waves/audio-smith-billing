@@ -21,7 +21,8 @@ test('expense: a negative amount with any category passes', () => {
   assert.equal(validateTxnShape({ amountCents: -5000, kind: 'expense', categoryId: null }), null)
 })
 
-test('owner_pay: a negative amount with a null category passes', () => {
+test('owner_pay: a negative amount with any category passes — 0038 gave owner pay a real budget category', () => {
+  assert.equal(validateTxnShape({ amountCents: -5000, kind: 'owner_pay', categoryId: 'cat-1' }), null)
   assert.equal(validateTxnShape({ amountCents: -5000, kind: 'owner_pay', categoryId: null }), null)
 })
 
@@ -74,14 +75,10 @@ test('owner_pay must be negative', () => {
   )
 })
 
-test('owner_pay or transfer with a category is refused', () => {
-  assert.deepEqual(
-    validateTxnShape({ amountCents: -5000, kind: 'owner_pay', categoryId: 'cat-1' }),
-    { error: 'Owner pay and transfers do not use a category.' },
-  )
+test('transfer with a category is refused — owner_pay no longer is, since 0038', () => {
   assert.deepEqual(
     validateTxnShape({ amountCents: -5000, kind: 'transfer', categoryId: 'cat-1' }),
-    { error: 'Owner pay and transfers do not use a category.' },
+    { error: 'Transfers do not use a category.' },
   )
 })
 

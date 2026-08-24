@@ -1,43 +1,75 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { workingBalance, type BalanceLike } from '@/lib/ledgerBalance'
-import { envelopeBalances, availableToAllocate, type EnvelopeMoveLike } from '@/lib/envelopes'
+import { todayInChicago, addMonths } from '@/lib/dates'
+import { formatUSD } from '@/lib/money'
+import {
+  buildBudget, FIRST_BUDGET_MONTH, OPENING_MONTH, MAX_MONTHS_AHEAD,
+  type BudgetCategory, type BudgetMove, type BudgetTxn, type CategoryTarget,
+} from '@/lib/budget'
 import AppShell from '@/components/AppShell'
-import BudgetPanel, { type EnvelopeRow, type EnvelopeMoveRow } from '@/components/BudgetPanel'
-import { ensureDefaultEnvelopes } from '@/app/money/actions'
+import BudgetTable, { parseBudgetFilter, type BudgetFilter } from '@/components/BudgetTable'
+import BudgetSummary from '@/components/BudgetSummary'
+import MonthPicker from '@/components/MonthPicker'
 
 export const dynamic = 'force-dynamic'
 
-// Mirrors app/money/page.tsx's own fetchAllTransactions / fetchAllLedgerTransactions
-// (app/money/actions.ts) exactly — Supabase selects silently cap at 1000 rows
-// (PostgREST's max_rows), so a plain unranged .select() would truncate an
-// account past 1000 transactions with no error, understating the working
-// balance this page's "Available to allocate" is built on. Duplicated rather
-// than imported for the same reason those two copies are: a 'use server' file
-// may only export actions, and this page needs neither's exact column set.
+// The reports/calendar idiom (app/calendar/page.tsx): a bad or absent `m`
+// falls back to the current month rather than 404ing or crashing a date
+// helper on garbage input. `f` (Task 8's filter chips) follows the same
+// idiom one level down, in parseBudgetFilter (components/BudgetTable.tsx):
+// anything unrecognised reads as All rather than 404ing.
+// The month component is constrained to 01-12 (not just \d{2}) so a value
+// like "2026-13" reads as malformed rather than as a real month greater
+// than every legitimate one — that used to slip past the FIRST_BUDGET_MONTH
+// clamp below and fall straight into buildBudget as toMonth.
+const MONTH_KEY = /^\d{4}-(0[1-9]|1[0-2])$/
+
+// The five chips above the table, in Dan's own order (design doc: "All,
+// Overspent, Underfunded, Overfunded, Money Available"). `all` renders
+// without an `f` param at all — cleaner URL, and parseBudgetFilter already
+// treats a missing `f` the same as an explicit `all`.
+const FILTER_CHIPS: { key: BudgetFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'overspent', label: 'Overspent' },
+  { key: 'underfunded', label: 'Underfunded' },
+  { key: 'overfunded', label: 'Overfunded' },
+  { key: 'available', label: 'Money Available' },
+]
+
+// Supabase selects silently cap at 1000 rows (PostgREST's max_rows) with no
+// error. ledger_transactions is already past 300 rows and grows every month,
+// and every table read below is summed into Ready to Assign or a category's
+// Available — so a truncated page here isn't a missing row on screen, it's a
+// silently wrong budget. Mirrors this file's own pre-rewrite
+// fetchAllTransactionsForBalance (see git history) and the same pattern in
+// app/money/page.tsx, app/money/reports/page.tsx and app/money/forecast/page.tsx.
+// Duplicated per fetch rather than shared: each needs its own column set and
+// its own row type, same reasoning those files already give for not sharing.
 const PAGE_SIZE = 1000
 
-// The latest N moves shown under "Recent moves" — every move is still read to
-// compute balances (see fetchAllEnvelopeMoves below); this only caps the
-// audit-trail list actually rendered.
-const RECENT_MOVES_CAP = 20
+type RawCategoryRow = {
+  id: string
+  name: string
+  grp: string
+  sort: number
+  hidden: boolean
+  budget_role: string
+}
 
-async function fetchAllTransactionsForBalance(
+async function fetchAllCategories(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  accountId: string,
-): Promise<{ rows: BalanceLike[]; error: string | null }> {
-  const rows: BalanceLike[] = []
+): Promise<{ rows: RawCategoryRow[]; error: string | null }> {
+  const rows: RawCategoryRow[] = []
   let from = 0
   for (;;) {
     const { data, error } = await supabase
-      .from('ledger_transactions')
-      .select('amount_cents, cleared')
-      .eq('account_id', accountId)
+      .from('ledger_categories')
+      .select('id, name, grp, sort, hidden, budget_role')
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
       .range(from, from + PAGE_SIZE - 1)
     if (error) return { rows: [], error: error.message }
-    rows.push(...((data ?? []) as BalanceLike[]))
+    rows.push(...((data ?? []) as RawCategoryRow[]))
     if (!data || data.length < PAGE_SIZE) break
     from += PAGE_SIZE
   }
@@ -45,36 +77,96 @@ async function fetchAllTransactionsForBalance(
 }
 
 type RawMoveRow = {
-  id: string
-  from_envelope_id: string | null
-  to_envelope_id: string | null
+  month: string
+  from_category_id: string | null
+  to_category_id: string | null
   amount_cents: number
-  moved_on: string
-  note: string | null
+  undone_at: string | null
 }
 
-// Every move this owner has ever made, not account-scoped (ledger_envelope_moves
-// carries owner_id, not account_id — RLS alone is the filter here). Paged for
-// the same reason fetchAllTransactionsForBalance above is: Available to
-// allocate and every envelope balance are sums over ALL of history, and a
-// truncated page would understate both silently. Ordered (created_at, id)
-// ascending — a stable tiebreak so a page boundary can't skip or duplicate a
-// row — the newest-first order the "Recent moves" list wants is applied by
-// the caller, once the full set is in hand.
-async function fetchAllEnvelopeMoves(
+async function fetchAllBudgetMoves(
   supabase: Awaited<ReturnType<typeof createClient>>,
 ): Promise<{ rows: RawMoveRow[]; error: string | null }> {
   const rows: RawMoveRow[] = []
   let from = 0
   for (;;) {
     const { data, error } = await supabase
-      .from('ledger_envelope_moves')
-      .select('id, from_envelope_id, to_envelope_id, amount_cents, moved_on, note')
+      .from('ledger_budget_moves')
+      .select('month, from_category_id, to_category_id, amount_cents, undone_at')
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
       .range(from, from + PAGE_SIZE - 1)
     if (error) return { rows: [], error: error.message }
     rows.push(...((data ?? []) as RawMoveRow[]))
+    if (!data || data.length < PAGE_SIZE) break
+    from += PAGE_SIZE
+  }
+  return { rows, error: null }
+}
+
+type RawTxnRow = { date: string; category_id: string | null; amount_cents: number }
+
+// Same single-account model as the register (see accountRow's own query
+// below): scoped to THIS account, same as fetchAllTransactionsForBalance
+// (this file's pre-rewrite copy) and app/money/forecast/page.tsx's
+// fetchAllForecastTxns. Filtered to FIRST_BUDGET_MONTH forward — anything
+// earlier is already folded into the account's opening_balance_cents (see
+// the opening-seed comment below), and reading it again here would
+// double-count it into Ready to Assign. The single-account `.eq` is also a
+// silent trade, not just a precedent: the moment a second open account
+// exists, its transactions are simply never read here, and the budget
+// understates itself with nothing on screen to say so.
+async function fetchAllBudgetTxns(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  accountId: string,
+): Promise<{ rows: RawTxnRow[]; error: string | null }> {
+  const rows: RawTxnRow[] = []
+  let from = 0
+  for (;;) {
+    const { data, error } = await supabase
+      .from('ledger_transactions')
+      .select('date, category_id, amount_cents')
+      .eq('account_id', accountId)
+      .gte('date', `${FIRST_BUDGET_MONTH}-01`)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + PAGE_SIZE - 1)
+    if (error) return { rows: [], error: error.message }
+    rows.push(...((data ?? []) as RawTxnRow[]))
+    if (!data || data.length < PAGE_SIZE) break
+    from += PAGE_SIZE
+  }
+  return { rows, error: null }
+}
+
+type RawTargetRow = {
+  category_id: string
+  kind: string
+  amount_cents: number
+  due_date: string | null
+}
+
+// 0038 shipped the table; components/TargetEditor.tsx (via
+// app/money/budget/actions.ts's setCategoryTarget/clearCategoryTarget) is
+// the editor that writes to it now, so this can be genuinely empty for an
+// owner who hasn't set any targets yet, or full for one who has. Fetched
+// (and paged) either way rather than stubbed: a category with no target
+// simply carries `status: { kind: 'none' }` out of buildBudget, which is the
+// honest result of "no target exists," not a shortcut this page is taking.
+async function fetchAllCategoryTargets(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<{ rows: RawTargetRow[]; error: string | null }> {
+  const rows: RawTargetRow[] = []
+  let from = 0
+  for (;;) {
+    const { data, error } = await supabase
+      .from('ledger_category_targets')
+      .select('category_id, kind, amount_cents, due_date')
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + PAGE_SIZE - 1)
+    if (error) return { rows: [], error: error.message }
+    rows.push(...((data ?? []) as RawTargetRow[]))
     if (!data || data.length < PAGE_SIZE) break
     from += PAGE_SIZE
   }
@@ -101,17 +193,33 @@ const BackLink = () => (
   </Link>
 )
 
-export default async function MoneyBudgetPage() {
+export default async function MoneyBudgetPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ m?: string; f?: string }>
+}) {
+  const params = await searchParams
   const supabase = await createClient()
 
-  // Same single-account model as the register: the one open checking account
-  // this ledger runs from, "first" by creation, same tie-break the rest of
-  // the app uses. Envelopes divide THIS account's working balance, so with no
-  // account there is nothing to divide — sent to /money to create one instead
-  // of standing up an empty envelope screen.
+  const today = todayInChicago()
+  const requested = params.m && MONTH_KEY.test(params.m) ? params.m : today.slice(0, 7)
+  // Below the first month there is no ledger, so there is nothing honest to
+  // show; above the ceiling there is nothing to plan for yet either, and
+  // without this a viewable month like "9999-12" would still be a real
+  // month — see MAX_MONTHS_AHEAD's own comment for the cost of that.
+  const ceiling = addMonths(today.slice(0, 7), MAX_MONTHS_AHEAD)
+  const month =
+    requested < FIRST_BUDGET_MONTH ? FIRST_BUDGET_MONTH :
+    requested > ceiling ? ceiling :
+    requested
+
+  // Same single-account model as the register: the one open checking
+  // account this ledger runs from, "first" by creation, same tie-break the
+  // rest of the app uses. The budget divides THIS account's money, so with
+  // no account there is nothing to divide.
   const { data: accountRow, error: accountError } = await supabase
     .from('ledger_accounts')
-    .select('id, opening_balance_cents')
+    .select('id, opening_balance_cents, opening_date')
     .eq('closed', false)
     .order('created_at', { ascending: true })
     .limit(1)
@@ -128,88 +236,230 @@ export default async function MoneyBudgetPage() {
           <Link href="/money" className="font-semibold text-accent hover:opacity-80">
             Set one up on the ledger
           </Link>{' '}
-          first, then come back to divide it into envelopes.
+          first, then come back to budget it.
         </p>
       </AppShell>
     )
   }
 
-  const { rows: balanceRows, error: txnError } = await fetchAllTransactionsForBalance(supabase, accountRow.id)
-  if (txnError) return <LoadError message={txnError} />
-  const workingBalanceCents = workingBalance(accountRow.opening_balance_cents, balanceRows)
+  const { rows: categoryRows, error: categoryError } = await fetchAllCategories(supabase)
+  if (categoryError) return <LoadError message={categoryError} />
 
-  // Seeds Dan's three YNAB Savings funds the first time this owner opens the
-  // budget — a no-op every load after that (see the action's own doc
-  // comment). No revalidatePath in that action: this runs during THIS page's
-  // own render, and the envelope query right below already reads whatever it
-  // just seeded fresh, so there is nothing stale to fix.
-  const seedResult = await ensureDefaultEnvelopes()
-  if ('error' in seedResult) return <LoadError message={seedResult.error} />
-
-  // Every envelope, hidden ones included — unlike the register's own category
-  // query (app/money/page.tsx, `.eq('hidden', false)`), this can't filter at
-  // the database level: whether a hidden envelope still belongs on screen
-  // depends on its BALANCE, which isn't known until the moves below are read.
-  // Also doubles as the name lookup for "Recent moves" (a move can reference
-  // an envelope that's since been hidden), which is why nothing here is
-  // dropped before that map is built.
-  const { data: envelopeRows, error: envelopeError } = await supabase
-    .from('ledger_envelopes')
-    .select('id, name, sort, hidden')
-    .order('sort', { ascending: true })
-  if (envelopeError) return <LoadError message={envelopeError.message} />
-
-  const { rows: moveRows, error: moveError } = await fetchAllEnvelopeMoves(supabase)
+  const { rows: moveRows, error: moveError } = await fetchAllBudgetMoves(supabase)
   if (moveError) return <LoadError message={moveError} />
 
-  const balances = envelopeBalances(moveRows as EnvelopeMoveLike[])
-  const availableCents = availableToAllocate(workingBalanceCents, moveRows as EnvelopeMoveLike[])
+  const { rows: rawTxns, error: txnError } = await fetchAllBudgetTxns(supabase, accountRow.id)
+  if (txnError) return <LoadError message={txnError} />
 
-  // Every envelope, hidden ones included, in their own sort order — same
-  // reasoning as the categories precedent (app/money/categories/page.tsx):
-  // hiding an envelope must never be one-way, so nothing is dropped here or
-  // its name would stay squatted by migration 0030's unique index forever
-  // with no path back. BudgetPanel decides how a hidden row is shown (inline
-  // still, next to its balance, while funded; tucked into the "Hidden"
-  // disclosure once it's drained to zero) — this page just hands over every
-  // row with its balance attached, computed AFTER the moves are read.
-  const envelopes: EnvelopeRow[] = (envelopeRows ?? [])
-    .map((e) => ({ id: e.id, name: e.name, hidden: e.hidden, balanceCents: balances.get(e.id) ?? 0 }))
+  const { rows: targetRows, error: targetError } = await fetchAllCategoryTargets(supabase)
+  if (targetError) return <LoadError message={targetError} />
 
-  // Every envelope name, not just the visible list above — a move made years
-  // ago can point at an envelope that's since been hidden AND drained to
-  // zero (so it no longer appears in `envelopes`), but the move itself is
-  // still real history and still needs a real name to show, not "Unknown".
-  // Envelopes can never be deleted (FK restrict on ledger_envelope_moves —
-  // migration 0030), so every id a move carries is guaranteed to resolve here.
-  const nameById = new Map((envelopeRows ?? []).map((e) => [e.id, e.name]))
+  const categories: BudgetCategory[] = categoryRows.map((c) => ({
+    id: c.id,
+    name: c.name,
+    grp: c.grp,
+    sort: c.sort,
+    hidden: c.hidden,
+    budgetRole: c.budget_role as 'spending' | 'income',
+  }))
 
-  // Newest first, capped to the latest N (RECENT_MOVES_CAP) — the fetch above
-  // is ascending for safe paging, so this is a plain reverse rather than a
-  // second sort. `balances`/`availableCents` above were already computed from
-  // the FULL, uncapped `moveRows`, so capping here only affects what's shown,
-  // never what's added up.
-  const moves: EnvelopeMoveRow[] = [...moveRows]
-    .reverse()
-    .slice(0, RECENT_MOVES_CAP)
-    .map((m) => ({
-      id: m.id,
-      amountCents: m.amount_cents,
-      fromName: m.from_envelope_id === null ? 'Available' : (nameById.get(m.from_envelope_id) ?? 'Unknown'),
-      toName: m.to_envelope_id === null ? 'Available' : (nameById.get(m.to_envelope_id) ?? 'Unknown'),
-      movedOn: m.moved_on,
-      note: m.note,
-    }))
+  const moves: BudgetMove[] = moveRows.map((m) => ({
+    month: m.month.slice(0, 7),
+    fromCategoryId: m.from_category_id,
+    toCategoryId: m.to_category_id,
+    amountCents: m.amount_cents,
+    undoneAt: m.undone_at,
+  }))
+
+  // Every month from the opening seed forward to whichever is later, today
+  // or the month being viewed — navigating ahead of the calendar still needs
+  // a real MonthBudget in the map, and the arithmetic already handles
+  // assigning into a future month. Computed here (rather than beside
+  // `budget` below, its only other use) because the opening-balance seed
+  // just below needs it too.
+  const last = month > today.slice(0, 7) ? month : today.slice(0, 7)
+
+  // The account's opening balance is not a transaction, but it is money that
+  // arrived and needs a job — so Ready to Assign has to see it. Injected in
+  // the month the account opened. This is precisely why January shows $1.01
+  // to assign: the opening balance is $585.75 and YNAB's carry-in is
+  // $584.74, the difference being a penny stranded in a Novo account this
+  // app does not carry.
+  //
+  // Clamped on BOTH ends to the range buildBudget is actually about to walk,
+  // [OPENING_MONTH, last]: it only ever consults income for months inside
+  // whatever range it's given, so a seed month outside that range means the
+  // opening balance vanishes from Ready to Assign in every visible month,
+  // with nothing on screen to say so — the very failure this comment used to
+  // describe for the lower bound alone. The upper bound needs the same
+  // guard for the same reason, not a hypothetical one: `last` is only ever
+  // `month` or `today`, and `month` is a value Dan reaches by clicking
+  // "Next month" through MAX_MONTHS_AHEAD's own ceiling — nowhere near
+  // `opening_date`, but a future account replacement or a fat-fingered
+  // opening_date could still push `openingMonth` past whatever `last`
+  // happens to be, and this clamp is what keeps that honest instead of
+  // silent.
+  const openingMonth = accountRow.opening_date.slice(0, 7)
+  const seedMonth =
+    openingMonth < OPENING_MONTH ? OPENING_MONTH :
+    openingMonth > last ? last :
+    openingMonth
+  const txns: BudgetTxn[] = [
+    {
+      month: seedMonth,
+      categoryId: null,
+      amountCents: accountRow.opening_balance_cents,
+    },
+    ...rawTxns.map((t) => ({
+      month: t.date.slice(0, 7),
+      categoryId: t.category_id,
+      amountCents: t.amount_cents,
+    })),
+  ]
+
+  const targets: CategoryTarget[] = targetRows.map((t) => ({
+    categoryId: t.category_id,
+    kind: t.kind as 'monthly' | 'by_date',
+    amountCents: t.amount_cents,
+    dueDate: t.due_date,
+  }))
+
+  const budget = buildBudget({ categories, moves, txns, targets, fromMonth: OPENING_MONTH, toMonth: last })
+  const current = budget.get(month)!
+
+  const rta = current.readyToAssignCents
+  const filter = parseBudgetFilter(params.f)
+  // Carried onto both header arrows and the month picker below so stepping
+  // months (or picking one from the popover) never silently resets an
+  // active filter chip back to All — before this fix the arrows linked to
+  // `?m=…` alone and dropped `f` on every click. Walking months with
+  // Overspent held on is exactly how you find when a category went red.
+  const filterQuery = filter === 'all' ? '' : `&f=${filter}`
+  // Overspent is the one chip that shows a count (Dan's own "3 Overspent").
+  // Counted over the whole month's rows, same as every other total on this
+  // page — never the filtered subset, and never affected by which chip (if
+  // any) happens to be active right now.
+  const overspentCount = current.rows.filter((r) => r.availableCents < 0).length
 
   return (
     <AppShell current="money">
       <BackLink />
       <h1 className="display text-3xl font-bold mb-8">Budget</h1>
-      <BudgetPanel
-        availableCents={availableCents}
-        envelopes={envelopes}
-        moves={moves}
-      />
+
+      <header className="flex flex-col items-center gap-5 mb-10">
+        <div className="flex items-center gap-3">
+          {/* Rendered always, greyed and non-interactive at the boundary
+              rather than vanishing (YNAB greys these too, and a control
+              that disappears shifts the layout right under the pointer). A
+              `disabled` `<button>` instead of a link at the boundary — same
+              "not a link" idiom MonthPicker's own out-of-range months use —
+              so it's unreachable by keyboard, not merely grey. */}
+          {month !== FIRST_BUDGET_MONTH ? (
+            <Link
+              href={`/money/budget?m=${addMonths(month, -1)}${filterQuery}`}
+              aria-label="Previous month"
+              className="text-muted hover:text-ink transition-colors text-lg leading-none"
+            >
+              ‹
+            </Link>
+          ) : (
+            <button
+              type="button"
+              disabled
+              aria-label="Previous month"
+              className="text-muted transition-colors text-lg leading-none"
+            >
+              ‹
+            </button>
+          )}
+          <MonthPicker
+            month={month}
+            today={today.slice(0, 7)}
+            lastMonth={ceiling}
+            filter={filter === 'all' ? undefined : filter}
+          />
+          {month !== ceiling ? (
+            <Link
+              href={`/money/budget?m=${addMonths(month, 1)}${filterQuery}`}
+              aria-label="Next month"
+              className="text-muted hover:text-ink transition-colors text-lg leading-none"
+            >
+              ›
+            </Link>
+          ) : (
+            <button
+              type="button"
+              disabled
+              aria-label="Next month"
+              className="text-muted transition-colors text-lg leading-none"
+            >
+              ›
+            </button>
+          )}
+        </div>
+
+        {rta > 0 && (
+          <div className="rounded-card border border-good/40 bg-good/15 text-good px-8 py-4 text-center">
+            <p className="tabular text-2xl font-bold">{formatUSD(rta)}</p>
+            <p className="eyebrow text-good">Ready to Assign</p>
+          </div>
+        )}
+        {rta === 0 && (
+          <div className="rounded-card border border-line bg-accent-wash text-muted px-8 py-4 text-center">
+            <p className="text-2xl font-bold leading-none">✓</p>
+            <p className="eyebrow text-muted mt-1">All Money Assigned</p>
+          </div>
+        )}
+        {rta < 0 && (
+          <div className="rounded-card border border-danger/40 bg-danger/15 text-danger px-8 py-4 text-center">
+            <p className="tabular text-2xl font-bold">{formatUSD(rta)}</p>
+            <p className="eyebrow text-danger">More Assigned Than You Have</p>
+          </div>
+        )}
+      </header>
+
+      {/* Right column at `lg` and up (design doc: "Right panel"); above the
+          table below `lg`, where it reads as a strip (design doc: "The
+          summary becomes a strip at the top"). Plain DOM order puts
+          BudgetSummary first so mobile — no `order` in play there — stacks
+          it on top by default; `lg:order-*` below reassigns which grid
+          track each side lands in once there are two, without moving
+          either block's markup or duplicating either component. */}
+      <div className="grid lg:grid-cols-[1fr_20rem] gap-8">
+        <div className="lg:order-2">
+          <BudgetSummary month={current} />
+        </div>
+
+        <div className="lg:order-1 min-w-0">
+          <nav aria-label="Filter categories" className="flex flex-wrap gap-2 mb-4">
+            {FILTER_CHIPS.map((chip) => {
+              const active = chip.key === filter
+              const label =
+                chip.key === 'overspent' && overspentCount > 0
+                  ? `${overspentCount} Overspent`
+                  : chip.label
+              const href =
+                chip.key === 'all'
+                  ? `/money/budget?m=${month}`
+                  : `/money/budget?m=${month}&f=${chip.key}`
+              return (
+                <Link
+                  key={chip.key}
+                  href={href}
+                  aria-current={active ? 'true' : undefined}
+                  className={`rounded-pill px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    active ? 'bg-accent-wash text-accent' : 'text-muted hover:text-ink'
+                  }`}
+                >
+                  {label}
+                </Link>
+              )
+            })}
+          </nav>
+
+          <BudgetTable month={current} categories={categories} targets={targets} filter={filter} />
+        </div>
+      </div>
     </AppShell>
   )
 }
