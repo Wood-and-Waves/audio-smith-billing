@@ -241,7 +241,14 @@ export default function MoveMoneyDialog({
           <div
             ref={panelRef}
             tabIndex={-1}
-            className="w-full max-w-sm bg-bg border border-line rounded-field p-5 outline-none"
+            // max-h-[85vh] overflow-y-auto: the punch dialog's own
+            // precedent (PunchClock), added in the final review
+            // (2026-08-24) — without it the phone-bottom-anchored layout
+            // (`items-end` above `sm`) could push the panel's own bottom
+            // edge (the Save/Cancel row) off-screen on a short viewport
+            // with nothing to scroll it back into view, so the To select
+            // was sometimes unreachable.
+            className="w-full max-w-sm max-h-[85vh] overflow-y-auto bg-bg border border-line rounded-field p-5 outline-none"
             onKeyDown={(e) => { if (e.key === 'Escape' && !pending) setOpen(false) }}
           >
             <h2 className="eyebrow mb-4">Move money — {categoryName}</h2>

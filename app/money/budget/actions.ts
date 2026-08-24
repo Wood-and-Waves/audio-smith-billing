@@ -207,6 +207,15 @@ export async function clearCategoryTarget(categoryId: string): Promise<Result> {
  * history, not one category's one month). Ordered by nothing; every row
  * gets summed regardless of order.
  *
+ * The final review (2026-08-24) added the explicit `.limit(MAX_MOVES)` and
+ * the `data.length === MAX_MOVES` refusal below: "nowhere near the cap" is
+ * true today, but a silently truncated page here isn't a missing row on
+ * screen the way it is elsewhere — it's a WRONG diff computed against a
+ * partial sum and then written straight onto Dan's live books, with no
+ * indication anything was off. Hitting exactly `MAX_MOVES` rows is refused
+ * outright rather than summed against a partial read, matching this app's
+ * own fail-closed rule for a guard that gates a money write (CLAUDE.md).
+ *
  * `categoryId` must already be UUID-shape-checked by the caller — it lands
  * unescaped in the `.or(...)` filter string below, the same hazard
  * incomeRoleChangeAllowed (app/money/actions.ts) already guards the same
@@ -220,6 +229,8 @@ export async function clearCategoryTarget(categoryId: string): Promise<Result> {
  * blown-up query's `null` data as "nothing assigned yet" would make a
  * failed read look like an honest zero and let a wildly wrong diff through.
  */
+const MAX_MOVES_PER_CATEGORY_MONTH = 1000
+
 async function currentAssignedCents(
   supabase: Awaited<ReturnType<typeof createClient>>,
   categoryId: string,
@@ -233,7 +244,14 @@ async function currentAssignedCents(
     .eq('month', month)
     .is('undone_at', null)
     .or(`from_category_id.eq.${categoryId},to_category_id.eq.${categoryId}`)
+    .limit(MAX_MOVES_PER_CATEGORY_MONTH)
   if (error) return { ok: false, error: error.message }
+  if ((data ?? []).length === MAX_MOVES_PER_CATEGORY_MONTH) {
+    return {
+      ok: false,
+      error: 'Too many moves recorded for this category this month to total safely. Contact support before assigning here.',
+    }
+  }
   const cents = (data ?? []).reduce((sum, row) => {
     if (row.to_category_id === categoryId) return sum + row.amount_cents
     if (row.from_category_id === categoryId) return sum - row.amount_cents

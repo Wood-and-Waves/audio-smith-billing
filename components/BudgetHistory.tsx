@@ -74,18 +74,22 @@ export default function BudgetHistory({
   // client-side belt to match that suspenders.
   function runUndo() {
     setError(null)
+    setNote(null)
     start(async () => {
       const result = await undoLastMove()
       if (!result.ok) { setError(result.error); return }
+      if (!result.wrote) { setNote('Nothing to undo.'); return }
       router.refresh()
     })
   }
 
   function runRedo() {
     setError(null)
+    setNote(null)
     start(async () => {
       const result = await redoLastMove()
       if (!result.ok) { setError(result.error); return }
+      if (!result.wrote) { setNote('Nothing to redo.'); return }
       router.refresh()
     })
   }

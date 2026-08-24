@@ -169,6 +169,17 @@ export default function AssignedCell({
           // Enter still round-trips rather than being short-circuited here.
           if (pending) return
           if (value === initial) { cancel(); return }
+          // An EMPTY field on blur is treated as a cancel too, not a
+          // commit to zero (final review, 2026-08-24) — parseUSD('')
+          // resolves to 0 (lib/money's own well-known trap), so before this
+          // check, clearing the field and then clicking or tabbing away
+          // silently zeroed the category's Assigned figure. Blurring an
+          // emptied field reads as "changed my mind, wasn't paying
+          // attention" far more often than "explicitly zero this out" — a
+          // deliberate zero still has an unambiguous path: type 0 (or clear
+          // the field) and press ENTER, a keystroke that always commits
+          // (see the onKeyDown handler above), never blur.
+          if (value.trim() === '') { cancel(); return }
           commit()
         }}
         className={`w-full ${alignClass} tabular px-1.5 py-1 bg-surface border border-line
