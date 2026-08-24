@@ -306,28 +306,59 @@ async function main() {
       )
     }
 
-    // Check for existing moves before committing. If any exist and --commit was
-    // given without --replace, refuse loudly to prevent accidental data loss.
-    // Dry runs always proceed regardless (they'll rollback anyway).
-    if (opts.commit && !opts.replace) {
-      const { rows: existingMoves } = await client.query(
-        'select count(*) as count, min(month) as first_month, max(month) as last_month from ledger_budget_moves where owner_id = $1 and month >= $2',
-        [owner, `${result.openingMonth}-01`],
+    // Check for existing moves — hoisted to run on EVERY invocation, dry
+    // runs included (final review, 2026-08-24), not just a committing run
+    // without --replace: the report should always say what a real --commit
+    // would delete, not only when it's about to refuse.
+    //
+    // `to_char(min(month), 'YYYY-MM')` / `to_char(max(month), 'YYYY-MM')`,
+    // not bare `min(month)`/`max(month)`.slice(0, 7) — the same review
+    // caught that this script overrides node-postgres's type parser for
+    // OID 20 (int8/bigint, at this file's own top) but NOT for `date`
+    // (OID 1082), so `min(month)`/`max(month)` came back as JS `Date`
+    // objects, not strings. `.slice` is not a method on `Date`, so the old
+    // code threw a TypeError the instant any moves existed — caught by the
+    // outer try/catch below, which printed "FAILED: ... .slice is not a
+    // function" and NEVER reached the REFUSED banner or its --replace
+    // guidance. The refusal was still safe (the throw happened before the
+    // delete/insert transaction even opened), but untested safety code is
+    // not safety code — this is what the "prove it executes" gate below
+    // exists to catch a repeat of.
+    const { rows: existingMoves } = await client.query(
+      `select count(*) as count,
+              to_char(min(month), 'YYYY-MM') as first_month,
+              to_char(max(month), 'YYYY-MM') as last_month
+         from ledger_budget_moves
+        where owner_id = $1 and month >= $2`,
+      [owner, `${result.openingMonth}-01`],
+    )
+    const existingCount = parseInt(existingMoves[0].count, 10)
+    const existingFirst = existingMoves[0].first_month
+    const existingLast = existingMoves[0].last_month
+
+    if (existingCount > 0) {
+      console.log(
+        `\n${existingCount} existing move(s) in ledger_budget_moves from `
+        + `${existingFirst} to ${existingLast} will be deleted by a committing run.`,
       )
-      if (existingMoves[0].count > 0) {
-        const count = parseInt(existingMoves[0].count, 10)
-        const firstMonth = existingMoves[0].first_month?.slice(0, 7) ?? '?'
-        const lastMonth = existingMoves[0].last_month?.slice(0, 7) ?? '?'
-        console.error(
-          `\nREFUSED: --commit found ${count} move(s) in ledger_budget_moves from ${firstMonth} to ${lastMonth}.`
-          + '\nAfter phase two, hand-entered assignments live in this table alongside imports.'
-          + '\nA re-run without --replace would DELETE them silently.'
-          + '\nUse: npm run import:plan -- --commit --replace <plan.csv> --start 2026-01'
-        )
-        process.exitCode = 1
-        await client.end()
-        return
-      }
+    } else {
+      console.log('\nno existing moves in range — nothing will be deleted.')
+    }
+
+    // Refuse only on an actually committing run without --replace. Dry
+    // runs always proceed regardless (they'll rollback anyway) — the
+    // count/range line above already told the truth about what a real
+    // --commit would do.
+    if (opts.commit && !opts.replace && existingCount > 0) {
+      console.error(
+        `\nREFUSED: --commit found ${existingCount} move(s) in ledger_budget_moves from ${existingFirst} to ${existingLast}.`
+        + '\nAfter phase two, hand-entered assignments live in this table alongside imports.'
+        + '\nA re-run without --replace would DELETE them silently.'
+        + '\nUse: npm run import:plan -- --commit --replace <plan.csv> --start 2026-01'
+      )
+      process.exitCode = 1
+      await client.end()
+      return
     }
 
     // Build every move now, in JS, from the parsed numbers — this is exactly
