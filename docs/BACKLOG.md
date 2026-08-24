@@ -103,7 +103,7 @@ arithmetic lives in `lib/budget.ts` and reproduces all 1,421 rows of his export
 with zero mismatches, and `scripts/import/ynab-plan.mjs` backfilled Jan-Aug.
 See CLAUDE.md for the two formulas and the rules that must not be re-derived.
 
-**Phase two — SHIPPED 2026-08-24** (assigning and moving money). Built per the plan (branch `budget-phase-two`, all four write paths merged after top-model final review):
+**Phase two — BUILT 2026-08-24, awaiting Dan's ship gate** (assigning and moving money; branch `budget-phase-two`, unmerged). All four write paths per the plan:
 - Typing a figure into the Assigned box (writes the difference as a move).
 - Moving money between categories to cover an overspent one.
 - Undo/Redo via `ledger_budget_moves.undone_at`, which marks moves without deleting.
