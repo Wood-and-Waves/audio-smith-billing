@@ -12,6 +12,7 @@ import { OWNER_PAY_CATEGORY_NAME } from '@/lib/ledgerCategories'
 import { type Quad } from '@/lib/receiptQuad'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select from '@/components/ui/Select'
+import CategoryPicker, { type CategoryPickerOption } from '@/components/CategoryPicker'
 import CornerAdjuster from '@/components/CornerAdjuster'
 import ReceiptLightbox from '@/components/ReceiptLightbox'
 import {
@@ -360,12 +361,22 @@ function CreateAccountCard() {
 }
 
 export default function MoneyRegister({
-  account: accountProp, categories, shows, transactions, workingBalanceCents, clearedBalanceCents,
-  uncategorizedCount, totalCount, uncategorizedOnly, headerActions,
+  account: accountProp, categories, categoryBalanceCents, shows, transactions, workingBalanceCents,
+  clearedBalanceCents, uncategorizedCount, totalCount, uncategorizedOnly, headerActions,
 }: {
   /** Null in first-run mode — every other prop is meaningless then. */
   account: LedgerAccountSummary | null
   categories: CategoryOption[]
+  /**
+   * This month's budget Available, in cents, per category id — CategoryPicker's
+   * own balances (Wave B Task 3), computed once by app/money/page.tsx via
+   * lib/budget.ts's buildBudget (the same validated arithmetic app/money/budget/page.tsx
+   * runs, not a second implementation) and handed down as a plain map so this
+   * component does no budget arithmetic of its own. A category buildBudget never
+   * scores a row for (an income-role category) is simply absent from this map,
+   * which CategoryPicker reads as "no balance to show," never a fabricated $0.00.
+   */
+  categoryBalanceCents: Record<string, number>
   shows: ShowOption[]
   /**
    * Newest first, optionally filtered by uncategorized status — see app/money/page.tsx.
@@ -656,10 +667,14 @@ export default function MoneyRegister({
   // counts toward workingBalanceCents but not clearedBalanceCents.
   const unclearedCents = workingBalanceCents - clearedBalanceCents
 
-  const categoryOptions = [
-    { value: '', label: '—' },
-    ...categories.map((c) => ({ value: c.id, label: c.name })),
-  ]
+  // CategoryPicker's own option shape (Wave B Task 3) — id/name/grp plus this
+  // month's Available, looked up from the map app/money/page.tsx built via
+  // buildBudget. Undefined (not 0) for a category the map never scored (an
+  // income-role category — see categoryBalanceCents' own doc comment above);
+  // CategoryPicker reads that as "no figure," never a fabricated "$0.00".
+  const categoryPickerOptions: CategoryPickerOption[] = categories.map((c) => ({
+    id: c.id, name: c.name, grp: c.grp, availableCents: categoryBalanceCents[c.id],
+  }))
   const showOptions = [
     { value: '', label: '—' },
     ...shows.map((s) => ({ value: s.id, label: s.label })),
@@ -1140,31 +1155,35 @@ export default function MoneyRegister({
    * never visible at sm+ in the first place.
    */
   function renderEditRow(t: LedgerTxnRow, desktop: boolean) {
-    // categoryOptions is filtered to unhidden categories (app/money/page.tsx's
+    // categoryPickerOptions is filtered to unhidden categories (app/money/page.tsx's
     // query), so a row whose category was hidden after the fact isn't in it —
-    // the Select would show "—" for editCategoryId, which reads as "no
+    // the picker would show blank for editCategoryId, which reads as "no
     // category" and invites overwriting a real, still-assigned one by
     // accident. editCategoryId can only hold an out-of-list id in that exact
-    // case (startEdit seeds it from row.category_id and the Select below
-    // only ever hands back one of its own option values), so when that
-    // happens, append one extra option for it — labeled from t.categoryName,
+    // case (startEdit seeds it from row.category_id and the picker below
+    // only ever hands back one of its own option ids), so when that happens,
+    // pass CategoryPicker its own extraOption — labeled from t.categoryName,
     // the denormalized join already carried on the row for exactly this
     // "since-hidden or since-deleted" case (see RawTxnRow's own comment in
     // app/money/page.tsx) — rather than leave the picker lying about there
-    // being nothing there.
-    const editCategoryOptions = editCategoryId && !categoryOptions.some((o) => o.value === editCategoryId)
-      ? [...categoryOptions, { value: editCategoryId, label: `${t.categoryName ?? 'Unknown'} (hidden)` }]
-      : categoryOptions
+    // being nothing there. Unlike the old Select, this isn't spliced into
+    // the option list itself (it has no real `grp` to sit under); CategoryPicker
+    // renders it as its own checked row under "Selected" instead.
+    const editExtraOption = editCategoryId && !categoryPickerOptions.some((o) => o.id === editCategoryId)
+      ? { id: editCategoryId, label: `${t.categoryName ?? 'Unknown'} (hidden)` }
+      : null
     const canAdjust = t.receipt_original !== null && t.receipt_path !== null && !t.receipt_original.endsWith('.pdf')
     const hasReceipt = t.receipt_path !== null || t.receipt_original !== null
 
     const categorySelect = (
-      <Select
+      <CategoryPicker
         ariaLabel="Category"
         value={editCategoryId}
         disabled={pending}
         onChange={setEditCategoryId}
-        options={editCategoryOptions}
+        options={categoryPickerOptions}
+        extraOption={editExtraOption}
+        blankOption={{ label: 'Uncategorized' }}
       />
     )
 
@@ -1387,13 +1406,13 @@ export default function MoneyRegister({
         </span>
         <div className="min-w-0" onClick={stopPropagation}>
           {inlineCategory ? (
-            <Select
+            <CategoryPicker
               size="sm"
               ariaLabel={`Category for ${t.payee || 'this transaction'}`}
               value=""
               disabled={pending}
               onChange={(v) => setRowCategory(t, v)}
-              options={categoryOptions}
+              options={categoryPickerOptions}
             />
           ) : (
             <CategoryText row={t} categories={categories} />
@@ -1493,14 +1512,14 @@ export default function MoneyRegister({
         <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
           <div onClick={stopPropagation}>
             {inlineCategory ? (
-              <Select
+              <CategoryPicker
                 size="sm"
                 className="w-40"
                 ariaLabel={`Category for ${t.payee || 'this transaction'}`}
                 value=""
                 disabled={pending}
                 onChange={(v) => setRowCategory(t, v)}
-                options={categoryOptions}
+                options={categoryPickerOptions}
               />
             ) : (
               <span className="inline-block text-[11px] text-muted bg-surface-2 rounded-field
@@ -1697,12 +1716,13 @@ export default function MoneyRegister({
                 nulling it out on every write). Transfer still cannot, but
                 nothing in this add form ever creates a transfer row (see
                 KIND_OPTIONS), so there is no kind left here to hide this for. */}
-            <Select
+            <CategoryPicker
               ariaLabel="Category"
               value={categoryId}
               disabled={pending}
               onChange={setCategoryId}
-              options={categoryOptions}
+              options={categoryPickerOptions}
+              blankOption={{ label: 'Uncategorized' }}
             />
             <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={memo} disabled={pending}
                    onChange={(e) => setMemo(e.target.value)} />
@@ -1762,12 +1782,13 @@ export default function MoneyRegister({
                    onChange={(e) => setDate(e.target.value)} />
             <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={payee} disabled={pending}
                    onChange={(e) => setPayee(e.target.value)} />
-            <Select
+            <CategoryPicker
               ariaLabel="Category"
               value={categoryId}
               disabled={pending}
               onChange={setCategoryId}
-              options={categoryOptions}
+              options={categoryPickerOptions}
+              blankOption={{ label: 'Uncategorized' }}
             />
             <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={memo} disabled={pending}
                    onChange={(e) => setMemo(e.target.value)} />
