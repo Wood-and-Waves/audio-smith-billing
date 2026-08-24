@@ -2,7 +2,8 @@
 
 import { useEffect, useId, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { formatAmount, formatUSD, parseUSD } from '@/lib/money'
+import { formatAmount, formatUSD } from '@/lib/money'
+import { parseUSDMath } from '@/lib/moneyMath'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select, { type SelectOption } from '@/components/ui/Select'
 import { moveBetweenCategories } from '@/app/money/budget/actions'
@@ -175,7 +176,7 @@ export default function MoveMoneyDialog({
 
   function save() {
     setError(null)
-    const cents = parseUSD(amount)
+    const cents = parseUSDMath(amount)
     if (cents === null || cents <= 0) {
       setError('Enter an amount greater than zero.')
       return

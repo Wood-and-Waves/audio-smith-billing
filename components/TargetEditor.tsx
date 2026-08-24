@@ -2,7 +2,8 @@
 
 import { useEffect, useId, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { formatAmount, parseUSD } from '@/lib/money'
+import { formatAmount } from '@/lib/money'
+import { parseUSDMath } from '@/lib/moneyMath'
 import { isPlainDate } from '@/lib/dates'
 import { FIELD_FULL } from '@/components/ui/field'
 import { setCategoryTarget, clearCategoryTarget } from '@/app/money/budget/actions'
@@ -66,7 +67,7 @@ export default function TargetEditor({
 
   function save() {
     setError(null)
-    const cents = parseUSD(amount)
+    const cents = parseUSDMath(amount)
     if (cents === null || cents <= 0) {
       setError('Enter a target amount greater than zero.')
       return

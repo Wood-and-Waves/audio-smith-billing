@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { formatAmount, formatUSD, parseUSD } from '@/lib/money'
+import { parseUSDMath } from '@/lib/moneyMath'
 import { formatDateLong, formatDateShort, todayInChicago } from '@/lib/dates'
 import { normalizePayee } from '@/lib/payeeMemory'
 import { OWNER_PAY_CATEGORY_NAME } from '@/lib/ledgerCategories'
@@ -663,7 +664,7 @@ export default function MoneyRegister({
   function add() {
     setError(null)
     if (!payee.trim()) { setError('Say who this was to or from.'); return }
-    const typed = parseUSD(amount)
+    const typed = parseUSDMath(amount)
     if (typed === null || typed <= 0) { setError('Enter an amount.'); return }
     if (!date) { setError('Pick a date.'); return }
 
@@ -800,7 +801,7 @@ export default function MoneyRegister({
   function saveEdit(row: LedgerTxnRow) {
     setError(null)
     if (!editPayee.trim()) { setError('Say who this was to or from.'); return }
-    const typed = parseUSD(editAmount)
+    const typed = parseUSDMath(editAmount)
     if (typed === null || typed <= 0) { setError('Enter an amount.'); return }
     if (!editDate) { setError('Pick a date.'); return }
 

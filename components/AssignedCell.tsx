@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { formatAmount, formatUSD, parseUSD } from '@/lib/money'
+import { formatAmount, formatUSD } from '@/lib/money'
+import { parseUSDMath } from '@/lib/moneyMath'
 import { assignToCategory } from '@/app/money/budget/actions'
 
 /**
@@ -106,7 +107,7 @@ export default function AssignedCell({
   }
 
   function commit() {
-    const cents = parseUSD(value)
+    const cents = parseUSDMath(value)
     // No sign check — a negative Assigned figure is legal (money carried
     // out of a category legitimately drives that month's Assigned below
     // zero; see assignmentDiff's own doc comment, lib/budgetMoves.ts, and
