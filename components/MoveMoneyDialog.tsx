@@ -157,7 +157,7 @@ export default function MoveMoneyDialog({
     setOpen(true)
   }
 
-  const sameCategory = fromId !== '' && fromId === toId
+  const sameCategory = fromId === toId
 
   function save() {
     setError(null)
@@ -225,7 +225,7 @@ export default function MoveMoneyDialog({
             className="w-full max-w-sm bg-bg border border-line rounded-field p-5 outline-none"
             onKeyDown={(e) => { if (e.key === 'Escape' && !pending) setOpen(false) }}
           >
-            <h2 className="eyebrow mb-4">Move money</h2>
+            <h2 className="eyebrow mb-4">Move money — {categoryName}</h2>
 
             <div className="mb-3">
               <label className="eyebrow block mb-1.5" htmlFor={`${uid}-amount`}>Amount</label>
