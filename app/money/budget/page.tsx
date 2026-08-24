@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { todayInChicago, addMonths, monthLabel } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
-import { redoTarget, isNewer } from '@/lib/budgetMoves'
+import { redoTarget, isNewer, isNewerUndone } from '@/lib/budgetMoves'
 import {
   buildBudget, FIRST_BUDGET_MONTH, OPENING_MONTH, MAX_MONTHS_AHEAD,
   type BudgetCategory, type BudgetMove, type BudgetTxn, type CategoryTarget,
@@ -320,16 +320,35 @@ export default async function MoneyBudgetPage({
   // already fetched paged above, never a new query. `moveRows` itself stays
   // in fetchAllBudgetMoves' own ascending order (buildBudget only sums it,
   // so order there is irrelevant); this is a separate newest-first copy for
-  // display and for the undo/redo decision, ordered by the register's own
+  // display and for the undo decision, ordered by the register's own
   // tie-break (`created_at desc, id desc` — `lbm_owner_created_idx`,
   // migration 0038), the same order app/money/budget/actions.ts's own
-  // newestActiveMove/newestUndoneMove read by — via the SAME exported
-  // isNewer the redo decision uses, so the two can never drift.
+  // newestActiveMove reads by — via the SAME exported isNewer the redo
+  // decision's active side uses, so the two can never drift.
   const movesByRecency = [...moveRows].sort((a, b) =>
     isNewer(a, b) ? -1 : 1,
   )
   const newestActiveMoveRow = movesByRecency.find((m) => m.undone_at === null) ?? null
-  const newestUndoneMoveRow = movesByRecency.find((m) => m.undone_at !== null) ?? null
+
+  // The redo CANDIDATE, by contrast, is NOT `movesByRecency`'s own first
+  // undone row — the final review (2026-08-24) caught that picking it that
+  // way orders by `created_at desc, id desc`, and the backfill writes every
+  // imported move inside one transaction, so every imported row shares one
+  // `created_at`. Once undo walks past the hand-entered moves into the
+  // backfill, that order falls to comparing random UUIDs and would pick an
+  // ARBITRARY backfill row — not the one actually undone most recently, so
+  // Redo would stop being Undo's own inverse there. `isNewerUndone` orders
+  // by `undone_at desc` first instead (see its own doc comment,
+  // lib/budgetMoves.ts) — the SAME comparator newestUndoneMove's own SQL
+  // ORDER BY uses (app/money/budget/actions.ts), so the two can never
+  // drift. `redoTarget` itself still only ever sees the winning row's
+  // `(created_at, id)` tuple below, unchanged.
+  type UndoneMoveRow = RawMoveRow & { undone_at: string }
+  const undoneMoveRows = moveRows.filter((m): m is UndoneMoveRow => m.undone_at !== null)
+  const newestUndoneMoveRow: UndoneMoveRow | null = undoneMoveRows.length === 0
+    ? null
+    : undoneMoveRows.reduce((newest, m) => (isNewerUndone(m, newest) ? m : newest))
+
   // Undo enabled iff any move has undone_at === null — exactly what
   // `newestActiveMoveRow` not being null already means, since it's the
   // FIRST such row in newest-first order (there is one iff there is at
@@ -367,6 +386,18 @@ export default async function MoneyBudgetPage({
     monthLabel: monthLabel(m.month.slice(0, 7)),
     undone: m.undone_at !== null,
   }))
+
+  // Undo's own button (BudgetHistory) carries a description of the move it
+  // is about to touch — the final review's own ask, so leaning on Undo is
+  // informed rather than blind. Built from the SAME newestActiveMoveRow
+  // that already decides `undoEnabled` above, the same string shape
+  // Recent Moves' own entries use (amount · from → to · month), so the
+  // button's title never says anything the list itself wouldn't. `null`
+  // when there is nothing to undo — BudgetHistory falls back to the plain
+  // "Undo" label in that case.
+  const headMoveLabel = newestActiveMoveRow
+    ? `${formatUSD(newestActiveMoveRow.amount_cents)} · ${categoryDisplayName(newestActiveMoveRow.from_category_id)} → ${categoryDisplayName(newestActiveMoveRow.to_category_id)} · ${monthLabel(newestActiveMoveRow.month.slice(0, 7))}`
+    : null
 
   // Every month from the opening seed forward to whichever is later, today
   // or the month being viewed — navigating ahead of the calendar still needs
@@ -580,7 +611,12 @@ export default async function MoneyBudgetPage({
               })}
             </nav>
 
-            <BudgetHistory undoEnabled={undoEnabled} redoEnabled={redoEnabled} moves={recentMoves} />
+            <BudgetHistory
+              undoEnabled={undoEnabled}
+              redoEnabled={redoEnabled}
+              moves={recentMoves}
+              headMoveLabel={headMoveLabel}
+            />
           </div>
 
           <BudgetTable

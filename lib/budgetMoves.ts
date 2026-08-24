@@ -114,6 +114,48 @@ export function isNewer(
 }
 
 /**
+ * True when `a` sorts after `b` as a REDO CANDIDATE: `undone_at` first, then
+ * the same `(created_at, id)` tie-break `isNewer` uses. This is a different
+ * question from `isNewer` above — `isNewer` answers "which of these two
+ * moves happened first," `isNewerUndone` answers "which of these two undone
+ * moves was undone most recently" — and the final phase-two review
+ * (2026-08-24) caught that the app was using `isNewer`'s own `created_at`
+ * for BOTH.
+ *
+ * The backfill imports every row inside one transaction, so every imported
+ * move shares one `created_at`; ordering the redo candidate by
+ * `created_at desc, id desc` alone (`isNewer`'s own order) then falls to
+ * comparing random UUIDs the instant undo walks past the hand-entered
+ * moves into the backfill — picking an ARBITRARY backfill row, not the one
+ * that was actually undone most recently. Redo is supposed to be undo's own
+ * inverse; an arbitrary pick is not that, inside the backfill.
+ *
+ * Ordering by `undone_at` first fixes this without changing `redoTarget`
+ * itself: `redoTarget` still compares the winning candidate's
+ * `(created_at, id)` tuple against the newest active move exactly as
+ * before (the 'superseded' rule is about the register's real chronological
+ * order, not about undo order) — only WHICH undone row gets offered to it
+ * as `newestUndone` changes. For every hand-entered move (each with its own
+ * distinct `created_at`), `undone_at desc` and `created_at desc, id desc`
+ * agree on the same row regardless — this only changes the answer where
+ * they used to disagree.
+ *
+ * Exported (like `isNewer`) so app/money/budget/page.tsx's own redo-
+ * candidate derivation and newestUndoneMove's SQL ORDER BY
+ * (app/money/budget/actions.ts) share the exact same comparator and can
+ * never drift apart. Only ever called on rows already filtered to
+ * `undone_at IS NOT NULL`, so `undone_at` here is always a real timestamp —
+ * the parameter type says `string`, not `string | null`, to state that
+ * precondition rather than re-checking it.
+ */
+export function isNewerUndone(
+  a: { undone_at: string; created_at: string; id: string },
+  b: { undone_at: string; created_at: string; id: string },
+): boolean {
+  return a.undone_at !== b.undone_at ? a.undone_at > b.undone_at : isNewer(a, b)
+}
+
+/**
  * The undo/redo model settled in the phase-two plan's Global Constraints:
  * the stack is the owner's moves ordered by `(created_at, id)`. Redo clears
  * `undone_at` on the newest undone move — but only when no non-undone move

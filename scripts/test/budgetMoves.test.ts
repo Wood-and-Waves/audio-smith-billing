@@ -6,7 +6,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { assignmentDiff, validBudgetMonth, redoTarget } from '../../lib/budgetMoves.ts'
+import { assignmentDiff, validBudgetMonth, redoTarget, isNewerUndone } from '../../lib/budgetMoves.ts'
 
 // ---------------------------------------------------------------------------
 // assignmentDiff — typing a figure writes the DIFFERENCE, never the figure.
@@ -224,8 +224,44 @@ test('nothing active and nothing undone -> nothing to redo', () => {
   assert.equal(redoTarget({ newestActive: null, newestUndone: null }), 'nothing')
 })
 
-test('assignmentDiff refuses NaN and fractional cents — NaN < 0 is false, so the sign check alone misses it', () => {
+test('assignmentDiff refuses NaN and fractional cents — Number.isInteger is what actually catches these, not a sign check', () => {
   assert.equal(assignmentDiff('c', 50_000, NaN), null)
   assert.equal(assignmentDiff('c', NaN, 50_000), null)
   assert.equal(assignmentDiff('c', 50_000, 100.5), null)
+})
+
+// ---------------------------------------------------------------------------
+// isNewerUndone — the redo-candidate comparator (`undone_at` first, then the
+// same `(created_at, id)` tie-break `isNewer` uses). The final phase-two
+// review (2026-08-24) caught that picking the redo candidate by `isNewer`'s
+// own `created_at`-first order breaks inside the backfill, where every
+// imported move shares one `created_at`.
+
+test('a later undone_at wins regardless of created_at or id', () => {
+  // The exact bug: two moves imported in the same backfill transaction
+  // share one created_at. Row A (undone first) has an id that sorts AFTER
+  // row B's (undone later) — created_at/id order alone would wrongly pick
+  // A as the redo candidate; isNewerUndone picks B, the one actually undone
+  // most recently.
+  const a = { undone_at: '2026-08-20T09:00:00Z', created_at: '2026-01-01T00:00:00Z', id: 'zzzz' }
+  const b = { undone_at: '2026-08-20T10:00:00Z', created_at: '2026-01-01T00:00:00Z', id: 'aaaa' }
+  assert.equal(isNewerUndone(b, a), true)
+  assert.equal(isNewerUndone(a, b), false)
+})
+
+test('a tie on undone_at falls back to created_at, then id — same order isNewer uses', () => {
+  const a = { undone_at: '2026-08-20T10:00:00Z', created_at: '2026-08-20T09:00:00Z', id: 'move-a' }
+  const b = { undone_at: '2026-08-20T10:00:00Z', created_at: '2026-08-20T10:00:00Z', id: 'move-b' }
+  assert.equal(isNewerUndone(b, a), true)
+  assert.equal(isNewerUndone(a, b), false)
+})
+
+test('distinct-timestamp hand moves resolve identically under either order', () => {
+  // For every hand-entered move (each with its own real created_at, never
+  // shared with another row), undone_at desc and created_at desc agree —
+  // the fix changes the answer only where the backfill made them disagree.
+  const older = { undone_at: '2026-08-20T09:00:00Z', created_at: '2026-08-19T00:00:00Z', id: 'move-a' }
+  const newer = { undone_at: '2026-08-20T10:00:00Z', created_at: '2026-08-20T00:00:00Z', id: 'move-b' }
+  assert.equal(isNewerUndone(newer, older), true)
+  assert.equal(isNewerUndone(older, newer), false)
 })

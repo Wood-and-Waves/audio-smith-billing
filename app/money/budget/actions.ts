@@ -410,8 +410,32 @@ async function newestActiveMove(
   return { ok: true, row: data }
 }
 
-/** The redo-direction mirror of newestActiveMove above: the newest UNDONE
- *  move (`undone_at is not null`) — what redo would clear. */
+/**
+ * The redo-direction mirror of newestActiveMove above: the newest UNDONE
+ * move (`undone_at is not null`) — what redo would clear.
+ *
+ * Ordered by `undone_at desc` FIRST, then `created_at desc, id desc` — NOT
+ * `created_at desc, id desc` alone, which is what this read used before the
+ * final phase-two review (2026-08-24) caught it. The backfill writes every
+ * imported move inside ONE transaction, so every imported row shares one
+ * `created_at`; once undo walks past the hand-entered moves into the
+ * backfill, `created_at desc, id desc` falls to comparing random UUIDs and
+ * picks an ARBITRARY backfill row as the redo candidate — not the one that
+ * was actually undone most recently. Ordering by `undone_at` first makes
+ * this read the true inverse of undoLastMove's own write (which always sets
+ * `undone_at` to "now" on whatever it just marked): the row THIS query
+ * returns is, by construction, the row that was undone last.
+ *
+ * `redoTarget` (lib/budgetMoves.ts) itself is untouched by this — it still
+ * compares the returned row's `(created_at, id)` tuple against the newest
+ * active move exactly as before ('superseded' is about the register's real
+ * chronological order, not about undo order); only WHICH row this function
+ * hands it as `newestUndone` changes. For every hand-entered move (each
+ * with its own distinct `created_at`), the two orderings agree — see
+ * `isNewerUndone`'s own doc comment (lib/budgetMoves.ts) for the pure
+ * version of this same comparator, shared with this file's own SQL order so
+ * app/money/budget/page.tsx's matching derivation can never drift from it.
+ */
 async function newestUndoneMove(
   supabase: Awaited<ReturnType<typeof createClient>>,
   ownerId: string,
@@ -420,9 +444,10 @@ async function newestUndoneMove(
 > {
   const { data, error } = await supabase
     .from('ledger_budget_moves')
-    .select('id, created_at')
+    .select('id, created_at, undone_at')
     .eq('owner_id', ownerId)
     .not('undone_at', 'is', null)
+    .order('undone_at', { ascending: false })
     .order('created_at', { ascending: false })
     .order('id', { ascending: false })
     .limit(1)
