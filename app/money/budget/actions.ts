@@ -471,6 +471,27 @@ async function newestUndoneMove(
  * (same idiom as deleteDraftInvoice, app/invoices/actions.ts) is how that
  * is told apart from a real failure: `updated.length === 0` here is a
  * benign race, reported as `wrote: false`, not an error.
+ *
+ * ACCEPTED TOCTOU (final review, 2026-08-24): the "this is the newest move"
+ * precondition is READ by newestActiveMove above but never RE-ASSERTED in
+ * the UPDATE's own WHERE — the filter only re-checks the row's id and
+ * `undone_at is null`, not that it is STILL the newest active row at write
+ * time. Two genuinely concurrent Undo requests can read the same "newest"
+ * row, and if a third request inserts a fresh move in the gap between one
+ * caller's read and its write, that caller's UPDATE still lands on the row
+ * it read, which is now the SECOND-newest, not the newest. Accepted, not
+ * hardened, because it cannot corrupt anything: the only column that ever
+ * moves is `undone_at`, every 0038 constraint still holds on the row
+ * either way, and buildBudget re-derives the whole budget truthfully from
+ * whatever `undone_at` ends up set to — the worst case is undoing a move
+ * that isn't the one Dan meant, which Recent Moves shows plainly and a
+ * second Undo/Redo click corrects. Dan is the only writer today, so this
+ * gap has no real caller. If a second writer is ever added, the hardening
+ * path is a check-and-update RPC — one atomic UPDATE ... WHERE id = (SELECT
+ * ... ORDER BY ... LIMIT 1) RETURNING ..., the same model
+ * `allocate_invoice_number` (migration 0002) uses to make Postgres
+ * serialise the read-then-write instead of this file doing it in two
+ * round-trips.
  */
 export async function undoLastMove(): Promise<WriteResult> {
   const supabase = await createClient()
@@ -513,6 +534,22 @@ export async function undoLastMove(): Promise<WriteResult> {
  * (app/money/actions.ts). The update's filter carries the row's id AND
  * `.not('undone_at', 'is', null)` — the redo-direction mirror of undo's own
  * `.is('undone_at', null)`, the same double-flip race guarded in reverse.
+ *
+ * ACCEPTED TOCTOU (final review, 2026-08-24): same shape as undoLastMove's
+ * own — the newest-active/newest-undone reads above, and the `redoTarget`
+ * decision made from them, are never RE-ASSERTED in the UPDATE's own WHERE.
+ * Two genuinely concurrent Redo requests (or a Redo racing a fresh Assign
+ * from a second tab) can both read `redoTarget` as `'ok'` and both proceed;
+ * or a fresh active move can land in the gap between the read and the
+ * write, so the row this call resurrects is, by the time it lands, already
+ * SUPERSEDED. Accepted, not hardened, for the same reason as undo's own:
+ * only `undone_at` ever moves, every 0038 constraint still holds, and
+ * buildBudget re-derives truthfully either way — the worst case is
+ * resurrecting a move Dan no longer wants active, visible in Recent Moves
+ * and correctable with one more Undo. The hardening path, if a second
+ * writer is ever added, is the same one undoLastMove's own comment
+ * describes: a check-and-update RPC on the `allocate_invoice_number`
+ * (migration 0002) model.
  */
 export async function redoLastMove(): Promise<WriteResult> {
   const supabase = await createClient()
