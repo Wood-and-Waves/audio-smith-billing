@@ -1,3 +1,6 @@
+'use client'
+
+import { useState } from 'react'
 import { formatUSD } from '@/lib/money'
 import { progressPct, type CategoryMonth, type CategoryTarget, type TargetStatus } from '@/lib/budget'
 import TargetEditor from '@/components/TargetEditor'
@@ -99,6 +102,22 @@ function TargetProgressBar({ row }: { row: CategoryMonth }) {
  * move-money option list (see AssignableCategory's doc comment,
  * app/money/budget/page.tsx), both threaded straight from BudgetTable
  * without this component touching either.
+ *
+ * A CLIENT component (final review, 2026-08-24) — the one `assignPending`
+ * flag below is why. This row renders AssignedCell TWICE (the desktop grid
+ * cell, the phone card's mini-card) and MoveMoneyDialog TWICE the same
+ * way; both AssignedCell instances report their own `pending` up into this
+ * ONE piece of state via `onPendingChange`, and both MoveMoneyDialog
+ * instances read it back as `disabled` to gate their own Available pill
+ * while it's true. That closes a real race: clicking the pill while this
+ * row's Assigned editor holds an uncommitted change fires blur-commit AND
+ * opens the dialog in the same gesture, and the dialog used to seed itself
+ * from `row.availableCents` — a server-computed prop — before that
+ * commit's write had actually landed, showing Dan pre-write figures. Only
+ * one AssignedCell instance is ever visibly interactive at a time (the
+ * responsive classes hide the other), so only one ever reports `true`; the
+ * state is per-row (this component's own `key` in BudgetTable is the row's
+ * `categoryId`), so it can never leak into a sibling row's pill.
  */
 export default function BudgetRow({
   row, name, target, month, assignableCategories,
@@ -116,6 +135,10 @@ export default function BudgetRow({
   // editable for either, because assignToCategory/moveBetweenCategories both
   // refuse a hidden category server-side.
   const editable = !row.hidden
+  // See this component's own doc comment above for why this lives here
+  // (not inside AssignedCell or MoveMoneyDialog) and why it's a CLIENT
+  // component as a result.
+  const [assignPending, setAssignPending] = useState(false)
   return (
     <div className="grid grid-cols-1 sm:grid-cols-[1fr_7rem_7rem_8rem] gap-x-4 gap-y-2 items-center py-2 text-sm">
       <div className="min-w-0">
@@ -148,6 +171,7 @@ export default function BudgetRow({
           assignedCents={row.assignedCents}
           editable={editable}
           align="right"
+          onPendingChange={setAssignPending}
         />
       </div>
       <span className="hidden sm:block tabular text-right">{formatUSD(row.activityCents)}</span>
@@ -158,6 +182,7 @@ export default function BudgetRow({
           month={month}
           categories={assignableCategories}
           editable={editable}
+          disabled={assignPending}
         />
       </div>
 
@@ -171,6 +196,7 @@ export default function BudgetRow({
             assignedCents={row.assignedCents}
             editable={editable}
             align="left"
+            onPendingChange={setAssignPending}
           />
         </div>
         <div>
@@ -184,6 +210,7 @@ export default function BudgetRow({
             categoryName={name}
             month={month}
             categories={assignableCategories}
+            disabled={assignPending}
             editable={editable}
           />
         </div>

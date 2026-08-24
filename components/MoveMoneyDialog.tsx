@@ -123,9 +123,19 @@ const PILL_CLASSES =
  * `row.hidden` flag as AssignedCell's own doc comment: moveBetweenCategories
  * refuses a hidden category as either side of a move, so the pill renders as
  * plain, inert text instead of a button that opens a dialog doomed to fail.
+ *
+ * `disabled` (final review, 2026-08-24) is BudgetRow's own shared
+ * `assignPending` flag — true while the SAME row's AssignedCell has an
+ * assign write in flight. It gates only the pill's own `<button
+ * disabled>`, never the `editable` branch above (a hidden row's pill stays
+ * plain text either way): a native `disabled` button does not fire
+ * `onClick`, which is what closes the race AssignedCell's own doc comment
+ * describes — clicking the pill mid-edit used to fire blur-commit AND
+ * `openDialog()` in the same gesture, seeding this dialog from
+ * `row.availableCents` before that commit's write had landed.
  */
 export default function MoveMoneyDialog({
-  row, categoryName, month, categories, editable,
+  row, categoryName, month, categories, editable, disabled = false,
 }: {
   row: CategoryMonth
   categoryName: string
@@ -133,6 +143,10 @@ export default function MoveMoneyDialog({
   month: string
   categories: AssignableCategory[]
   editable: boolean
+  /** See this component's own doc comment above. Defaults to false so a
+   *  future caller with no sibling AssignedCell to race isn't forced to
+   *  wire a constant `false`. */
+  disabled?: boolean
 }) {
   const router = useRouter()
   const uid = useId()
@@ -208,8 +222,9 @@ export default function MoveMoneyDialog({
       <button
         type="button"
         onClick={openDialog}
+        disabled={disabled}
         aria-label={look.label}
-        className={`${PILL_CLASSES} ${look.classes} hover:opacity-80 transition-opacity`}
+        className={`${PILL_CLASSES} ${look.classes} hover:opacity-80 transition-opacity disabled:opacity-50 disabled:pointer-events-none`}
       >
         {glyphFor(look.glyph)}
         {formatUSD(row.availableCents)}

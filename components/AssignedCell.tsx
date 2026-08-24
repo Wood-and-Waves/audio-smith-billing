@@ -31,9 +31,22 @@ import { assignToCategory } from '@/app/money/budget/actions'
  * hidden category server-side, so a button that opened an editor doomed to
  * fail on save has no honest reason to exist — the figure renders as plain
  * text instead.
+ *
+ * `onPendingChange` (final review, 2026-08-24) reports this cell's own
+ * `pending` upward, unchanged — see this file's own `useEffect` below for
+ * why mirroring `pending` itself (rather than toggling a second flag by
+ * hand at each call site) is enough. `BudgetRow` lifts the one flag both of
+ * its AssignedCell instances (desktop grid cell, phone mini-card) and both
+ * of its MoveMoneyDialog instances share, and disables the Available pill
+ * while it's true — the fix for a real race: clicking the pill while this
+ * row's Assigned editor holds an uncommitted change fires blur-commit AND
+ * opens the dialog in the same gesture, and the dialog used to seed itself
+ * from `row.availableCents` before that commit's write had landed, showing
+ * Dan pre-write figures. See MoveMoneyDialog's own doc comment for the
+ * other half.
  */
 export default function AssignedCell({
-  categoryId, categoryName, month, assignedCents, editable, align = 'right',
+  categoryId, categoryName, month, assignedCents, editable, align = 'right', onPendingChange,
 }: {
   categoryId: string
   categoryName: string
@@ -45,6 +58,12 @@ export default function AssignedCell({
    *  decimal there); 'left' for the phone card's own mini-cards, where
    *  every other figure is left-aligned under its label. */
   align?: 'left' | 'right'
+  /** Reports this cell's own `pending` upward to BudgetRow — see this
+   *  component's own doc comment above. Optional so a future caller that
+   *  doesn't need the pill-race guard (there isn't one today; both of
+   *  BudgetRow's own call sites always pass it) isn't forced to wire a
+   *  no-op. */
+  onPendingChange?: (pending: boolean) => void
 }) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -53,6 +72,19 @@ export default function AssignedCell({
   const [initial, setInitial] = useState('')
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Mirrors `pending` upward on every change, rather than each call site
+  // (openEditor/commit/cancel) toggling `onPendingChange` by hand — one
+  // source of truth, so the reported flag can never drift from what this
+  // cell's own "Saving…" state already shows. `pending` (from
+  // `useTransition`) stays true for the whole `start(async () => { …
+  // router.refresh() })` in commit() below, including the refresh itself
+  // (the same Next.js idiom BudgetHistory's own pending relies on) — so the
+  // pill stays disabled until the fresh, post-write figures have actually
+  // landed as props, not just until the network round-trip resolves.
+  useEffect(() => {
+    onPendingChange?.(pending)
+  }, [pending, onPendingChange])
 
   useEffect(() => {
     if (!open) return
