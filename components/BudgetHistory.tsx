@@ -118,6 +118,10 @@ export default function BudgetHistory({
                 >
                   <span className="tabular">{formatUSD(m.amountCents)}</span>
                   {' · '}{m.fromName} → {m.toName}{' · '}{m.monthLabel}
+                  {/* The strikethrough is decoration; this is the signal a
+                      screen reader actually gets (WCAG 1.3.1 — state must
+                      not live in presentation alone). */}
+                  {m.undone && <span className="sr-only"> (undone)</span>}
                 </li>
               ))}
             </ul>

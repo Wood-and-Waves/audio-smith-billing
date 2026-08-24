@@ -168,7 +168,11 @@ export default function MoveMoneyDialog({
     }
     const from = fromId === '' ? null : fromId
     const to = toId === '' ? null : toId
-    if (from !== null && to !== null && from === to) {
+    // Matches `sameCategory` above EXACTLY — the Enter key on the amount
+    // field calls save() directly, bypassing the disabled Save button, so a
+    // narrower guard here would let RTA -> RTA reach the server for a
+    // round-trip refusal instead of the immediate inline note.
+    if (from === to) {
       setError('Pick two different categories.')
       return
     }

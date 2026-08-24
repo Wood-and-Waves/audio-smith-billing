@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { todayInChicago, addMonths, monthLabel } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
-import { redoTarget } from '@/lib/budgetMoves'
+import { redoTarget, isNewer } from '@/lib/budgetMoves'
 import {
   buildBudget, FIRST_BUDGET_MONTH, OPENING_MONTH, MAX_MONTHS_AHEAD,
   type BudgetCategory, type BudgetMove, type BudgetTxn, type CategoryTarget,
@@ -323,13 +323,10 @@ export default async function MoneyBudgetPage({
   // display and for the undo/redo decision, ordered by the register's own
   // tie-break (`created_at desc, id desc` — `lbm_owner_created_idx`,
   // migration 0038), the same order app/money/budget/actions.ts's own
-  // newestActiveMove/newestUndoneMove read by. String comparison on both
-  // fields, same as lib/budgetMoves.ts's own `isNewer` — see that file's
-  // comment for why that matches a Postgres ORDER BY on the same columns.
+  // newestActiveMove/newestUndoneMove read by — via the SAME exported
+  // isNewer the redo decision uses, so the two can never drift.
   const movesByRecency = [...moveRows].sort((a, b) =>
-    a.created_at !== b.created_at
-      ? (a.created_at > b.created_at ? -1 : 1)
-      : (a.id > b.id ? -1 : 1),
+    isNewer(a, b) ? -1 : 1,
   )
   const newestActiveMoveRow = movesByRecency.find((m) => m.undone_at === null) ?? null
   const newestUndoneMoveRow = movesByRecency.find((m) => m.undone_at !== null) ?? null

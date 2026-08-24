@@ -104,8 +104,9 @@ export type RedoCheck = {
 /** True when `a` sorts after `b` under the register's own tie-break order:
  *  `created_at` first, `id` second (mirrors `lbm_owner_created_idx`'s
  *  `created_at desc, id desc`, migration 0038) — string comparison on both,
- *  same as a Postgres ORDER BY on those two columns. */
-function isNewer(
+ *  same as a Postgres ORDER BY on those two columns. Exported so the page's
+ *  recency sort and this module's redo decision can never drift apart. */
+export function isNewer(
   a: { created_at: string; id: string },
   b: { created_at: string; id: string },
 ): boolean {
