@@ -19,7 +19,9 @@ January), migration 0041 restored the eight categories (Hotels via rename of
 the hidden Lodging row; the four money-movement ones non-deductible; Dan's
 YNAB-hidden four deliberately omitted — zero 2026 transactions), the budget
 table names its columns, and the register's header pins below the app bar.
-The $400 punch-list item is now actionable (Temporary Transfer exists).
+The $400 punch-list item is *partly* unblocked: Temporary Transfer exists,
+but fixing it is still a hand edit of both legs — see the importer-collapse
+item below.
 Prod migration order at the gate: 0038→0039→0040→0041, then a delta
 whole-branch review of every commit after `de2529e`.
 
@@ -117,11 +119,10 @@ numbers could be proved before any path existed that changes one:
   account, matching every sibling `/money/*` page. The moment a second open
   account exists the budget understates itself with nothing on screen to say
   so — the source comment says as much.
-- **`components/BudgetPanel.tsx` and the 0030 envelope tables** are now dead:
-  the panel has no caller and the tables shipped empty and stayed empty. Left
-  in place (ADDITIVE ONLY); retire deliberately, not incidentally.
-- **`ensureDefaultEnvelopes`** in `app/money/actions.ts` lost its only caller
-  when the budget page was rewritten.
+- **The 0030 envelope tables** are dead but stay (ADDITIVE ONLY).
+  `components/BudgetPanel.tsx`, `ensureDefaultEnvelopes`, `saveEnvelope` and
+  `moveEnvelopeMoney` have all since been deleted as dead code; only
+  `lib/envelopes.ts` survives, for the forecast's `availableToAllocate`.
 - **`app/money/forecast/page.tsx`** still computes "available to allocate" from
   the empty envelope moves. Harmless — the answer equals the working balance —
   but it is a stale concept now.
@@ -155,6 +156,22 @@ books agree to the penny — every one was confirmed against the underlying rows
    to **Retained Earnings**, which is where YNAB books them.
 
 **And his 17 targets need entering by hand** — YNAB has no target export.
+
+**Importer collapse vs the restored Owner Transactions categories (delta
+review, 2026-08-23).** `lib/ynabRegister.ts` maps *every* YNAB row whose group
+is `Owner Transactions` to `kind = owner_pay` on the Owner Pay category
+(outflows) or an uncategorised `transfer` (inflows) — regardless of the row's
+own category. 0041 put four real categories inside exactly that group
+(Temporary Transfer, Loan to Wood and Waves, Charitable Giving, Money Due
+Wood and Waves), so a future register re-import would pool their activity
+onto Owner Pay while `import:plan` happily writes their assignments — four
+budget rows showing Assigned against $0 Activity, surfacing in the September
+YNAB-vs-app comparison. No data is at risk today (the backfill is a guarded
+one-off). **Manual workaround for the $400 item:** edit the 3/5 owner-pay row
+down by $400 and add a $400 expense-kind row on Temporary Transfer (the
+outflow leg), then change the 3/2 inflow's kind off `transfer` (which cannot
+carry a category) and book it to Temporary Transfer too. Fix properly by
+teaching `mapYnabRow` to respect the row's own category within that group.
 
 **Month picker (added 2026-08-23, `components/MonthPicker.tsx`).** The month label
 opens a YNAB-style popover: a `‹ 2026 ›` year row over a 4x3 month grid, current

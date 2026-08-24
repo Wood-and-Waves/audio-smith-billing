@@ -187,11 +187,13 @@ status.
   source — `compareLedgerOrder` (date asc, created_at asc, id asc; display =
   exact reverse) and `runningBalances` (pinned invariant: top rendered row's
   balance === working balance). Balances are computed over the FULL paged
-  set, never the RENDER_CAP 200 slice — do not "optimize" that.
+  set, and the register renders every row — the old RENDER_CAP was deleted
+  (2026-08-23) precisely because a display cap that looks like completeness
+  is the failure mode this module exists to prevent. Do not reintroduce one.
 - Envelopes (0030): dead. Three rows, zero moves, ever — an envelope
   transactions never point at can show a balance but never an activity. The
   budget below puts the budget ON the categories transactions already carry.
-- **The budget (0038-0040, `/money/budget`).** YNAB's month grid, and the two
+- **The budget (0038-0041, `/money/budget`).** YNAB's month grid, and the two
   formulas below were validated against 1,421 rows of Dan's own YNAB export
   BEFORE any code existed — 0 mismatches — so they are settled by evidence,
   not taste. Do not re-derive them:
