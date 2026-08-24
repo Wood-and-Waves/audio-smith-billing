@@ -273,12 +273,15 @@ test('a tie on undone_at falls back to created_at, then id — same order isNewe
   assert.equal(isNewerUndone(a, b), false)
 })
 
-test('distinct-timestamp hand moves resolve identically under either order', () => {
-  // For every hand-entered move (each with its own real created_at, never
-  // shared with another row), undone_at desc and created_at desc agree —
-  // the fix changes the answer only where the backfill made them disagree.
-  const older = { undone_at: '2026-08-20T09:00:00Z', created_at: '2026-08-19T00:00:00Z', id: 'move-a' }
-  const newer = { undone_at: '2026-08-20T10:00:00Z', created_at: '2026-08-20T00:00:00Z', id: 'move-b' }
-  assert.equal(isNewerUndone(newer, older), true)
-  assert.equal(isNewerUndone(older, newer), false)
+test('a two-deep undo of hand moves offers the LAST-undone row for redo, not the newest-created', () => {
+  // The reachable sequence: undoLastMove always marks the newest ACTIVE
+  // move, so undo hits C (newest created) first, then B — meaning B has
+  // the LATER undone_at despite the EARLIER created_at. undone_at desc
+  // must offer B; the old created_at desc order offered C, restoring the
+  // wrong row and then stranding B as 'superseded' forever. This is the
+  // test that fails if someone "simplifies" isNewerUndone back to isNewer.
+  const c = { undone_at: '2026-08-24T09:00:00Z', created_at: '2026-08-23T00:00:00Z', id: 'move-c' }
+  const b = { undone_at: '2026-08-24T09:01:00Z', created_at: '2026-08-22T00:00:00Z', id: 'move-b' }
+  assert.equal(isNewerUndone(b, c), true, 'B (undone later) wins the redo slot')
+  assert.equal(isNewerUndone(c, b), false)
 })

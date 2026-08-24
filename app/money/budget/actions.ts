@@ -450,8 +450,9 @@ async function newestActiveMove(
  * compares the returned row's `(created_at, id)` tuple against the newest
  * active move exactly as before ('superseded' is about the register's real
  * chronological order, not about undo order); only WHICH row this function
- * hands it as `newestUndone` changes. For every hand-entered move (each
- * with its own distinct `created_at`), the two orderings agree — see
+ * hands it as `newestUndone` changes. This is NOT a no-op for hand moves:
+ * a two-deep undo under the old order offered the wrong row for redo and
+ * then stranded the other one as 'superseded' — see
  * `isNewerUndone`'s own doc comment (lib/budgetMoves.ts) for the pure
  * version of this same comparator, shared with this file's own SQL order so
  * app/money/budget/page.tsx's matching derivation can never drift from it.

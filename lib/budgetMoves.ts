@@ -144,10 +144,11 @@ export function isNewer(
  * `(created_at, id)` tuple against the newest active move exactly as
  * before (the 'superseded' rule is about the register's real chronological
  * order, not about undo order) — only WHICH undone row gets offered to it
- * as `newestUndone` changes. For every hand-entered move (each with its own
- * distinct `created_at`), `undone_at desc` and `created_at desc, id desc`
- * agree on the same row regardless — this only changes the answer where
- * they used to disagree.
+ * as `newestUndone` changes. This matters for hand moves too, not just the
+ * backfill: undo newest-move C then next-newest B, and `created_at desc`
+ * offered C for redo — restoring C while B stayed undone, after which the
+ * 'superseded' rule stranded B permanently. `undone_at desc` offers B, the
+ * one just undone, making Redo a true inverse at every undo depth.
  *
  * Exported (like `isNewer`) so app/money/budget/page.tsx's own redo-
  * candidate derivation and newestUndoneMove's SQL ORDER BY

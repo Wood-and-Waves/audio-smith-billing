@@ -78,7 +78,9 @@ export default function BudgetHistory({
     start(async () => {
       const result = await undoLastMove()
       if (!result.ok) { setError(result.error); return }
-      if (!result.wrote) { setNote('Nothing to undo.'); return }
+      // wrote:false means our view was stale (nothing left, or a lost
+      // race) — which is exactly when a refresh matters most, so do both.
+      if (!result.wrote) setNote('Nothing to undo.')
       router.refresh()
     })
   }
@@ -89,7 +91,9 @@ export default function BudgetHistory({
     start(async () => {
       const result = await redoLastMove()
       if (!result.ok) { setError(result.error); return }
-      if (!result.wrote) { setNote('Nothing to redo.'); return }
+      // wrote:false means our view was stale (nothing left, or a lost
+      // race) — which is exactly when a refresh matters most, so do both.
+      if (!result.wrote) setNote('Nothing to redo.')
       router.refresh()
     })
   }
