@@ -3,6 +3,7 @@
 //   npm run import:plan -- <plan.csv> --start 2026-01              -> DRY RUN, dev
 //   npm run import:plan -- --commit <plan.csv> --start 2026-01     -> writes, dev
 //   npm run import:plan -- --prod --commit <plan.csv> --start 2026-01
+//   npm run import:plan -- --commit --replace <plan.csv> --start 2026-01
 //
 // Dry by default and writing only with --commit, matching
 // scripts/import/ynab-backfill.mjs. Without --commit this connects, reads,
@@ -13,9 +14,11 @@
 // Assigned, becomes a single opening move per category, because that is what
 // carries into the first real month.
 //
-// Idempotent by deletion: a committing run first clears this owner's moves from
-// the opening month onward, then rewrites them. A budget import that half-applied
-// would be worse than one that refused to run twice.
+// BACKFILL TOOL: a committing run first clears this owner's moves from the
+// opening month onward, then rewrites them. AFTER PHASE TWO, hand-entered moves
+// live in the same table and a re-run would DELETE THEM SILENTLY. Use
+// --replace to acknowledge and proceed; a committing run without it will refuse
+// if any moves exist. Dry runs are unaffected.
 
 import { readFileSync } from 'node:fs'
 import pg from 'pg'
@@ -27,7 +30,7 @@ import { OPENING_MONTH } from '../../lib/budget.ts'
 // (Copied from ynab-backfill.mjs, which needs it for the same reason.)
 pg.types.setTypeParser(20, (v) => Number(v))
 
-const USAGE = `Usage: node --env-file=.env.local scripts/import/ynab-plan.mjs [--prod] [--commit] <plan.csv> --start 2026-01
+const USAGE = `Usage: node --env-file=.env.local scripts/import/ynab-plan.mjs [--prod] [--commit] [--replace] <plan.csv> --start 2026-01
 
   <plan.csv>   YNAB "Plan" CSV export (Budget > Export), or pass the same
                path with --file.
@@ -38,7 +41,10 @@ const USAGE = `Usage: node --env-file=.env.local scripts/import/ynab-plan.mjs [-
   --commit     Actually write. Without it: a dry run — the delete and every
                insert really run, inside a transaction that is then rolled
                back, so nothing is written but nothing about the report is
-               make-believe either.
+               make-believe either. If any moves exist in the table, --replace
+               is required to proceed.
+  --replace    Acknowledge and proceed even if the table has existing moves —
+               they will be deleted. Required when --commit finds any moves.
   --dry        Explicit synonym for the default (no --commit). Rejected
                together with --commit, which would otherwise be a
                contradiction.
@@ -58,12 +64,13 @@ function takeValue(argv, i, flagName) {
 }
 
 function parseArgs(argv) {
-  const out = { prod: false, commit: false, dry: false, help: false, csvPath: null, start: null }
+  const out = { prod: false, commit: false, replace: false, dry: false, help: false, csvPath: null, start: null }
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i]
     if (a === '--help' || a === '-h') { out.help = true; continue }
     if (a === '--prod') { out.prod = true; continue }
     if (a === '--commit') { out.commit = true; continue }
+    if (a === '--replace') { out.replace = true; continue }
     if (a === '--dry') { out.dry = true; continue }
     if (a === '--file') { out.csvPath = takeValue(argv, i, '--file'); i += 1; continue }
     if (a === '--start') { out.start = takeValue(argv, i, '--start'); i += 1; continue }
@@ -297,6 +304,30 @@ async function main() {
         + `ledger_categories row: ${unmatched.join(', ')}. Add the category (or fix the name) before importing — `
         + 'a silently skipped category is a budget that quietly does not add up.',
       )
+    }
+
+    // Check for existing moves before committing. If any exist and --commit was
+    // given without --replace, refuse loudly to prevent accidental data loss.
+    // Dry runs always proceed regardless (they'll rollback anyway).
+    if (opts.commit && !opts.replace) {
+      const { rows: existingMoves } = await client.query(
+        'select count(*) as count, min(month) as first_month, max(month) as last_month from ledger_budget_moves where owner_id = $1 and month >= $2',
+        [owner, `${result.openingMonth}-01`],
+      )
+      if (existingMoves[0].count > 0) {
+        const count = parseInt(existingMoves[0].count, 10)
+        const firstMonth = existingMoves[0].first_month?.slice(0, 7) ?? '?'
+        const lastMonth = existingMoves[0].last_month?.slice(0, 7) ?? '?'
+        console.error(
+          `\nREFUSED: --commit found ${count} move(s) in ledger_budget_moves from ${firstMonth} to ${lastMonth}.`
+          + '\nAfter phase two, hand-entered assignments live in this table alongside imports.'
+          + '\nA re-run without --replace would DELETE them silently.'
+          + '\nUse: npm run import:plan -- --commit --replace <plan.csv> --start 2026-01'
+        )
+        process.exitCode = 1
+        await client.end()
+        return
+      }
     }
 
     // Build every move now, in JS, from the parsed numbers — this is exactly

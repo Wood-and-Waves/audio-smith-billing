@@ -103,14 +103,16 @@ arithmetic lives in `lib/budget.ts` and reproduces all 1,421 rows of his export
 with zero mismatches, and `scripts/import/ynab-plan.mjs` backfilled Jan-Aug.
 See CLAUDE.md for the two formulas and the rules that must not be re-derived.
 
-**Phase two — assigning and moving money.** Deliberately split out so the
-numbers could be proved before any path existed that changes one:
+**Phase two — SHIPPED 2026-08-24** (assigning and moving money). Built per the plan (branch `budget-phase-two`, all four write paths merged after top-model final review):
 - Typing a figure into the Assigned box (writes the difference as a move).
-- Moving money between categories to cover an overspent one — one row, not two
-  edits. The tables and the arithmetic already support it.
-- Undo/Redo via `ledger_budget_moves.undone_at`, which the schema already has
-  and `lib/budget.ts` already honours.
-- Recent Moves — the move table read back.
+- Moving money between categories to cover an overspent one.
+- Undo/Redo via `ledger_budget_moves.undone_at`, which marks moves without deleting.
+- Recent Moves — read-only list of the newest ~15 moves, undone ones struck through.
+
+Deliberately left out of phase two (ready for future work):
+- **Auto-assign** — `underfundedCents` computed per month, button path ready, deferred for next pass.
+- **Per-entry undo in Recent Moves** — stack-head only (whole undo model), not per-entry affordances.
+- **Redo TOCTOU** — the finalized decision (accept stale-write corruption or hardened) pending the full review.
 
 **Also deferred, with reasons:**
 - **Auto-assign.** Dan uses it in YNAB but did not pick it for phase one.

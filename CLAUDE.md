@@ -229,6 +229,7 @@ status.
     NO history — YNAB does not export targets, so Dan enters them by hand and a
     past month is judged against today's target. Assigned/Activity/Available
     stay exact; only the status wording on closed months can read oddly.
+  - **Phase two shipped 2026-08-24**: hand writes are immutable moves into `ledger_budget_moves`, undo marks `undone_at`, the import now requires `--replace` when moves exist.
 
 ## Process that has worked
 
