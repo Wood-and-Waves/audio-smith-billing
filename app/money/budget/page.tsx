@@ -1,7 +1,8 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { todayInChicago, addMonths } from '@/lib/dates'
+import { todayInChicago, addMonths, monthLabel } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
+import { redoTarget } from '@/lib/budgetMoves'
 import {
   buildBudget, FIRST_BUDGET_MONTH, OPENING_MONTH, MAX_MONTHS_AHEAD,
   type BudgetCategory, type BudgetMove, type BudgetTxn, type CategoryTarget,
@@ -9,6 +10,7 @@ import {
 import AppShell from '@/components/AppShell'
 import BudgetTable, { parseBudgetFilter, type BudgetFilter } from '@/components/BudgetTable'
 import BudgetSummary from '@/components/BudgetSummary'
+import BudgetHistory from '@/components/BudgetHistory'
 import MonthPicker from '@/components/MonthPicker'
 
 export const dynamic = 'force-dynamic'
@@ -45,6 +47,26 @@ const FILTER_CHIPS: { key: BudgetFilter; label: string }[] = [
  * `target?: CategoryTarget | null` prop carries.
  */
 export type AssignableCategory = { id: string; name: string; availableCents: number }
+
+/**
+ * One entry in BudgetHistory's own Recent Moves list (budget-phase-two Task
+ * 4) — already resolved to display strings by the page (category names,
+ * the move's own month label) so BudgetHistory stays the same kind of dumb
+ * presentation component AssignableCategory's own doc comment describes:
+ * built once here from data this page already fetched (fetchAllBudgetMoves,
+ * categories), never refetched or re-derived lower in the tree. `id` is the
+ * move row's own primary key, used only as a React list key — the list is
+ * read-only (see BudgetHistory's own doc comment for why only the stack
+ * head is ever undoable).
+ */
+export type RecentMove = {
+  id: string
+  amountCents: number
+  fromName: string
+  toName: string
+  monthLabel: string
+  undone: boolean
+}
 
 // Supabase selects silently cap at 1000 rows (PostgREST's max_rows) with no
 // error. ledger_transactions is already past 300 rows and grows every month,
@@ -87,6 +109,18 @@ async function fetchAllCategories(
 }
 
 type RawMoveRow = {
+  // `id`/`created_at` earn their place here on top of buildBudget's own four
+  // fields (which never needed them — a sum doesn't care what order its
+  // addends arrive in) because BudgetHistory's own Undo/Redo state and
+  // Recent Moves list (budget-phase-two Task 4) both need the register's
+  // real tie-break order (`created_at desc, id desc` — `lbm_owner_created_idx`,
+  // migration 0038, the same order app/money/budget/actions.ts's own
+  // newestActiveMove/newestUndoneMove read by) to know which move is
+  // "newest." Reusing this one paged fetch for that — rather than adding a
+  // second one — is exactly the plan's own instruction: the page already
+  // fetches every move; Task 4 must not add a new fetch on top of it.
+  id: string
+  created_at: string
   month: string
   from_category_id: string | null
   to_category_id: string | null
@@ -102,7 +136,7 @@ async function fetchAllBudgetMoves(
   for (;;) {
     const { data, error } = await supabase
       .from('ledger_budget_moves')
-      .select('month, from_category_id, to_category_id, amount_cents, undone_at')
+      .select('id, created_at, month, from_category_id, to_category_id, amount_cents, undone_at')
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
       .range(from, from + PAGE_SIZE - 1)
@@ -279,6 +313,62 @@ export default async function MoneyBudgetPage({
     toCategoryId: m.to_category_id,
     amountCents: m.amount_cents,
     undoneAt: m.undone_at,
+  }))
+
+  // BudgetHistory's own Undo/Redo button states and Recent Moves list
+  // (budget-phase-two Task 4) — derived here, from moveRows this page
+  // already fetched paged above, never a new query. `moveRows` itself stays
+  // in fetchAllBudgetMoves' own ascending order (buildBudget only sums it,
+  // so order there is irrelevant); this is a separate newest-first copy for
+  // display and for the undo/redo decision, ordered by the register's own
+  // tie-break (`created_at desc, id desc` — `lbm_owner_created_idx`,
+  // migration 0038), the same order app/money/budget/actions.ts's own
+  // newestActiveMove/newestUndoneMove read by. String comparison on both
+  // fields, same as lib/budgetMoves.ts's own `isNewer` — see that file's
+  // comment for why that matches a Postgres ORDER BY on the same columns.
+  const movesByRecency = [...moveRows].sort((a, b) =>
+    a.created_at !== b.created_at
+      ? (a.created_at > b.created_at ? -1 : 1)
+      : (a.id > b.id ? -1 : 1),
+  )
+  const newestActiveMoveRow = movesByRecency.find((m) => m.undone_at === null) ?? null
+  const newestUndoneMoveRow = movesByRecency.find((m) => m.undone_at !== null) ?? null
+  // Undo enabled iff any move has undone_at === null — exactly what
+  // `newestActiveMoveRow` not being null already means, since it's the
+  // FIRST such row in newest-first order (there is one iff there is at
+  // least one). Redo enabled iff redoTarget (lib/budgetMoves.ts, the one
+  // pure decision this exact case is for) says 'ok' for the newest-active /
+  // newest-undone pair.
+  const undoEnabled = newestActiveMoveRow !== null
+  const redoEnabled = redoTarget({
+    newestActive: newestActiveMoveRow
+      ? { created_at: newestActiveMoveRow.created_at, id: newestActiveMoveRow.id }
+      : null,
+    newestUndone: newestUndoneMoveRow
+      ? { created_at: newestUndoneMoveRow.created_at, id: newestUndoneMoveRow.id }
+      : null,
+  }) === 'ok'
+
+  // Names for the Recent Moves list come from the categories this page
+  // already fetched — never a category lookup BudgetHistory does itself
+  // (that component stays dumb; see RecentMove's own doc comment above).
+  // Categories are only ever hidden, never deleted (grep the repo: there is
+  // no delete path onto ledger_categories), so every id a move references
+  // resolves here — the `?? 'Unknown category'` fallback is defensive only,
+  // the same belt-and-suspenders spirit as this file's other `?? []` reads.
+  const nameById = new Map(categories.map((c) => [c.id, c.name]))
+  const categoryDisplayName = (id: string | null) =>
+    id === null ? 'Ready to Assign' : nameById.get(id) ?? 'Unknown category'
+
+  // Newest ~15, matching BudgetHistory's own spec — the recency order
+  // computed above, sliced rather than re-sorted.
+  const recentMoves: RecentMove[] = movesByRecency.slice(0, 15).map((m) => ({
+    id: m.id,
+    amountCents: m.amount_cents,
+    fromName: categoryDisplayName(m.from_category_id),
+    toName: categoryDisplayName(m.to_category_id),
+    monthLabel: monthLabel(m.month.slice(0, 7)),
+    undone: m.undone_at !== null,
   }))
 
   // Every month from the opening seed forward to whichever is later, today
@@ -459,31 +549,42 @@ export default async function MoneyBudgetPage({
         </div>
 
         <div className="lg:order-1 min-w-0">
-          <nav aria-label="Filter categories" className="flex flex-wrap gap-2 mb-4">
-            {FILTER_CHIPS.map((chip) => {
-              const active = chip.key === filter
-              const label =
-                chip.key === 'overspent' && overspentCount > 0
-                  ? `${overspentCount} Overspent`
-                  : chip.label
-              const href =
-                chip.key === 'all'
-                  ? `/money/budget?m=${month}`
-                  : `/money/budget?m=${month}&f=${chip.key}`
-              return (
-                <Link
-                  key={chip.key}
-                  href={href}
-                  aria-current={active ? 'true' : undefined}
-                  className={`rounded-pill px-3 py-1.5 text-xs font-semibold transition-colors ${
-                    active ? 'bg-accent-wash text-accent' : 'text-muted hover:text-ink'
-                  }`}
-                >
-                  {label}
-                </Link>
-              )
-            })}
-          </nav>
+          {/* Undo/Redo + Recent Moves (budget-phase-two Task 4) render
+              beside the filter chips, not above or below them — `flex-wrap`
+              on the OUTER row (not just the nav's own) is what lets
+              BudgetHistory drop to its own line under the chips on a phone
+              instead of squeezing both onto one crowded row. `items-start`
+              keeps the chips from stretching to match BudgetHistory's own
+              height once its Recent Moves disclosure opens and grows tall. */}
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+            <nav aria-label="Filter categories" className="flex flex-wrap gap-2">
+              {FILTER_CHIPS.map((chip) => {
+                const active = chip.key === filter
+                const label =
+                  chip.key === 'overspent' && overspentCount > 0
+                    ? `${overspentCount} Overspent`
+                    : chip.label
+                const href =
+                  chip.key === 'all'
+                    ? `/money/budget?m=${month}`
+                    : `/money/budget?m=${month}&f=${chip.key}`
+                return (
+                  <Link
+                    key={chip.key}
+                    href={href}
+                    aria-current={active ? 'true' : undefined}
+                    className={`rounded-pill px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      active ? 'bg-accent-wash text-accent' : 'text-muted hover:text-ink'
+                    }`}
+                  >
+                    {label}
+                  </Link>
+                )
+              })}
+            </nav>
+
+            <BudgetHistory undoEnabled={undoEnabled} redoEnabled={redoEnabled} moves={recentMoves} />
+          </div>
 
           <BudgetTable
             month={current}
