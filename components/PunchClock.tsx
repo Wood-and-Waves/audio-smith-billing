@@ -49,14 +49,23 @@ function toHHMM(min: number): string {
  * The quick row: the quarter-hour nearest `now`, plus its neighbors 15
  * minutes either side.
  *
- * A chip that crossed midnight is dropped rather than wrapped: the dialog's
- * date field does not move with it, and a wrapped "23:45" chip saved against
- * today's date would land 24 hours off — a wrong punch is worse than one
- * fewer chip. It costs at most one or two chips, only within 15 minutes of
- * midnight, and the hour grid covers the same time either way.
+ * Deliberately NOT built from `nearest15` — that helper wraps 23:53–23:59 to
+ * `"00:00"` (its own docstring says so; it's the right call for its other,
+ * editable-prefill caller). Reused here it would be wrong in a way the
+ * `>= 0 && < 1440` filter below can't catch: by the time the filter sees a
+ * wrapped center, it's already `0`, a perfectly legal minute, so a chip
+ * labeled midnight would show under "Now" while the real time is 23:5x —
+ * and tapping it saves `wallToInstant(atDate, '00:00', tz)` with `atDate`
+ * still today, roughly 24 hours before the instant that actually happened.
+ * So the rounding happens on raw, unwrapped minutes here, and ANY candidate
+ * that lands at or past 1440 (not just negative ones) is dropped, not
+ * relabeled — the dialog's date field does not travel with a chip, so a
+ * chip for a different calendar day than `atDate` must not exist rather
+ * than be wrapped. Costs at most one or two chips, only within 15 minutes of
+ * midnight either direction; the hour grid covers the same time either way.
  */
 function quickRowTimes(nowWallTime: string): string[] {
-  const center = toMinutes(nearest15(nowWallTime))
+  const center = Math.round(toMinutes(nowWallTime) / 15) * 15
   return [center - 15, center, center + 15]
     .filter((m) => m >= 0 && m < 1440)
     .map(toHHMM)
@@ -93,6 +102,11 @@ export default function PunchClock({
   // the quick row and the hour grid's default, and deliberately does not
   // tick while the dialog is open.
   const [nowWall, setNowWall] = useState<{ date: string; time: string }>({ date, time: '09:00' })
+  // Which chip's wall time is in flight, so that specific chip — not just
+  // "everything is disabled" — can read "Saving…" the way the exact-time
+  // Save button already does. A slow network otherwise leaves a chip tap
+  // looking like nothing happened.
+  const [savingTime, setSavingTime] = useState<string | null>(null)
   const timeRef = useRef<HTMLInputElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
 
@@ -132,6 +146,7 @@ export default function PunchClock({
     // punch is visible with zero grid taps. A back-filled past day starts
     // with nothing expanded; there's no "now" on it worth defaulting to.
     setSelectedHour(date === wall.date ? Number(nearest15(wall.time).split(':')[0]) : null)
+    setSavingTime(null)
     setEditing(type)
   }
 
@@ -139,6 +154,7 @@ export default function PunchClock({
   function save(time: string) {
     if (!editing) return
     setError(null)
+    setSavingTime(time)
     const type = editing
     start(async () => {
       const at = wallToInstant(atDate, time, timezone)
@@ -309,7 +325,7 @@ export default function PunchClock({
                                      border border-line text-ink hover:border-accent hover:text-accent-ink
                                      disabled:opacity-40"
                         >
-                          {friendlyTime(t)}
+                          {pending && savingTime === t ? 'Saving…' : friendlyTime(t)}
                         </button>
                       ))}
                     </div>
@@ -351,7 +367,7 @@ export default function PunchClock({
                                    border border-line text-ink hover:border-accent hover:text-accent-ink
                                    disabled:opacity-40"
                       >
-                        {friendlyTime(t)}
+                        {pending && savingTime === t ? 'Saving…' : friendlyTime(t)}
                       </button>
                     ))}
                   </div>
