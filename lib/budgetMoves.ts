@@ -1,0 +1,190 @@
+// The decisions behind the budget's first hand-write paths — typing a
+// figure into Assigned, moving money between categories, and undo/redo —
+// pulled out pure so node --test can pin them before app/money/budget/
+// actions.ts ever touches Postgres. Same doctrine as lib/categoryOwnership.ts
+// and lib/incomeRoleGuard.ts: "server actions are deliberately untested;
+// extract their brains into pure libs instead." These three earn the
+// exception the same way those two did — they are the first writes onto
+// Dan's live budget, and each one guards a specific way that write could go
+// wrong silently rather than loudly.
+//
+// No '@/' imports, no JSX, relative '.ts' imports, no clock reads — `today`
+// (as `todayYm`) is always a parameter, same rule lib/budget.ts follows.
+
+import { addMonths } from './dates.ts'
+
+export type MoveWrite =
+  | { fromCategoryId: string | null; toCategoryId: string | null; amountCents: number }
+  | null
+
+/**
+ * Typing a figure into Assigned writes the DIFFERENCE between what's typed
+ * and what's already assigned, never the figure itself — a move row has no
+ * "set to" semantics, only "moved from X to Y" (0038's own doctrine: what a
+ * category has assigned is nothing but the sum of its moves). Current $500,
+ * typed $700 -> one RTA->category move of $200; typed $300 -> one
+ * category->RTA move of $200; typed $500 -> no move at all, because writing
+ * a zero-amount row would violate 0038's own `amount_cents > 0` check AND
+ * clutter Recent Moves with a no-op every time someone clicks in and out of
+ * a cell without changing it.
+ *
+ * `amountCents` is built from `Math.abs(diff)` and only ever returned on a
+ * branch where `diff !== 0`, so it is strictly positive by construction —
+ * not merely by the caller happening to pass sane numbers. This matters
+ * because 0038's check constraint is the LAST line of defense against a
+ * zero or negative insert, not the first; this function is the first.
+ *
+ * `typedCents` MAY be negative — the plan's original draft refused it
+ * outright, but the final phase-two review (2026-08-24) amended that:
+ * moving carried money out of a category legitimately drives that month's
+ * Assigned negative (a category's balance carries in, and the carried
+ * amount then moves elsewhere, leaving THIS month's own Assigned below
+ * zero), the cell has to display that figure, and re-entering it — even
+ * unchanged, on a plain Enter — must be a normal, legal diff rather than a
+ * refusal that makes Enter itself error out. Nothing in the arithmetic
+ * below cares about the SIGN of either input, only the sign of their
+ * difference, so legalizing this needed no new branch, only the removal of
+ * the one that used to reject it. See docs/BACKLOG.md's phase-two entry for
+ * the amendment note. `currentAssignedCents` was already unrestricted in
+ * sign (see the "pathological state" test in
+ * scripts/test/budgetMoves.test.ts) — `typedCents` now matches it.
+ */
+export function assignmentDiff(
+  categoryId: string,
+  currentAssignedCents: number,
+  typedCents: number,
+): MoveWrite {
+  // Same Number.isInteger discipline as lib/ledgerRules.ts's validateTxnShape,
+  // for the same reason: NaN sails past an integer check (Number.isInteger(NaN)
+  // is false, same as any non-integer) and a fractional cent would reach the
+  // DB as a type error instead of a refusal. The SIGN of either integer is no
+  // longer restricted here — see this function's own doc comment above.
+  if (!Number.isInteger(currentAssignedCents) || !Number.isInteger(typedCents)) return null
+
+  const diff = typedCents - currentAssignedCents
+  if (diff === 0) return null
+
+  return diff > 0
+    ? { fromCategoryId: null, toCategoryId: categoryId, amountCents: diff }
+    : { fromCategoryId: categoryId, toCategoryId: null, amountCents: -diff }
+}
+
+const MONTH_SHAPE = /^\d{4}-(0[1-9]|1[0-2])$/
+
+/**
+ * A write to an out-of-range month is a bug (a stale query param on a
+ * hand-built request) or a stale tab left open across a day boundary — not
+ * a navigation intent — so this REFUSES rather than clamping, the opposite
+ * of app/money/budget/page.tsx's own clamp on `?m=`. That clamp exists so
+ * browsing to a silly month is harmless; this exists so WRITING to one is
+ * impossible. Conflating the two would let a stale tab from last month
+ * silently redirect a write onto whatever month the clamp lands on instead
+ * of failing loudly.
+ *
+ * Reuses `addMonths` (./dates.ts) rather than re-deriving the ceiling
+ * month's arithmetic here — one place owns month math, same as lib/budget.ts
+ * does for FIRST_BUDGET_MONTH/MAX_MONTHS_AHEAD's own range.
+ *
+ * The shape check is strict past the regex: `MONTH_SHAPE` alone already
+ * rejects `2026-13` and `2026-00` (the `(0[1-9]|1[0-2])` alternation), but
+ * is spelled out as its own guard so a future edit to the regex can't
+ * quietly widen what counts as a month without a test catching it (see the
+ * '00'/'13' cases in scripts/test/budgetMoves.test.ts).
+ */
+export function validBudgetMonth(
+  month: string,
+  todayYm: string,
+  firstMonth: string,
+  maxAhead: number,
+): string | null {
+  if (!MONTH_SHAPE.test(month)) return null
+
+  const ceiling = addMonths(todayYm, maxAhead)
+  if (month < firstMonth || month > ceiling) return null
+
+  return `${month}-01`
+}
+
+export type RedoCheck = {
+  newestActive: { created_at: string; id: string } | null
+  newestUndone: { created_at: string; id: string } | null
+}
+
+/** True when `a` sorts after `b` under the register's own tie-break order:
+ *  `created_at` first, `id` second (mirrors `lbm_owner_created_idx`'s
+ *  `created_at desc, id desc`, migration 0038) — string comparison on both,
+ *  same as a Postgres ORDER BY on those two columns. Exported so the page's
+ *  recency sort and this module's redo decision can never drift apart. */
+export function isNewer(
+  a: { created_at: string; id: string },
+  b: { created_at: string; id: string },
+): boolean {
+  return a.created_at !== b.created_at ? a.created_at > b.created_at : a.id > b.id
+}
+
+/**
+ * True when `a` sorts after `b` as a REDO CANDIDATE: `undone_at` first, then
+ * the same `(created_at, id)` tie-break `isNewer` uses. This is a different
+ * question from `isNewer` above — `isNewer` answers "which of these two
+ * moves happened first," `isNewerUndone` answers "which of these two undone
+ * moves was undone most recently" — and the final phase-two review
+ * (2026-08-24) caught that the app was using `isNewer`'s own `created_at`
+ * for BOTH.
+ *
+ * The backfill imports every row inside one transaction, so every imported
+ * move shares one `created_at`; ordering the redo candidate by
+ * `created_at desc, id desc` alone (`isNewer`'s own order) then falls to
+ * comparing random UUIDs the instant undo walks past the hand-entered
+ * moves into the backfill — picking an ARBITRARY backfill row, not the one
+ * that was actually undone most recently. Redo is supposed to be undo's own
+ * inverse; an arbitrary pick is not that, inside the backfill.
+ *
+ * Ordering by `undone_at` first fixes this without changing `redoTarget`
+ * itself: `redoTarget` still compares the winning candidate's
+ * `(created_at, id)` tuple against the newest active move exactly as
+ * before (the 'superseded' rule is about the register's real chronological
+ * order, not about undo order) — only WHICH undone row gets offered to it
+ * as `newestUndone` changes. This matters for hand moves too, not just the
+ * backfill: undo newest-move C then next-newest B, and `created_at desc`
+ * offered C for redo — restoring C while B stayed undone, after which the
+ * 'superseded' rule stranded B permanently. `undone_at desc` offers B, the
+ * one just undone, making Redo a true inverse at every undo depth.
+ *
+ * Exported (like `isNewer`) so app/money/budget/page.tsx's own redo-
+ * candidate derivation and newestUndoneMove's SQL ORDER BY
+ * (app/money/budget/actions.ts) share the exact same comparator and can
+ * never drift apart. Only ever called on rows already filtered to
+ * `undone_at IS NOT NULL`, so `undone_at` here is always a real timestamp —
+ * the parameter type says `string`, not `string | null`, to state that
+ * precondition rather than re-checking it.
+ */
+export function isNewerUndone(
+  a: { undone_at: string; created_at: string; id: string },
+  b: { undone_at: string; created_at: string; id: string },
+): boolean {
+  return a.undone_at !== b.undone_at ? a.undone_at > b.undone_at : isNewer(a, b)
+}
+
+/**
+ * The undo/redo model settled in the phase-two plan's Global Constraints:
+ * the stack is the owner's moves ordered by `(created_at, id)`. Redo clears
+ * `undone_at` on the newest undone move — but only when no non-undone move
+ * is newer than it. `'superseded'` is the standard editor rule (undo, then
+ * make a fresh edit, and redo of the old branch is gone) applied to a
+ * durable ledger instead of an in-memory stack: once ANY active move exists
+ * that's newer than the undone one being offered for redo, resurrecting the
+ * undone move would resurrect a state that predates something the caller
+ * has already built on top of.
+ *
+ * `newestUndone === null` means there is nothing to redo regardless of what
+ * else is active — checked first so it short-circuits before the tuple
+ * comparison ever needs a non-null `newestUndone` to compare against.
+ * `newestActive === null` means nothing has happened since the undo at
+ * all, so redo is unconditionally clean.
+ */
+export function redoTarget(check: RedoCheck): 'ok' | 'nothing' | 'superseded' {
+  const { newestActive, newestUndone } = check
+  if (!newestUndone) return 'nothing'
+  if (!newestActive) return 'ok'
+  return isNewer(newestActive, newestUndone) ? 'superseded' : 'ok'
+}

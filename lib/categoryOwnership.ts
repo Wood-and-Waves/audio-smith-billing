@@ -15,8 +15,27 @@
 //
 // No '@/' imports and no JSX — exercised by node --test, same as
 // lib/ledgerRules.ts.
+//
+// Grown for budget-phase-two's write paths (assignToCategory,
+// moveBetweenCategories): a category id walked for those actions also needs
+// to refuse an 'income'-role or `hidden` category — neither is a legal
+// assignment target or source (the design's own rule; income rows are
+// inflows to Ready to Assign, never budget rows, and a hidden category is
+// off the budget screen entirely). Rather than a second decision function,
+// `data` grew two optional fields so THIS function stays the one place that
+// decision lives. setCategoryTarget/clearCategoryTarget's own call sites
+// never select `budget_role`/`hidden` in the first place, so those two
+// fields arrive `undefined` there and both new checks below are no-ops —
+// their behavior is unchanged, byte for byte, by this growth.
 
 export type OwnershipCheck = { ok: true } | { ok: false; error: string }
+
+export type CategoryOwnershipRow = {
+  owner_id: string
+  /** Present only when the caller walked it — see the header comment above. */
+  budget_role?: string
+  hidden?: boolean
+}
 
 /**
  * `error` is checked and returned on BEFORE any presence test on `data` —
@@ -27,15 +46,26 @@ export type OwnershipCheck = { ok: true } | { ok: false; error: string }
  * that would otherwise pass (a matching owner_id) must still be refused
  * when `error` is set — the whole point of this ordering is that it never
  * falls through to success on a failed read.
+ *
+ * Ownership is decided before role/visibility: a category belonging to
+ * someone else is refused with the ownership message even when it also
+ * happens to be income or hidden — the caller should never learn anything
+ * about a category it doesn't own beyond "not yours."
  */
 export function decideCategoryOwnership(
-  data: { owner_id: string } | null,
+  data: CategoryOwnershipRow | null,
   error: { message: string } | null,
   ownerId: string,
 ): OwnershipCheck | null {
   if (error) return { ok: false, error: error.message }
   if (!data || data.owner_id !== ownerId) {
     return { ok: false, error: 'That category does not belong to you.' }
+  }
+  if (data.budget_role === 'income') {
+    return { ok: false, error: 'Income categories are not part of the budget.' }
+  }
+  if (data.hidden) {
+    return { ok: false, error: 'Hidden categories cannot be assigned money.' }
   }
   return null
 }

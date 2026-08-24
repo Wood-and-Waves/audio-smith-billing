@@ -103,19 +103,50 @@ arithmetic lives in `lib/budget.ts` and reproduces all 1,421 rows of his export
 with zero mismatches, and `scripts/import/ynab-plan.mjs` backfilled Jan-Aug.
 See CLAUDE.md for the two formulas and the rules that must not be re-derived.
 
-**Phase two — assigning and moving money.** Deliberately split out so the
-numbers could be proved before any path existed that changes one:
+**Phase two — SHIPPED 2026-08-24** (assigning and moving money; Dan's gate after his own dev walkthrough). All four write paths per the plan:
 - Typing a figure into the Assigned box (writes the difference as a move).
-- Moving money between categories to cover an overspent one — one row, not two
-  edits. The tables and the arithmetic already support it.
-- Undo/Redo via `ledger_budget_moves.undone_at`, which the schema already has
-  and `lib/budget.ts` already honours.
-- Recent Moves — the move table read back.
+  Can now go negative — see the amendment note below.
+- Moving money between categories to cover an overspent one.
+- Undo/Redo via `ledger_budget_moves.undone_at`, which marks moves without deleting.
+- Recent Moves — read-only list of the newest ~15 moves, undone ones struck through.
+
+**Review-driven amendment (final review, 2026-08-24):** the plan's own Task 1
+line said `assignmentDiff` should "reject (`null`) negative typed values."
+The review found that this made a real, legal state unreachable: money
+carried out of a category legitimately drives that month's Assigned below
+zero, the Assigned cell has to display that negative figure, and the old
+refusal meant re-entering it — even unchanged, on a plain Enter — errored.
+Negative `typedCents` is now legal end to end (`assignmentDiff`,
+`assignToCategory`, `AssignedCell.commit()`); the diff arithmetic needed no
+new branch, since it never cared about either input's sign, only the sign of
+their difference. See `lib/budgetMoves.ts`'s own `assignmentDiff` doc comment
+for the full reasoning.
+
+Deliberately left out of phase two (ready for future work):
+- **Auto-assign.** Dan uses it in YNAB but did not pick it for phase one.
+  `underfundedCents` is already computed per month and the button path is
+  ready, so the number the button needs exists — only the write path is
+  missing.
+- **Per-entry undo in Recent Moves** — stack-head only (whole undo model), not per-entry affordances.
+- **Undo/redo TOCTOU (final review, 2026-08-24: accepted, with comment).**
+  `undoLastMove`/`redoLastMove` (`app/money/budget/actions.ts`) each read a
+  precondition (newest-active for undo; newest-active + newest-undone/
+  `redoTarget` for redo) that is never re-asserted in the UPDATE's own WHERE.
+  Two genuinely concurrent requests can undo the second-newest move instead
+  of the newest, or resurrect a move that's actually superseded by then.
+  Accepted rather than hardened: it cannot corrupt anything (only
+  `undone_at` ever flips, every 0038 constraint still holds, `buildBudget`
+  re-derives the whole budget truthfully either way) and is recoverable —
+  the wrong flip is visible in Recent Moves and correctable with one more
+  Undo/Redo. Dan is the only writer today, so the gap has no real caller.
+  The hardening path, if a second writer is ever added, is a check-and-update
+  RPC on the `allocate_invoice_number` model (migration 0002) — one atomic
+  `UPDATE ... WHERE id = (SELECT ... ORDER BY ... LIMIT 1) RETURNING ...`
+  that makes Postgres serialise the read-then-write instead of doing it in
+  two round-trips from application code. See both functions' own doc
+  comments in `app/money/budget/actions.ts` for the full writeup.
 
 **Also deferred, with reasons:**
-- **Auto-assign.** Dan uses it in YNAB but did not pick it for phase one.
-  `underfundedCents` is already computed per month, so the number the button
-  needs exists; only the write path is missing.
 - **Target history.** YNAB does not export targets and this stores only their
   current state, so a past month is judged against today's target. Assigned,
   Activity and Available stay exact — only the status wording on closed months
@@ -165,6 +196,13 @@ books agree to the penny — every one was confirmed against the underlying rows
    to **Retained Earnings**, which is where YNAB books them.
 
 **And his 17 targets need entering by hand** — YNAB has no target export.
+
+**Move flow redesign (Dan, 2026-08-24, shipped-as-is knowingly):** the move
+dialog's Select clips against its scroll container, and the flow should be
+YNAB's directional anchored popover — green pill offers destinations, red
+pill offers only sources with money, amount implied for covering. Spec'd as
+Wave B Task 3b (docs/superpowers/plans/2026-08-24-wave-b-register-editing.md),
+built on Task 3's CategoryPicker.
 
 **Importer collapse vs the restored Owner Transactions categories (delta
 review, 2026-08-23).** `lib/ynabRegister.ts` maps *every* YNAB row whose group

@@ -1,6 +1,7 @@
 import { formatUSD } from '@/lib/money'
 import BudgetRow from '@/components/BudgetRow'
 import type { MonthBudget, BudgetCategory, CategoryMonth, CategoryTarget } from '@/lib/budget'
+import type { AssignableCategory } from '@/app/money/budget/page'
 
 type Entry = { row: CategoryMonth; name: string; sort: number; target: CategoryTarget | null }
 // `key` is a React key, distinct from `name` (which is display text and
@@ -106,12 +107,17 @@ const GRID = 'hidden sm:grid grid-cols-[1fr_7rem_7rem_8rem] gap-x-4 items-center
  * the "nothing matches" message below stands in for the grid.
  */
 export default function BudgetTable({
-  month, categories, targets, filter,
+  month, categories, targets, filter, assignableCategories,
 }: {
   month: MonthBudget
   categories: BudgetCategory[]
   targets: CategoryTarget[]
   filter: BudgetFilter
+  /** The page's own move-money option list — passed straight through to
+   *  every BudgetRow untouched; see AssignableCategory's own doc comment
+   *  (app/money/budget/page.tsx) for why the page builds it once instead of
+   *  this table (or BudgetRow, or MoveMoneyDialog) re-deriving it. */
+  assignableCategories: AssignableCategory[]
 }) {
   const catById = new Map(categories.map((c) => [c.id, c]))
   const targetByCategoryId = new Map(targets.map((t) => [t.categoryId, t]))
@@ -241,7 +247,14 @@ export default function BudgetTable({
             </div>
             <div className="divide-y divide-line">
               {visible.map((e) => (
-                <BudgetRow key={e.row.categoryId} row={e.row} name={e.name} target={e.target} />
+                <BudgetRow
+                  key={e.row.categoryId}
+                  row={e.row}
+                  name={e.name}
+                  target={e.target}
+                  month={month.month}
+                  assignableCategories={assignableCategories}
+                />
               ))}
             </div>
           </section>

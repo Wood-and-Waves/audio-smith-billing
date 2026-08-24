@@ -116,6 +116,12 @@ export default function Select({
         break
       case 'Escape':
         e.preventDefault()
+        // Stops the key event here — otherwise it bubbles to an enclosing
+        // dialog's own Escape handler (MoveMoneyDialog's own dialog,
+        // SnapReceipt's) and closes THAT too, when the user only meant to
+        // close this listbox. App-wide fix (final review, 2026-08-24):
+        // every Select instance shares this one file.
+        e.stopPropagation()
         setOpen(false)
         break
       case 'Tab':
