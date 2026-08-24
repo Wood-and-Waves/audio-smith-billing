@@ -126,7 +126,7 @@ export default function BudgetHistory({
           (final review, 2026-08-24): the second belt alongside the head
           move's own description above — Recent Moves is right there to
           check an Undo/Redo against, not one more click away. */}
-      <details className="group" open>
+      <details className="group">
         <summary
           className="eyebrow cursor-pointer select-none list-none flex items-center gap-1
                      px-1 py-1.5 text-muted hover:text-ink transition-colors"
