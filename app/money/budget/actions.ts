@@ -254,12 +254,14 @@ async function currentAssignedCents(
  * orders the steps around it — validate → walk → read → decide → write, in
  * that order, so nothing after a failed step ever runs.
  *
- * `typedCents < 0` is refused here with its own message rather than being
- * silently absorbed into assignmentDiff's own null-for-negative branch —
- * that branch exists so the pure function is total for every integer
- * (including ones a well-behaved caller should never send), but a caller
- * that DOES send one deserves an explicit refusal, not a report that reads
- * indistinguishably from "you typed back the number already there."
+ * `typedCents` MAY be negative — the final phase-two review (2026-08-24)
+ * amended the plan's original "reject negatives" line: money carried out of
+ * a category legitimately drives that month's Assigned negative, the cell
+ * displays that figure, and re-entering it (even unchanged, on a plain
+ * Enter) has to be a normal write rather than an error. Only the integer
+ * shape is checked here — the sign is assignmentDiff's own business now
+ * (lib/budgetMoves.ts's own doc comment there has the full reasoning; see
+ * also docs/BACKLOG.md's phase-two entry for the amendment note).
  *
  * A no-op write (typedCents equals what is already assigned) is success,
  * not an error — `{ ok: true, wrote: false }` — nothing about the request
@@ -274,8 +276,8 @@ export async function assignToCategory(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: 'Not signed in.' }
 
-  if (!Number.isSafeInteger(typedCents) || typedCents < 0) {
-    return { ok: false, error: 'Enter an amount of zero or more.' }
+  if (!Number.isSafeInteger(typedCents)) {
+    return { ok: false, error: 'Enter a valid amount.' }
   }
 
   const validMonth = validBudgetMonth(

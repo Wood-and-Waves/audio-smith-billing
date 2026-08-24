@@ -34,12 +34,20 @@ export type MoveWrite =
  * because 0038's check constraint is the LAST line of defense against a
  * zero or negative insert, not the first; this function is the first.
  *
- * `typedCents < 0` is refused outright (null, same as "no write") rather
- * than clamped to zero or given a negative-amount move — the UI parses the
- * typed value with parseUSD first and would not normally produce a negative
- * number, but this function is the total decision underneath that UI, so it
- * must have a defined answer for every integer, including ones a well-
- * behaved caller should never send.
+ * `typedCents` MAY be negative — the plan's original draft refused it
+ * outright, but the final phase-two review (2026-08-24) amended that:
+ * moving carried money out of a category legitimately drives that month's
+ * Assigned negative (a category's balance carries in, and the carried
+ * amount then moves elsewhere, leaving THIS month's own Assigned below
+ * zero), the cell has to display that figure, and re-entering it — even
+ * unchanged, on a plain Enter — must be a normal, legal diff rather than a
+ * refusal that makes Enter itself error out. Nothing in the arithmetic
+ * below cares about the SIGN of either input, only the sign of their
+ * difference, so legalizing this needed no new branch, only the removal of
+ * the one that used to reject it. See docs/BACKLOG.md's phase-two entry for
+ * the amendment note. `currentAssignedCents` was already unrestricted in
+ * sign (see the "pathological state" test in
+ * scripts/test/budgetMoves.test.ts) — `typedCents` now matches it.
  */
 export function assignmentDiff(
   categoryId: string,
@@ -47,10 +55,11 @@ export function assignmentDiff(
   typedCents: number,
 ): MoveWrite {
   // Same Number.isInteger discipline as lib/ledgerRules.ts's validateTxnShape,
-  // for the same reason: NaN sails past a `< 0` check (NaN < 0 is false) and a
-  // fractional cent would reach the DB as a type error instead of a refusal.
+  // for the same reason: NaN sails past an integer check (Number.isInteger(NaN)
+  // is false, same as any non-integer) and a fractional cent would reach the
+  // DB as a type error instead of a refusal. The SIGN of either integer is no
+  // longer restricted here — see this function's own doc comment above.
   if (!Number.isInteger(currentAssignedCents) || !Number.isInteger(typedCents)) return null
-  if (typedCents < 0) return null
 
   const diff = typedCents - currentAssignedCents
   if (diff === 0) return null

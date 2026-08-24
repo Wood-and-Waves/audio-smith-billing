@@ -107,8 +107,16 @@ export default function AssignedCell({
 
   function commit() {
     const cents = parseUSD(value)
-    if (cents === null || cents < 0) {
-      setError('Enter an amount of zero or more.')
+    // No sign check — a negative Assigned figure is legal (money carried
+    // out of a category legitimately drives that month's Assigned below
+    // zero; see assignmentDiff's own doc comment, lib/budgetMoves.ts, and
+    // docs/BACKLOG.md's phase-two entry for the amendment note). Before the
+    // final review (2026-08-24) this refused `cents < 0`, which meant
+    // opening the editor on an already-negative Assigned figure and
+    // pressing Enter without changing anything — a genuine no-op —
+    // errored.
+    if (cents === null) {
+      setError('Enter a valid amount.')
       return
     }
     start(async () => {

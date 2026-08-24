@@ -48,16 +48,33 @@ test('typing zero against a funded category moves everything back to Ready to As
   )
 })
 
-test('a negative typed value is refused, not corrected to zero', () => {
-  // The UI runs parseUSD first and would normally never hand this function
-  // a negative number, but the decision itself must be total: garbage in
-  // must produce a defined refusal, not silently write an inverted move or
-  // throw. The caller shows the parse error; this function just says no.
-  assert.equal(assignmentDiff('cat-1', 50_000, -1), null)
+test('a negative typed value moves the difference out of the category, same as any other decrease', () => {
+  // The final phase-two review (2026-08-24) amended the plan's original
+  // "reject negatives" line: moving carried money out of a category
+  // legitimately drives that month's Assigned negative, and re-entering
+  // that figure (or editing it further) has to be a legal diff — see this
+  // function's own doc comment, and docs/BACKLOG.md's phase-two entry, for
+  // the amendment note. current $500, typed -$1 -> diff is -$501 ->
+  // category->RTA move of $501, leaving the category at -$1 assigned.
+  assert.deepEqual(
+    assignmentDiff('cat-1', 50_000, -100),
+    { fromCategoryId: 'cat-1', toCategoryId: null, amountCents: 50_100 },
+  )
 })
 
-test('a negative typed value against a zero current is still refused', () => {
-  assert.equal(assignmentDiff('cat-1', 0, -100), null)
+test('a negative typed value against a zero current still resolves a legal diff', () => {
+  assert.deepEqual(
+    assignmentDiff('cat-1', 0, -100),
+    { fromCategoryId: 'cat-1', toCategoryId: null, amountCents: 100 },
+  )
+})
+
+test('typing back an unchanged negative figure writes nothing — Enter on it must not error', () => {
+  // The concrete bug the review caught: open the editor on a category whose
+  // Assigned already reads negative (money carried out of it), touch
+  // nothing, press Enter. Before this fix that round-tripped through the
+  // old `typedCents < 0` refusal and errored on a genuine no-op.
+  assert.equal(assignmentDiff('cat-1', -5_000, -5_000), null)
 })
 
 test('amountCents is strictly positive by construction, in both directions', () => {

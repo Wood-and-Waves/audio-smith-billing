@@ -105,19 +105,48 @@ See CLAUDE.md for the two formulas and the rules that must not be re-derived.
 
 **Phase two — BUILT 2026-08-24, awaiting Dan's ship gate** (assigning and moving money; branch `budget-phase-two`, unmerged). All four write paths per the plan:
 - Typing a figure into the Assigned box (writes the difference as a move).
+  Can now go negative — see the amendment note below.
 - Moving money between categories to cover an overspent one.
 - Undo/Redo via `ledger_budget_moves.undone_at`, which marks moves without deleting.
 - Recent Moves — read-only list of the newest ~15 moves, undone ones struck through.
 
+**Review-driven amendment (final review, 2026-08-24):** the plan's own Task 1
+line said `assignmentDiff` should "reject (`null`) negative typed values."
+The review found that this made a real, legal state unreachable: money
+carried out of a category legitimately drives that month's Assigned below
+zero, the Assigned cell has to display that negative figure, and the old
+refusal meant re-entering it — even unchanged, on a plain Enter — errored.
+Negative `typedCents` is now legal end to end (`assignmentDiff`,
+`assignToCategory`, `AssignedCell.commit()`); the diff arithmetic needed no
+new branch, since it never cared about either input's sign, only the sign of
+their difference. See `lib/budgetMoves.ts`'s own `assignmentDiff` doc comment
+for the full reasoning.
+
 Deliberately left out of phase two (ready for future work):
-- **Auto-assign** — `underfundedCents` computed per month, button path ready, deferred for next pass.
+- **Auto-assign.** Dan uses it in YNAB but did not pick it for phase one.
+  `underfundedCents` is already computed per month and the button path is
+  ready, so the number the button needs exists — only the write path is
+  missing.
 - **Per-entry undo in Recent Moves** — stack-head only (whole undo model), not per-entry affordances.
-- **Redo TOCTOU** — the finalized decision (accept stale-write corruption or hardened) pending the full review.
+- **Undo/redo TOCTOU (final review, 2026-08-24: accepted, with comment).**
+  `undoLastMove`/`redoLastMove` (`app/money/budget/actions.ts`) each read a
+  precondition (newest-active for undo; newest-active + newest-undone/
+  `redoTarget` for redo) that is never re-asserted in the UPDATE's own WHERE.
+  Two genuinely concurrent requests can undo the second-newest move instead
+  of the newest, or resurrect a move that's actually superseded by then.
+  Accepted rather than hardened: it cannot corrupt anything (only
+  `undone_at` ever flips, every 0038 constraint still holds, `buildBudget`
+  re-derives the whole budget truthfully either way) and is recoverable —
+  the wrong flip is visible in Recent Moves and correctable with one more
+  Undo/Redo. Dan is the only writer today, so the gap has no real caller.
+  The hardening path, if a second writer is ever added, is a check-and-update
+  RPC on the `allocate_invoice_number` model (migration 0002) — one atomic
+  `UPDATE ... WHERE id = (SELECT ... ORDER BY ... LIMIT 1) RETURNING ...`
+  that makes Postgres serialise the read-then-write instead of doing it in
+  two round-trips from application code. See both functions' own doc
+  comments in `app/money/budget/actions.ts` for the full writeup.
 
 **Also deferred, with reasons:**
-- **Auto-assign.** Dan uses it in YNAB but did not pick it for phase one.
-  `underfundedCents` is already computed per month, so the number the button
-  needs exists; only the write path is missing.
 - **Target history.** YNAB does not export targets and this stores only their
   current state, so a past month is judged against today's target. Assigned,
   Activity and Available stay exact — only the status wording on closed months
