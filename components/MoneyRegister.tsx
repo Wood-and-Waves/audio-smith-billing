@@ -416,7 +416,15 @@ export default function MoneyRegister({
   // yet" and "account just created" renders.
   const [date, setDate] = useState(todayInChicago())
   const [payee, setPayee] = useState('')
-  const [amount, setAmount] = useState('')
+  // Outflow/Inflow: the register's own two boxes, not one field plus an
+  // implied sign — YNAB's own idiom (Dan's top edit-row complaint: "Everything
+  // is out of order from the headers"). Exactly one holds a value at a time;
+  // onOutflowChange/onInflowChange below enforce that and derive `kind` from
+  // direction where it's unambiguous. `kind` itself is still the authority
+  // that reaches the server (see add(), below) — these two fields only decide
+  // where the magnitude comes from and which sign it gets.
+  const [outflowAmount, setOutflowAmount] = useState('')
+  const [inflowAmount, setInflowAmount] = useState('')
   const [kind, setKind] = useState<LedgerKind>('expense')
   const [categoryId, setCategoryId] = useState('')
   const [showId, setShowId] = useState('')
@@ -430,7 +438,10 @@ export default function MoneyRegister({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editDate, setEditDate] = useState('')
   const [editPayee, setEditPayee] = useState('')
-  const [editAmount, setEditAmount] = useState('')
+  // Same Outflow/Inflow pair as the add row's own state above, seeded by
+  // startEdit from the row's sign (see its own comment).
+  const [editOutflowAmount, setEditOutflowAmount] = useState('')
+  const [editInflowAmount, setEditInflowAmount] = useState('')
   const [editKind, setEditKind] = useState<LedgerKind>('expense')
   const [editCategoryId, setEditCategoryId] = useState('')
   const [editShowId, setEditShowId] = useState('')
@@ -661,18 +672,45 @@ export default function MoneyRegister({
   // picker just starts blank in that case, same as any other kind.
   const ownerPayCategoryId = categories.find((c) => c.name === OWNER_PAY_CATEGORY_NAME)?.id
 
+  /** Typing into Outflow always wins that box and always clears Inflow — YNAB's
+   *  own exclusivity rule, so "exactly one non-empty at save" holds by
+   *  construction rather than being re-checked field by field. Direction only
+   *  drives `kind` where it's unambiguous: a value here flips income away
+   *  (to expense) since income can't post as an outflow, but it never touches
+   *  expense/owner_pay — that distinction is Dan's, via the Kind dropdown, and
+   *  this must never silently overwrite it. */
+  function onOutflowChange(v: string) {
+    setOutflowAmount(v)
+    setInflowAmount('')
+    if (v.trim() !== '' && kind === 'income') setKind('expense')
+  }
+
+  /** Mirror of onOutflowChange: a value in Inflow always means income — there
+   *  is no expense/owner_pay flavor of money coming in — so this sets kind
+   *  unconditionally rather than only out of one starting kind. */
+  function onInflowChange(v: string) {
+    setInflowAmount(v)
+    setOutflowAmount('')
+    if (v.trim() !== '') setKind('income')
+  }
+
   function add() {
     setError(null)
     if (!payee.trim()) { setError('Say who this was to or from.'); return }
-    const typed = parseUSDMath(amount)
+    const outflowTyped = outflowAmount.trim() !== ''
+    const inflowTyped = inflowAmount.trim() !== ''
+    if (outflowTyped === inflowTyped) { setError('Enter an amount in Outflow or Inflow.'); return }
+    const typed = parseUSDMath(outflowTyped ? outflowAmount : inflowAmount)
     if (typed === null || typed <= 0) { setError('Enter an amount.'); return }
     if (!date) { setError('Pick a date.'); return }
 
-    // The user always types a positive number; the sign it posts to the
-    // ledger comes from the kind they picked, mirroring the same signed-cents
-    // rule addLedgerTransaction itself enforces (lt_income_positive /
-    // lt_outflow_negative, migration 0027) rather than trusting a minus sign
-    // Dan might or might not have typed.
+    // The user always types a positive number, in whichever box; the sign it
+    // posts to the ledger still comes from kind (unchanged from before this
+    // box split — see onOutflowChange/onInflowChange for how kind gets
+    // there), mirroring the same signed-cents rule addLedgerTransaction
+    // itself enforces (lt_income_positive / lt_outflow_negative, migration
+    // 0027) rather than trusting a minus sign Dan might or might not have
+    // typed.
     const amountCents = kind === 'income' ? typed : -typed
 
     start(async () => {
@@ -691,7 +729,8 @@ export default function MoneyRegister({
       // the same day, the same kind of money, and often the same category.
       // Payee, amount and memo are specific to the one just added.
       setPayee('')
-      setAmount('')
+      setOutflowAmount('')
+      setInflowAmount('')
       setMemo('')
       setShowId('')
       router.refresh()
@@ -781,7 +820,17 @@ export default function MoneyRegister({
     setEditingId(row.id)
     setEditDate(row.date)
     setEditPayee(row.payee)
-    setEditAmount(formatAmount(Math.abs(row.amount_cents)))
+    // Seed the box matching the row's own sign (income positive, expense/
+    // owner_pay negative — 0027's own constraint), never both — mirrors
+    // add()'s exclusivity rather than leaving the other box's stale value
+    // from a previous edit sitting there.
+    if (row.amount_cents > 0) {
+      setEditInflowAmount(formatAmount(row.amount_cents))
+      setEditOutflowAmount('')
+    } else {
+      setEditOutflowAmount(formatAmount(Math.abs(row.amount_cents)))
+      setEditInflowAmount('')
+    }
     // 'transfer' never actually reaches here yet — nothing in this UI writes
     // one (see KIND_LABEL's own comment) — but the edit Select only offers
     // the three kinds the add row does, so a row of that kind still needs a
@@ -798,15 +847,36 @@ export default function MoneyRegister({
     setEditingId(null)
   }
 
+  // Same pair as onOutflowChange/onInflowChange above, for the edit form's
+  // own state — kept as separate functions (not parameterized over which
+  // form) so each stays a plain closure over its own setters, matching every
+  // other add/edit pair in this file (startEdit vs add, cancelEdit vs the add
+  // row's own reset).
+  function onEditOutflowChange(v: string) {
+    setEditOutflowAmount(v)
+    setEditInflowAmount('')
+    if (v.trim() !== '' && editKind === 'income') setEditKind('expense')
+  }
+
+  function onEditInflowChange(v: string) {
+    setEditInflowAmount(v)
+    setEditOutflowAmount('')
+    if (v.trim() !== '') setEditKind('income')
+  }
+
   function saveEdit(row: LedgerTxnRow) {
     setError(null)
     if (!editPayee.trim()) { setError('Say who this was to or from.'); return }
-    const typed = parseUSDMath(editAmount)
+    const outflowTyped = editOutflowAmount.trim() !== ''
+    const inflowTyped = editInflowAmount.trim() !== ''
+    if (outflowTyped === inflowTyped) { setError('Enter an amount in Outflow or Inflow.'); return }
+    const typed = parseUSDMath(outflowTyped ? editOutflowAmount : editInflowAmount)
     if (typed === null || typed <= 0) { setError('Enter an amount.'); return }
     if (!editDate) { setError('Pick a date.'); return }
 
     // Same re-derivation rule as the add row: the field always holds a
-    // positive number; the sign that reaches the ledger comes from kind.
+    // positive number, in whichever box; the sign that reaches the ledger
+    // still comes from kind.
     const amountCents = editKind === 'income' ? typed : -typed
 
     start(async () => {
@@ -1046,17 +1116,30 @@ export default function MoneyRegister({
   }
 
   /**
-   * The edit-mode grid — identical markup for both layouts (it already
-   * stacks 2-col under sm, same as the add row above it), so this is the
-   * ONE place either layout's row switches to when `editingId` matches. The
-   * per-row × that used to sit on the display row lives here now as a plain
-   * "Delete" link, alongside the same "Adjust corners"/"Remove receipt"
-   * links the two display rows below also render (quietly, in the memo
-   * cell / chips line) for a row that HAS a receipt but ISN'T editable —
-   * Delete stays edit-mode-only, but the receipt links are never gated to
-   * it, matching removeLedgerReceipt's own doc comment.
+   * The edit-mode grid — now the SAME nine-column template the display rows
+   * render on (`gridTemplate`, live and resizable), so an editing row's
+   * fields land under their own headers instead of a private, differently-
+   * ordered template (Dan's top complaint: "Everything is out of order from
+   * the headers"). Because that template only makes sense at sm+ (below sm
+   * the register drops it entirely for the phone's 2-col stack — see
+   * `registerTemplate`'s own callers), and because a `style` attribute always
+   * wins over a class regardless of viewport, this can't be one shared block
+   * with responsive classes the way the old flat grid was: `desktop` picks
+   * between two literal layouts instead, one per call site below
+   * (renderDesktopRow's copy lives inside "hidden sm:block" and always passes
+   * true; renderPhoneRow's copy lives inside "sm:hidden" and always passes
+   * false) — each copy only ever renders while its own breakpoint is the one
+   * actually visible, so there is no flash of the wrong template.
+   *
+   * The second line (Kind, Show, Save/Cancel, and the same "Adjust corners"/
+   * "Remove receipt"/"Unlink"/"Delete" links the two display rows below also
+   * render for a row that HAS a receipt but ISN'T editable) is genuinely
+   * shared — nothing in it depends on the resizable template, so one block
+   * with a `sm:pl-9` indent (past the 2.25rem receipt rail + its gap) works
+   * for both copies: the phone copy's `sm:` never fires because that copy is
+   * never visible at sm+ in the first place.
    */
-  function renderEditRow(t: LedgerTxnRow) {
+  function renderEditRow(t: LedgerTxnRow, desktop: boolean) {
     // categoryOptions is filtered to unhidden categories (app/money/page.tsx's
     // query), so a row whose category was hidden after the fact isn't in it —
     // the Select would show "—" for editCategoryId, which reads as "no
@@ -1075,128 +1158,162 @@ export default function MoneyRegister({
     const canAdjust = t.receipt_original !== null && t.receipt_path !== null && !t.receipt_original.endsWith('.pdf')
     const hasReceipt = t.receipt_path !== null || t.receipt_original !== null
 
-    return (
-      <>
-        {/* Mirrors the add row's own grid exactly (same columns, same phone
-            pairing) so editing feels like the same form, just pre-filled —
-            the only addition is the Save/Cancel pair filling the trailing
-            "auto" column instead of one "+ Add". */}
-        <div className="grid gap-2 grid-cols-2 sm:grid-cols-[9rem_8rem_1fr_7rem_9rem_9rem_1fr_auto] items-center">
-          <input aria-label="Date" type="date" className={FIELD_FULL} value={editDate} disabled={pending}
-                 onChange={(e) => setEditDate(e.target.value)} />
-          <Select
-            ariaLabel="Kind"
-            value={editKind}
-            disabled={pending}
-            onChange={(v) => {
-              const nextKind = v as LedgerKind
-              setEditKind(nextKind)
-              // C1: same default the add row gets — switching Kind to
-              // owner_pay defaults the picker to the Owner Pay category
-              // rather than leaving whatever was there from the row's
-              // previous kind. Editing INTO owner_pay from a different kind
-              // is the only path that reaches this; startEdit already seeds
-              // editCategoryId from the row's own real category_id when the
-              // row already IS owner_pay, so this never clobbers that.
-              if (nextKind === 'owner_pay' && ownerPayCategoryId) setEditCategoryId(ownerPayCategoryId)
-            }}
-            options={KIND_OPTIONS}
-          />
-          <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={editPayee}
-                 disabled={pending} onChange={(e) => setEditPayee(e.target.value)} />
-          <input aria-label="Amount" inputMode="decimal" placeholder="0.00"
-                 className={`${FIELD_FULL} tabular text-right`} value={editAmount} disabled={pending}
-                 onChange={(e) => setEditAmount(e.target.value)} />
-          {/* C1: owner_pay can carry a category now — this used to hide/
-              disable the picker for that kind and force-null it in saveEdit,
-              which quietly stripped a real, already-assigned category on
-              every edit. Transfer still cannot carry one, but nothing in
-              this edit form can select transfer (see KIND_OPTIONS) — a
-              transfer row that reaches here keeps whatever editKind
-              startEdit fell it back to (income/expense/owner_pay only). */}
-          <Select
-            ariaLabel="Category"
-            value={editCategoryId}
-            disabled={pending}
-            onChange={setEditCategoryId}
-            options={editCategoryOptions}
-          />
-          <Select
-            ariaLabel="Show"
-            value={editShowId}
-            disabled={pending}
-            onChange={setEditShowId}
-            options={showOptions}
-          />
-          <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={editMemo}
-                 disabled={pending} onChange={(e) => setEditMemo(e.target.value)} />
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => saveEdit(t)}
-              disabled={pending}
-              className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
-                         border border-line text-muted hover:text-ink disabled:opacity-40"
-            >
-              {pending ? 'Saving…' : 'Save'}
-            </button>
-            <button
-              type="button"
-              onClick={cancelEdit}
-              disabled={pending}
-              className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
-                         border border-line text-muted hover:text-ink disabled:opacity-40"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
+    const categorySelect = (
+      <Select
+        ariaLabel="Category"
+        value={editCategoryId}
+        disabled={pending}
+        onChange={setEditCategoryId}
+        options={editCategoryOptions}
+      />
+    )
 
-        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-          {/* PDFs skip detection entirely (see detectCorners), so this only
-              ever shows for a photo receipt still attached. */}
-          {canAdjust && (
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => openFixLater(t)}
-              className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
-            >
-              Adjust corners
-            </button>
-          )}
-          {hasReceipt && (
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => removeReceipt(t)}
-              className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
-            >
-              Remove receipt
-            </button>
-          )}
-          {(t.invoiceNumbers.length > 0 || t.expenseLinked) && (
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => unlinkRow(t)}
-              className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
-            >
-              Unlink
-            </button>
-          )}
-          {/* Deletion of bank data is recoverable by re-import, and this row
-              was explicitly opened for editing — a single danger link, not a
-              two-step arm/confirm, matching the plan's "keep it simple". */}
+    // The second line, shared verbatim by both copies below — see the
+    // function's own doc comment for why this one can be shared while row1
+    // can't.
+    const secondLine = (
+      <div className="mt-2 flex flex-wrap items-center gap-3 sm:pl-9">
+        <Select
+          ariaLabel="Kind"
+          className="w-32"
+          value={editKind}
+          disabled={pending}
+          onChange={(v) => {
+            const nextKind = v as LedgerKind
+            setEditKind(nextKind)
+            // C1: same default the add row gets — switching Kind to
+            // owner_pay defaults the picker to the Owner Pay category
+            // rather than leaving whatever was there from the row's
+            // previous kind. Editing INTO owner_pay from a different kind
+            // is the only path that reaches this; startEdit already seeds
+            // editCategoryId from the row's own real category_id when the
+            // row already IS owner_pay, so this never clobbers that.
+            if (nextKind === 'owner_pay' && ownerPayCategoryId) setEditCategoryId(ownerPayCategoryId)
+          }}
+          options={KIND_OPTIONS}
+        />
+        <Select
+          ariaLabel="Show"
+          className="w-36"
+          value={editShowId}
+          disabled={pending}
+          onChange={setEditShowId}
+          options={showOptions}
+        />
+        <button
+          type="button"
+          onClick={() => saveEdit(t)}
+          disabled={pending}
+          className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
+                     border border-line text-muted hover:text-ink disabled:opacity-40"
+        >
+          {pending ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          type="button"
+          onClick={cancelEdit}
+          disabled={pending}
+          className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
+                     border border-line text-muted hover:text-ink disabled:opacity-40"
+        >
+          Cancel
+        </button>
+        {/* PDFs skip detection entirely (see detectCorners), so this only
+            ever shows for a photo receipt still attached. */}
+        {canAdjust && (
           <button
             type="button"
             disabled={pending}
-            onClick={() => removeRow(t)}
-            className="text-xs text-danger hover:opacity-80 underline disabled:opacity-40"
+            onClick={() => openFixLater(t)}
+            className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
           >
-            Delete
+            Adjust corners
           </button>
+        )}
+        {hasReceipt && (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => removeReceipt(t)}
+            className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
+          >
+            Remove receipt
+          </button>
+        )}
+        {(t.invoiceNumbers.length > 0 || t.expenseLinked) && (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => unlinkRow(t)}
+            className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
+          >
+            Unlink
+          </button>
+        )}
+        {/* Deletion of bank data is recoverable by re-import, and this row
+            was explicitly opened for editing — a single danger link, not a
+            two-step arm/confirm, matching the plan's "keep it simple". */}
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => removeRow(t)}
+          className="text-xs text-danger hover:opacity-80 underline disabled:opacity-40"
+        >
+          Delete
+        </button>
+      </div>
+    )
+
+    if (desktop) {
+      return (
+        <>
+          <div className="grid items-center gap-x-3" style={{ gridTemplateColumns: gridTemplate }}>
+            <span aria-hidden />
+            <input aria-label="Date" type="date" className={FIELD_FULL} value={editDate} disabled={pending}
+                   onChange={(e) => setEditDate(e.target.value)} />
+            <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={editPayee}
+                   disabled={pending} onChange={(e) => setEditPayee(e.target.value)} />
+            {categorySelect}
+            <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={editMemo}
+                   disabled={pending} onChange={(e) => setEditMemo(e.target.value)} />
+            <input aria-label="Outflow" inputMode="decimal" placeholder="0.00"
+                   className={`${FIELD_FULL} tabular text-right`} value={editOutflowAmount} disabled={pending}
+                   onChange={(e) => onEditOutflowChange(e.target.value)} />
+            <input aria-label="Inflow" inputMode="decimal" placeholder="0.00"
+                   className={`${FIELD_FULL} tabular text-right`} value={editInflowAmount} disabled={pending}
+                   onChange={(e) => onEditInflowChange(e.target.value)} />
+            {/* The row's existing balance — static, muted; nothing about
+                editing changes it until the save round-trips. */}
+            <span className="tabular text-right text-muted">{formatUSD(t.balanceCents)}</span>
+            <span aria-hidden />
+          </div>
+          {secondLine}
+        </>
+      )
+    }
+
+    // Phone: the same 2-col stacked idiom the display row and the add row
+    // both use — no rail placeholders (phone has no rail columns) and no
+    // Balance cell (phone never shows one — see renderPhoneRow's own doc
+    // comment).
+    return (
+      <>
+        <div className="grid gap-2 grid-cols-2 items-center">
+          <input aria-label="Date" type="date" className={FIELD_FULL} value={editDate} disabled={pending}
+                 onChange={(e) => setEditDate(e.target.value)} />
+          <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={editPayee}
+                 disabled={pending} onChange={(e) => setEditPayee(e.target.value)} />
+          {categorySelect}
+          <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={editMemo}
+                 disabled={pending} onChange={(e) => setEditMemo(e.target.value)} />
+          <input aria-label="Outflow" inputMode="decimal" placeholder="0.00"
+                 className={`${FIELD_FULL} tabular text-right`} value={editOutflowAmount} disabled={pending}
+                 onChange={(e) => onEditOutflowChange(e.target.value)} />
+          <input aria-label="Inflow" inputMode="decimal" placeholder="0.00"
+                 className={`${FIELD_FULL} tabular text-right`} value={editInflowAmount} disabled={pending}
+                 onChange={(e) => onEditInflowChange(e.target.value)} />
         </div>
+        {secondLine}
       </>
     )
   }
@@ -1210,7 +1327,7 @@ export default function MoneyRegister({
     if (editingId === t.id) {
       return (
         <div key={t.id} className="border-b border-line py-4 pl-3 -ml-3 pr-3">
-          {renderEditRow(t)}
+          {renderEditRow(t, true)}
         </div>
       )
     }
@@ -1335,7 +1452,7 @@ export default function MoneyRegister({
     if (editingId === t.id) {
       return (
         <li key={t.id} className="border-b border-line py-4">
-          {renderEditRow(t)}
+          {renderEditRow(t, false)}
         </li>
       )
     }
@@ -1550,63 +1667,149 @@ export default function MoneyRegister({
 
       <h2 className="eyebrow mb-4">Transactions</h2>
 
-      {/* Phone: a 2-col grid, each pair filling one row in DOM order
-          (Date+Kind, Payee+Amount, Category+Show, Memo+Add) — same idiom as
-          ExpenseLog's add row. The sm+ template gives every field its own
-          fixed-width column instead. */}
-      <div className="grid gap-2 grid-cols-2 sm:grid-cols-[9rem_8rem_1fr_7rem_9rem_9rem_1fr_auto] items-center mb-3">
-        <input aria-label="Date" type="date" className={FIELD_FULL} value={date} disabled={pending}
-               onChange={(e) => setDate(e.target.value)} />
-        <Select
-          ariaLabel="Kind"
-          value={kind}
-          disabled={pending}
-          onChange={(v) => {
-            const nextKind = v as LedgerKind
-            setKind(nextKind)
-            // C1: default the picker to the Owner Pay category the moment
-            // Kind switches to owner_pay, rather than leaving it blank the
-            // way this used to force it null outright.
-            if (nextKind === 'owner_pay' && ownerPayCategoryId) setCategoryId(ownerPayCategoryId)
-          }}
-          options={KIND_OPTIONS}
-        />
-        <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={payee} disabled={pending}
-               onChange={(e) => setPayee(e.target.value)} />
-        <input aria-label="Amount" inputMode="decimal" placeholder="0.00"
-               className={`${FIELD_FULL} tabular text-right`} value={amount} disabled={pending}
-               onChange={(e) => setAmount(e.target.value)} />
-        {/* Every kind offered here can carry a category now (C1: owner_pay
-            got one back in 0038/0040 — this used to hide/disable the picker
-            for that kind, which is exactly the bug that let the app keep
-            nulling it out on every write). Transfer still cannot, but
-            nothing in this add form ever creates a transfer row (see
-            KIND_OPTIONS), so there is no kind left here to hide this for. */}
-        <Select
-          ariaLabel="Category"
-          value={categoryId}
-          disabled={pending}
-          onChange={setCategoryId}
-          options={categoryOptions}
-        />
-        <Select
-          ariaLabel="Show"
-          value={showId}
-          disabled={pending}
-          onChange={setShowId}
-          options={showOptions}
-        />
-        <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={memo} disabled={pending}
-               onChange={(e) => setMemo(e.target.value)} />
-        <button
-          type="button"
-          onClick={add}
-          disabled={pending}
-          className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
-                     border border-line text-muted hover:text-ink disabled:opacity-40"
-        >
-          {pending ? 'Saving…' : '+ Add'}
-        </button>
+      {/* The add row now lands on the SAME live gridTemplate the display rows
+          and headers use (see renderEditRow's own doc comment for why that
+          means two literal copies rather than one shared responsive grid: a
+          `style` attribute always wins over a class, at every viewport, so
+          the resizable template can't share a block with the phone's 2-col
+          stack). Category picker, Kind, Show and the state they all share
+          (categoryId, kind, showId, ...) live above with the rest of the add
+          row's own state. */}
+      <div className="mb-3">
+        {/* Desktop/tablet: fields under their own headers, Outflow/Inflow as
+            real boxes instead of one Amount field plus an implied sign. */}
+        <div className="hidden sm:block">
+          {/* Same pl-3 -ml-3 pr-3 inset as the header/display rows below (they
+              carry it directly on the grid itself; the edit row's desktop
+              copy gets the same inset for free from renderDesktopRow's own
+              wrapper, but nothing wraps the add row that way, so it needs its
+              own copy here for the columns to land at the identical x
+              positions). */}
+          <div className="grid items-center gap-x-3 pl-3 -ml-3 pr-3" style={{ gridTemplateColumns: gridTemplate }}>
+            <span aria-hidden />
+            <input aria-label="Date" type="date" className={FIELD_FULL} value={date} disabled={pending}
+                   onChange={(e) => setDate(e.target.value)} />
+            <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={payee} disabled={pending}
+                   onChange={(e) => setPayee(e.target.value)} />
+            {/* Every kind offered here can carry a category now (C1: owner_pay
+                got one back in 0038/0040 — this used to hide/disable the picker
+                for that kind, which is exactly the bug that let the app keep
+                nulling it out on every write). Transfer still cannot, but
+                nothing in this add form ever creates a transfer row (see
+                KIND_OPTIONS), so there is no kind left here to hide this for. */}
+            <Select
+              ariaLabel="Category"
+              value={categoryId}
+              disabled={pending}
+              onChange={setCategoryId}
+              options={categoryOptions}
+            />
+            <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={memo} disabled={pending}
+                   onChange={(e) => setMemo(e.target.value)} />
+            <input aria-label="Outflow" inputMode="decimal" placeholder="0.00"
+                   className={`${FIELD_FULL} tabular text-right`} value={outflowAmount} disabled={pending}
+                   onChange={(e) => onOutflowChange(e.target.value)} />
+            <input aria-label="Inflow" inputMode="decimal" placeholder="0.00"
+                   className={`${FIELD_FULL} tabular text-right`} value={inflowAmount} disabled={pending}
+                   onChange={(e) => onInflowChange(e.target.value)} />
+            {/* Balance: a not-yet-saved row has none — left empty rather than
+                guessing ahead of the server's own running total. */}
+            <span aria-hidden />
+            <span aria-hidden />
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-3 sm:pl-9">
+            <Select
+              ariaLabel="Kind"
+              className="w-32"
+              value={kind}
+              disabled={pending}
+              onChange={(v) => {
+                const nextKind = v as LedgerKind
+                setKind(nextKind)
+                // C1: default the picker to the Owner Pay category the moment
+                // Kind switches to owner_pay, rather than leaving it blank the
+                // way this used to force it null outright.
+                if (nextKind === 'owner_pay' && ownerPayCategoryId) setCategoryId(ownerPayCategoryId)
+              }}
+              options={KIND_OPTIONS}
+            />
+            <Select
+              ariaLabel="Show"
+              className="w-36"
+              value={showId}
+              disabled={pending}
+              onChange={setShowId}
+              options={showOptions}
+            />
+            <button
+              type="button"
+              onClick={add}
+              disabled={pending}
+              className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
+                         border border-line text-muted hover:text-ink disabled:opacity-40"
+            >
+              {pending ? 'Saving…' : '+ Add'}
+            </button>
+          </div>
+        </div>
+
+        {/* Phone: the same 2-col stacked idiom as before (Date+Payee,
+            Category+Memo, Outflow+Inflow), Kind/Show/+Add on their own line
+            beneath — same idiom the edit row's phone copy uses. */}
+        <div className="sm:hidden">
+          <div className="grid gap-2 grid-cols-2 items-center">
+            <input aria-label="Date" type="date" className={FIELD_FULL} value={date} disabled={pending}
+                   onChange={(e) => setDate(e.target.value)} />
+            <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={payee} disabled={pending}
+                   onChange={(e) => setPayee(e.target.value)} />
+            <Select
+              ariaLabel="Category"
+              value={categoryId}
+              disabled={pending}
+              onChange={setCategoryId}
+              options={categoryOptions}
+            />
+            <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={memo} disabled={pending}
+                   onChange={(e) => setMemo(e.target.value)} />
+            <input aria-label="Outflow" inputMode="decimal" placeholder="0.00"
+                   className={`${FIELD_FULL} tabular text-right`} value={outflowAmount} disabled={pending}
+                   onChange={(e) => onOutflowChange(e.target.value)} />
+            <input aria-label="Inflow" inputMode="decimal" placeholder="0.00"
+                   className={`${FIELD_FULL} tabular text-right`} value={inflowAmount} disabled={pending}
+                   onChange={(e) => onInflowChange(e.target.value)} />
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <Select
+              ariaLabel="Kind"
+              className="w-32"
+              value={kind}
+              disabled={pending}
+              onChange={(v) => {
+                const nextKind = v as LedgerKind
+                setKind(nextKind)
+                if (nextKind === 'owner_pay' && ownerPayCategoryId) setCategoryId(ownerPayCategoryId)
+              }}
+              options={KIND_OPTIONS}
+            />
+            <Select
+              ariaLabel="Show"
+              className="w-36"
+              value={showId}
+              disabled={pending}
+              onChange={setShowId}
+              options={showOptions}
+            />
+            <button
+              type="button"
+              onClick={add}
+              disabled={pending}
+              className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
+                         border border-line text-muted hover:text-ink disabled:opacity-40"
+            >
+              {pending ? 'Saving…' : '+ Add'}
+            </button>
+          </div>
+        </div>
       </div>
 
       {uncategorizedOnly ? (
