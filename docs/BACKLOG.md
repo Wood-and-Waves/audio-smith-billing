@@ -80,7 +80,16 @@ Five findings that all touch `components/MoneyRegister.tsx`; do as one pass:
     why he deleted the Fairmont rows from dev. Touches importer, register,
     budget activity, reconciliation.
 
-## Per-month budgeting — PHASE ONE SHIPPED 2026-08-23
+## Per-month budgeting — PHASE ONE LIVE IN PROD 2026-08-23
+
+Merged `a633185..8b4fb03` after two whole-branch reviews plus a delta review.
+Prod: migrations 0038–0041 applied and verified BEFORE the merge (ship order),
+budget history 2025-12..2026-08 imported (97 moves, identical to dev). Dan
+runs YNAB alongside; September budgeted independently in both is the real
+parity test. His remaining to-dos: the 4-item ledger punch list (plus the
+accepted $400 variance) and entering his 17 targets by hand.
+
+## Per-month budgeting — PHASE ONE SHIPPED 2026-08-23 (build notes)
 
 Dan's ask: *"I want to be able to budget per month and move between the months.
 My plan is to go back to January and set the budgets the same as YNAB to prove
