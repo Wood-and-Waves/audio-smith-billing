@@ -75,9 +75,10 @@ const GRID = 'hidden sm:grid grid-cols-[1fr_7rem_7rem_8rem] gap-x-4 items-center
  * That makes the filtering below this table's job, not buildBudget's:
  *
  *   - a hidden row that is completely empty this month (nothing assigned, no
- *     activity, nothing available) is simply dropped. This is the normal
- *     case — Bank Fees and Subscriptions are both retired with
- *     nothing left in them.
+ *     activity, nothing available) is simply dropped. This is the common
+ *     case for a retired category, though not a guaranteed one — migration
+ *     0040's own comment notes an owner whose Subscriptions row still holds
+ *     transactions keeps it visible instead, via the branch right below.
  *   - a hidden row that still holds money or saw activity is kept, folded
  *     into a synthetic "Hidden" section at the bottom, so the rendered rows
  *     still sum to the month's own totals instead of a reader checking the

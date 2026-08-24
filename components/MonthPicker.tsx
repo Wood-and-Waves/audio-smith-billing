@@ -123,23 +123,34 @@ export default function MonthPicker({
 
   return (
     <div ref={wrapRef} className="relative">
-      <button
-        ref={buttonRef}
-        type="button"
-        aria-expanded={open}
-        aria-controls={panelId}
-        onClick={() => setOpen((o) => !o)}
-        className="eyebrow text-ink flex items-center gap-1.5 hover:text-accent transition-colors"
-      >
-        {monthLabel(month)}
-        <svg
-          aria-hidden="true"
-          width="8" height="6" viewBox="0 0 8 6"
-          className={cn('shrink-0 fill-current transition-transform', open && 'rotate-180')}
+      {/* Before this component existed, the month label was a bare `<h2>` —
+          this button replaced it and, with it, the heading that gave the
+          page outline a "which month" landmark. Wrapping just the trigger
+          (never the popover panel below, which is a `role="group"`, not
+          heading content — an h2 may not contain it) restores that.
+          `display: contents` makes the `<h2>` itself take up no box: the
+          button's flex sizing and click target are exactly what they were,
+          the parent header's flex row sees the button as if it were still a
+          direct child, and only the accessibility tree gains the heading. */}
+      <h2 className="contents">
+        <button
+          ref={buttonRef}
+          type="button"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={() => setOpen((o) => !o)}
+          className="eyebrow text-ink flex items-center gap-1.5 hover:text-accent transition-colors"
         >
-          <path d="M0 0h8L4 6z" />
-        </svg>
-      </button>
+          {monthLabel(month)}
+          <svg
+            aria-hidden="true"
+            width="8" height="6" viewBox="0 0 8 6"
+            className={cn('shrink-0 fill-current transition-transform', open && 'rotate-180')}
+          >
+            <path d="M0 0h8L4 6z" />
+          </svg>
+        </button>
+      </h2>
 
       {open && (
         <div

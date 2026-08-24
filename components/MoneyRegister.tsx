@@ -377,10 +377,17 @@ export default function MoneyRegister({
   clearedBalanceCents: number
   uncategorizedCount: number
   /**
-   * The size of the `transactions` list — the full account when
-   * `uncategorizedOnly` is off, or just its uncategorized income/expense
-   * rows when it's on (app/money/page.tsx filters before returning, so this
-   * is always exact).
+   * Always exactly `transactions.length` today — app/money/page.tsx used to
+   * cap `transactions` at the newest 200 rows (RENDER_CAP), which is what
+   * `totalCount` and the `truncated` flag derived from it below existed to
+   * cover; that cap is gone (see git history's "the register renders every
+   * transaction, not the newest 200"), so `transactions` now IS the full
+   * account (or, when `uncategorizedOnly` is on, its full uncategorized
+   * income/expense subset) and `truncated` can no longer be true. Kept as a
+   * separate prop rather than deleted because a paged register was the
+   * other option on the table when the cap came out (docs/BACKLOG.md) and
+   * was passed over for now, not ruled out — if paging returns, this is
+   * already the plumbing it needs.
    */
   totalCount: number
   /**
@@ -482,7 +489,12 @@ export default function MoneyRegister({
   // account (or, on ?filter=uncategorized, of the uncategorized queue) —
   // moved up here, ahead of the functions below, because setRowCategory
   // needs it too: the apply-to-more count it shows is only ever exact when
-  // this is false.
+  // this is false. Provably always false today: `totalCount`'s own doc
+  // comment above explains why — the render cap that could make
+  // `transactions.length` fall short of it is gone. Left wired rather than
+  // deleted so both callers below (the apply-to-more count, and the
+  // "showing N of totalCount" messages) keep working unchanged if a paged
+  // register ever brings the gap back.
   const truncated = transactions.length < totalCount
 
   // Per-device column widths. Server renders the defaults; stored widths

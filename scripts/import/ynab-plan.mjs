@@ -281,8 +281,8 @@ async function main() {
     console.log(`owner: ${users[0].email}`)
 
     // Resolve category NAMES against this owner's actual chart. Hidden
-    // ledger_categories rows are included on purpose — Bank Fees,
-    // and Subscriptions are retired on our side but still match by name if
+    // ledger_categories rows are included on purpose — Bank Fees and
+    // Subscriptions are retired on our side but still match by name if
     // the plan ever needs them.
     const { rows: cats } = await client.query(
       'select id, name from ledger_categories where owner_id = $1',
