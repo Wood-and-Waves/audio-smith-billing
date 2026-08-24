@@ -1,6 +1,9 @@
 import { formatUSD } from '@/lib/money'
 import { progressPct, type CategoryMonth, type CategoryTarget, type TargetStatus } from '@/lib/budget'
 import TargetEditor from '@/components/TargetEditor'
+import AssignedCell from '@/components/AssignedCell'
+import MoveMoneyDialog from '@/components/MoveMoneyDialog'
+import type { AssignableCategory } from '@/app/money/budget/page'
 
 /**
  * The status line's wording, verbatim from Dan's own YNAB (Task 7's brief) —
@@ -65,113 +68,6 @@ function TargetProgressBar({ row }: { row: CategoryMonth }) {
   )
 }
 
-/** A checkmark drawn solid — "target met" in the Available pill. */
-function CheckFilledIcon() {
-  return (
-    <svg aria-hidden width="14" height="14" viewBox="0 0 14 14" className="h-3.5 w-3.5 shrink-0 fill-current">
-      <path d="M5.3 10.4 2.1 7.2l1.1-1.1 2.1 2.1L10.8 2.7l1.1 1.1z" />
-    </svg>
-  )
-}
-
-/** The same checkmark, as a plain outline — the quieter "available === 0,
- *  target already met" state, where there's nothing left to draw attention
- *  to. */
-function CheckIcon() {
-  return (
-    <svg aria-hidden width="14" height="14" viewBox="0 0 14 14" className="h-3.5 w-3.5 shrink-0 fill-none stroke-current">
-      <path d="M3 7.3 5.8 10 11 4" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-/** A half-filled ring — progress toward a target that isn't met yet. */
-function HalfCircleIcon() {
-  return (
-    <svg aria-hidden width="14" height="14" viewBox="0 0 14 14" className="h-3.5 w-3.5 shrink-0">
-      <circle cx="7" cy="7" r="5.5" className="fill-none stroke-current opacity-30" strokeWidth="1.4" />
-      <path d="M7 1.5a5.5 5.5 0 0 1 0 11z" className="fill-current" />
-    </svg>
-  )
-}
-
-/**
- * The Available figure, dressed as a pill whose color and glyph carry the
- * same read the status line gives in words — and only ever carry it
- * ALONGSIDE the words: `aria-label` restates the whole thing for a screen
- * reader, since color is exactly the kind of signal that must never be the
- * only one.
- *
- * Six states. Task 7's original brief table split `available > 0` into only
- * "target met" / "target not met", with no row for a category that carries
- * no target at all — by elimination that category fell into "not met" and
- * got the half-circle progress glyph, which points at progress toward
- * nothing. This is the corrected table (dispatched as a fix, not a
- * reinterpretation), with "no target" pulled out as its own row wherever it
- * changes the rendering:
- *
- *   available < 0                    -> danger, no glyph (overspent is loud
- *                                        enough on the status line above;
- *                                        this pill just needs to read as
- *                                        "not good")
- *   available > 0, target, met       -> good, filled check
- *   available > 0, target, not met   -> good, half circle
- *   available > 0, no target         -> good, no glyph — money sitting in a
- *                                        goalless category is a fine,
- *                                        ordinary state; it reads as plain,
- *                                        not as stalled progress
- *   available === 0, target          -> accent-wash, outline check
- *   available === 0, no target       -> plain muted text, no glyph
- *
- * "Met" is `status.kind === 'funded'` — the only TargetStatus variant that
- * can coexist with available > 0 AND a fully-satisfied target (see
- * lib/budget.ts's own statusFor: fully_spent already claims available === 0,
- * overspent already claims available < 0, so funded's available is always
- * positive when it appears at all).
- */
-function AvailablePill({ row }: { row: CategoryMonth }) {
-  const cents = row.availableCents
-  const hasTarget = row.targetCents !== null
-  const met = row.status.kind === 'funded'
-
-  let classes: string
-  let glyph: React.ReactNode = null
-  let label: string
-
-  if (cents < 0) {
-    classes = 'bg-danger/15 text-danger'
-    label = `Overspent by ${formatUSD(-cents)}`
-  } else if (cents > 0 && met) {
-    classes = 'bg-good/15 text-good'
-    glyph = <CheckFilledIcon />
-    label = `${formatUSD(cents)} available, target met`
-  } else if (cents > 0 && hasTarget) {
-    classes = 'bg-good/15 text-good'
-    glyph = <HalfCircleIcon />
-    label = `${formatUSD(cents)} available`
-  } else if (cents > 0) {
-    classes = 'bg-good/15 text-good'
-    label = `${formatUSD(cents)} available`
-  } else if (hasTarget) {
-    classes = 'bg-accent-wash text-muted'
-    glyph = <CheckIcon />
-    label = 'Target met, nothing left available'
-  } else {
-    classes = 'text-muted'
-    label = 'Nothing available'
-  }
-
-  return (
-    <span
-      aria-label={label}
-      className={`inline-flex items-center gap-1 rounded-pill px-2.5 py-1 text-sm font-semibold tabular ${classes}`}
-    >
-      {glyph}
-      {formatUSD(cents)}
-    </span>
-  )
-}
-
 /**
  * One category's line in the month grid: name, target status, progress bar,
  * assigned/activity, and the Available pill — everything BudgetTable's grid
@@ -196,15 +92,30 @@ function AvailablePill({ row }: { row: CategoryMonth }) {
  * progress bar) for free; the three desktop cells (`hidden sm:…`) drop out;
  * and one `sm:hidden` three-up row of Assigned/Activity/Available, each
  * with a small label above its figure, takes their place.
+ *
+ * `month` and `assignableCategories` are budget-phase-two Task 3's own
+ * wire-through: the viewed month string (needed by both AssignedCell and
+ * MoveMoneyDialog to call their own server actions) and the page's own
+ * move-money option list (see AssignableCategory's doc comment,
+ * app/money/budget/page.tsx), both threaded straight from BudgetTable
+ * without this component touching either.
  */
 export default function BudgetRow({
-  row, name, target,
+  row, name, target, month, assignableCategories,
 }: {
   row: CategoryMonth
   name: string
   target?: CategoryTarget | null
+  month: string
+  assignableCategories: AssignableCategory[]
 }) {
   const status = statusLine(row.status)
+  // Hidden rows AND every row folded into BudgetTable's synthetic "Hidden"
+  // section share this one flag (see AssignedCell's own doc comment for why
+  // that's the same condition, not two) — neither Assigned nor Available is
+  // editable for either, because assignToCategory/moveBetweenCategories both
+  // refuse a hidden category server-side.
+  const editable = !row.hidden
   return (
     <div className="grid grid-cols-1 sm:grid-cols-[1fr_7rem_7rem_8rem] gap-x-4 gap-y-2 items-center py-2 text-sm">
       <div className="min-w-0">
@@ -229,16 +140,38 @@ export default function BudgetRow({
         <TargetProgressBar row={row} />
       </div>
 
-      <span className="hidden sm:block tabular text-right">{formatUSD(row.assignedCents)}</span>
+      <div className="hidden sm:block">
+        <AssignedCell
+          categoryId={row.categoryId}
+          categoryName={name}
+          month={month}
+          assignedCents={row.assignedCents}
+          editable={editable}
+          align="right"
+        />
+      </div>
       <span className="hidden sm:block tabular text-right">{formatUSD(row.activityCents)}</span>
       <div className="hidden sm:flex justify-end">
-        <AvailablePill row={row} />
+        <MoveMoneyDialog
+          row={row}
+          categoryName={name}
+          month={month}
+          categories={assignableCategories}
+          editable={editable}
+        />
       </div>
 
       <div className="sm:hidden grid grid-cols-3 gap-2">
         <div>
           <p className="text-xs text-muted">Assigned</p>
-          <p className="tabular">{formatUSD(row.assignedCents)}</p>
+          <AssignedCell
+            categoryId={row.categoryId}
+            categoryName={name}
+            month={month}
+            assignedCents={row.assignedCents}
+            editable={editable}
+            align="left"
+          />
         </div>
         <div>
           <p className="text-xs text-muted">Activity</p>
@@ -246,7 +179,13 @@ export default function BudgetRow({
         </div>
         <div>
           <p className="text-xs text-muted">Available</p>
-          <AvailablePill row={row} />
+          <MoveMoneyDialog
+            row={row}
+            categoryName={name}
+            month={month}
+            categories={assignableCategories}
+            editable={editable}
+          />
         </div>
       </div>
     </div>

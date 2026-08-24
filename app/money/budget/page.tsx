@@ -36,6 +36,16 @@ const FILTER_CHIPS: { key: BudgetFilter; label: string }[] = [
   { key: 'available', label: 'Money Available' },
 ]
 
+/**
+ * One visible spending category, with its current-month Available figure —
+ * MoveMoneyDialog's own From/To option list (budget-phase-two Task 3). This
+ * page is where the type is defined because this page is where the list is
+ * built (see `assignableCategories` below): `lib/budget.ts` stays untouched,
+ * so this is presentation-path plumbing, the same status TargetEditor's own
+ * `target?: CategoryTarget | null` prop carries.
+ */
+export type AssignableCategory = { id: string; name: string; availableCents: number }
+
 // Supabase selects silently cap at 1000 rows (PostgREST's max_rows) with no
 // error. ledger_transactions is already past 300 rows and grows every month,
 // and every table read below is summed into Ready to Assign or a category's
@@ -341,6 +351,24 @@ export default async function MoneyBudgetPage({
   // any) happens to be active right now.
   const overspentCount = current.rows.filter((r) => r.availableCents < 0).length
 
+  // Every visible spending category this month, with its current Available —
+  // what MoveMoneyDialog's From/To selects list (budget-phase-two Task 3:
+  // clicking a category's Available pill opens a move-money dialog). Built
+  // once here from data this page already fetched (categories, current.rows)
+  // so MoveMoneyDialog — a client component — never refetches it, and
+  // threaded down through BudgetTable/BudgetRow as an explicit prop rather
+  // than re-derived lower in the tree, the same "the page already holds
+  // every row's figures — pass them down" rule the plan states for this
+  // list. Hidden categories are excluded: moveBetweenCategories's own
+  // ownership walk (`requireAssignable`) refuses a hidden category as either
+  // side of a move, so one has no honest reason to appear as a source or
+  // target option.
+  const rowByCategoryId = new Map(current.rows.map((r) => [r.categoryId, r]))
+  const assignableCategories: AssignableCategory[] = categories
+    .filter((c) => c.budgetRole === 'spending' && !c.hidden)
+    .sort((a, b) => a.sort - b.sort)
+    .map((c) => ({ id: c.id, name: c.name, availableCents: rowByCategoryId.get(c.id)?.availableCents ?? 0 }))
+
   return (
     <AppShell current="money">
       <BackLink />
@@ -457,7 +485,13 @@ export default async function MoneyBudgetPage({
             })}
           </nav>
 
-          <BudgetTable month={current} categories={categories} targets={targets} filter={filter} />
+          <BudgetTable
+            month={current}
+            categories={categories}
+            targets={targets}
+            filter={filter}
+            assignableCategories={assignableCategories}
+          />
         </div>
       </div>
     </AppShell>
