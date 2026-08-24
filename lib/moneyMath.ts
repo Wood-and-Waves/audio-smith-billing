@@ -1,7 +1,7 @@
 // Arithmetic in every money box. The owner types "24.36+45.72" into an
 // amount field and gets $70.08 -- this is the ONE evaluator entry point
 // every such field types through (register add/edit amount, AssignedCell,
-// MoveMoneyDialog, TargetEditor), so the behaviour can't fork per field.
+// MovePopover, TargetEditor), so the behaviour can't fork per field.
 //
 // parseUSD (lib/money.ts) is the existing, well-tested contract for a single
 // typed amount -- $, commas, decimals, its own accounting "(5.75)" ->

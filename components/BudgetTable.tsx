@@ -116,7 +116,7 @@ export default function BudgetTable({
   /** The page's own move-money option list — passed straight through to
    *  every BudgetRow untouched; see AssignableCategory's own doc comment
    *  (app/money/budget/page.tsx) for why the page builds it once instead of
-   *  this table (or BudgetRow, or MoveMoneyDialog) re-deriving it. */
+   *  this table (or BudgetRow, or MovePopover) re-deriving it. */
   assignableCategories: AssignableCategory[]
 }) {
   const catById = new Map(categories.map((c) => [c.id, c]))

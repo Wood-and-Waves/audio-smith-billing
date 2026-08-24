@@ -1,7 +1,7 @@
 // Run: npm test -- scripts/test/moneyMath.test.ts (or npm test for the whole suite)
 //
 // parseUSDMath is the ONE entry point every money box in the register now
-// types through (add amount, edit amount, AssignedCell, MoveMoneyDialog,
+// types through (add amount, edit amount, AssignedCell, MovePopover,
 // TargetEditor). A lone number must be byte-identical to parseUSD — that's
 // not a sampled coincidence, it's load-bearing: the parity table below
 // exercises parseUSD's own documented edge cases (empty string, $, commas,

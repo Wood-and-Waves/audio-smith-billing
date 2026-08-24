@@ -113,7 +113,15 @@ export default function CategoryPicker({
       ? { id: extraOption.id, name: extraOption.label, grp: '' }
       : undefined)
 
-  const displayLabel = selected?.name ?? ''
+  // `value === ''` with a `blankOption` offered is a REAL selected state
+  // (MoveMoneyDialog's own Ready to Assign sentinel — now MovePopover's,
+  // Wave B Task 3b — and MoneyRegister's own "Uncategorized"), not merely
+  // "nothing chosen yet": the closed trigger showing the placeholder glyph
+  // instead of that state's own label would read as blank/unset when it
+  // isn't. `blankOption.label` only fills in here, on the CLOSED display —
+  // the open listbox's own blank-row button (below) already carries the
+  // accent-dot "selected" marker independent of this.
+  const displayLabel = selected?.name ?? (value === '' ? blankOption?.label ?? '' : '')
 
   function openMenu() {
     setQuery('')
@@ -180,7 +188,7 @@ export default function CategoryPicker({
         e.preventDefault()
         // Select.tsx's own fixed idiom (2026-08-24): stop the key here so it
         // never bubbles into an enclosing dialog's own Escape handler —
-        // MoveMoneyDialog's, SnapReceipt's — when the user only meant to
+        // MovePopover's, SnapReceipt's — when the user only meant to
         // close this listbox.
         e.stopPropagation()
         setOpen(false)

@@ -5,7 +5,7 @@ import { formatUSD } from '@/lib/money'
 import { progressPct, type CategoryMonth, type CategoryTarget, type TargetStatus } from '@/lib/budget'
 import TargetEditor from '@/components/TargetEditor'
 import AssignedCell from '@/components/AssignedCell'
-import MoveMoneyDialog from '@/components/MoveMoneyDialog'
+import MovePopover from '@/components/MovePopover'
 import type { AssignableCategory } from '@/app/money/budget/page'
 
 /**
@@ -98,16 +98,16 @@ function TargetProgressBar({ row }: { row: CategoryMonth }) {
  *
  * `month` and `assignableCategories` are budget-phase-two Task 3's own
  * wire-through: the viewed month string (needed by both AssignedCell and
- * MoveMoneyDialog to call their own server actions) and the page's own
+ * MovePopover to call their own server actions) and the page's own
  * move-money option list (see AssignableCategory's doc comment,
  * app/money/budget/page.tsx), both threaded straight from BudgetTable
  * without this component touching either.
  *
  * A CLIENT component (final review, 2026-08-24) — the one `assignPending`
  * flag below is why. This row renders AssignedCell TWICE (the desktop grid
- * cell, the phone card's mini-card) and MoveMoneyDialog TWICE the same
+ * cell, the phone card's mini-card) and MovePopover TWICE the same
  * way; both AssignedCell instances report their own `pending` up into this
- * ONE piece of state via `onPendingChange`, and both MoveMoneyDialog
+ * ONE piece of state via `onPendingChange`, and both MovePopover
  * instances read it back as `disabled` to gate their own Available pill
  * while it's true. That closes a real race: clicking the pill while this
  * row's Assigned editor holds an uncommitted change fires blur-commit AND
@@ -136,7 +136,7 @@ export default function BudgetRow({
   // refuse a hidden category server-side.
   const editable = !row.hidden
   // See this component's own doc comment above for why this lives here
-  // (not inside AssignedCell or MoveMoneyDialog) and why it's a CLIENT
+  // (not inside AssignedCell or MovePopover) and why it's a CLIENT
   // component as a result.
   const [assignPending, setAssignPending] = useState(false)
   return (
@@ -176,7 +176,7 @@ export default function BudgetRow({
       </div>
       <span className="hidden sm:block tabular text-right">{formatUSD(row.activityCents)}</span>
       <div className="hidden sm:flex justify-end">
-        <MoveMoneyDialog
+        <MovePopover
           row={row}
           categoryName={name}
           month={month}
@@ -205,7 +205,7 @@ export default function BudgetRow({
         </div>
         <div>
           <p className="text-xs text-muted">Available</p>
-          <MoveMoneyDialog
+          <MovePopover
             row={row}
             categoryName={name}
             month={month}

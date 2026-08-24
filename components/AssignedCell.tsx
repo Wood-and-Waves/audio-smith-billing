@@ -11,7 +11,7 @@ import { assignToCategory } from '@/app/money/budget/actions'
  * from BOTH of BudgetRow's own call sites (the desktop grid cell, the phone
  * card's mini-card) as the SAME component, the same "call twice, don't fork
  * into two hand-maintained copies" precedent BudgetRow's own AvailablePill
- * (now MoveMoneyDialog) already set for a value cell that has to appear
+ * (now MovePopover) already set for a value cell that has to appear
  * twice. `align` is the one thing each call site supplies for itself,
  * mirroring how each already supplies its own wrapper classes.
  *
@@ -38,12 +38,12 @@ import { assignToCategory } from '@/app/money/budget/actions'
  * why mirroring `pending` itself (rather than toggling a second flag by
  * hand at each call site) is enough. `BudgetRow` lifts the one flag both of
  * its AssignedCell instances (desktop grid cell, phone mini-card) and both
- * of its MoveMoneyDialog instances share, and disables the Available pill
+ * of its MovePopover instances share, and disables the Available pill
  * while it's true — the fix for a real race: clicking the pill while this
  * row's Assigned editor holds an uncommitted change fires blur-commit AND
  * opens the dialog in the same gesture, and the dialog used to seed itself
  * from `row.availableCents` before that commit's write had landed, showing
- * Dan pre-write figures. See MoveMoneyDialog's own doc comment for the
+ * Dan pre-write figures. See MovePopover's own doc comment for the
  * other half.
  */
 export default function AssignedCell({
