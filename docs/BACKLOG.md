@@ -103,7 +103,7 @@ arithmetic lives in `lib/budget.ts` and reproduces all 1,421 rows of his export
 with zero mismatches, and `scripts/import/ynab-plan.mjs` backfilled Jan-Aug.
 See CLAUDE.md for the two formulas and the rules that must not be re-derived.
 
-**Phase two — BUILT 2026-08-24, awaiting Dan's ship gate** (assigning and moving money; branch `budget-phase-two`, unmerged). All four write paths per the plan:
+**Phase two — SHIPPED 2026-08-24** (assigning and moving money; Dan's gate after his own dev walkthrough). All four write paths per the plan:
 - Typing a figure into the Assigned box (writes the difference as a move).
   Can now go negative — see the amendment note below.
 - Moving money between categories to cover an overspent one.
@@ -196,6 +196,13 @@ books agree to the penny — every one was confirmed against the underlying rows
    to **Retained Earnings**, which is where YNAB books them.
 
 **And his 17 targets need entering by hand** — YNAB has no target export.
+
+**Move flow redesign (Dan, 2026-08-24, shipped-as-is knowingly):** the move
+dialog's Select clips against its scroll container, and the flow should be
+YNAB's directional anchored popover — green pill offers destinations, red
+pill offers only sources with money, amount implied for covering. Spec'd as
+Wave B Task 3b (docs/superpowers/plans/2026-08-24-wave-b-register-editing.md),
+built on Task 3's CategoryPicker.
 
 **Importer collapse vs the restored Owner Transactions categories (delta
 review, 2026-08-23).** `lib/ynabRegister.ts` maps *every* YNAB row whose group
