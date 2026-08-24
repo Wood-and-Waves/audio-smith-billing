@@ -247,11 +247,24 @@ export function parseUSDMath(input: string | number | null | undefined): number 
   if (s === '') return 0
   if (!looksLikeExpression(s)) return parseUSD(s)
 
+  // Totality is the contract — every call site relies on null-never-throw.
+  // Two belts against the one way recursion can break it (deeply nested
+  // parens or a run of unary signs blowing the call stack on a pasted
+  // blob): no real money expression needs more than 200 characters, and
+  // the try/catch converts anything that still escapes into the same null
+  // every other malformed input gets.
+  if (s.length > 200) return null
+
   const tokens = tokenize(s)
   if (tokens === null || tokens.length === 0) return null
 
   const cursor: Cursor = { tokens, pos: 0 }
-  const result = parseExpr(cursor)
+  let result: ReturnType<typeof parseExpr>
+  try {
+    result = parseExpr(cursor)
+  } catch {
+    return null
+  }
   if (result === null) return null
   if (cursor.pos !== tokens.length) return null // trailing garbage
 

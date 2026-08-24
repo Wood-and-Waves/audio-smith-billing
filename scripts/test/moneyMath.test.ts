@@ -137,3 +137,20 @@ test('lone-number parity: parseUSDMath matches parseUSD over a value table', () 
     )
   }
 })
+
+test('chained multiplication after division rounds ONCE at the end — the per-node-rounding bug ships green without this', () => {
+  // 100/3 = 33.333…; ×3 = 100 exactly under end-rounding. A per-node
+  // implementation rounds 33.333… to 3333 cents first and returns 9999.
+  assert.equal(parseUSDMath('100/3*3'), 10000)
+  assert.equal(parseUSDMath('10/3*3'), 1000)
+})
+
+test('scientific notation is rejected — a parseFloat-based tokenizer would silently accept 1e3 as $1000', () => {
+  assert.equal(parseUSDMath('1e3'), null)
+  assert.equal(parseUSDMath('2e2+1'), null)
+})
+
+test('a pasted blob of nested parens or signs returns null instead of blowing the stack', () => {
+  assert.equal(parseUSDMath('('.repeat(5000) + '5' + ')'.repeat(5000)), null)
+  assert.equal(parseUSDMath('-'.repeat(5000) + '5'), null)
+})
