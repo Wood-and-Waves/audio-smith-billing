@@ -36,27 +36,36 @@
 // every time it's touched would refuse saves that do nothing wrong.
 
 export const INCOME_ROLE_CHANGE_REFUSAL =
-  "Move this category's assigned amounts and its target to another " +
-  'category first. An income category is not a budget row, so its ' +
-  "assignments and its activity would silently drop out of every month's " +
-  'Ready to Assign and Available.'
+  "Move this category's assigned amounts, its target, and its " +
+  'transactions to another category first. An income category is not a ' +
+  'budget row, so its assignments, its target, and its activity would ' +
+  "silently drop out of every month's Ready to Assign and Available."
 
 type RowsResult = { data: { id: string }[] | null; error: { message: string } | null }
 
 /**
- * `moves` and `targets` are only read when `currentRole` is 'spending' —
- * the caller is expected to have already fetched them (or not bothered to,
- * for an already-income category; see the caller-side wrapper in
- * app/money/actions.ts). Each read's `error` is checked and returned on
- * BEFORE any presence or count test on its `data` — same fail-closed rule
- * this app applies to every guard read that gates a money write (see
- * CLAUDE.md, and decideCategoryOwnership's own comment): a blown-up query
- * must never be read as "no moves, go ahead."
+ * `moves`, `targets`, and `transactions` are only read when `currentRole`
+ * is 'spending' — the caller is expected to have already fetched them (or
+ * not bothered to, for an already-income category; see the caller-side
+ * wrapper in app/money/actions.ts). Each read's `error` is checked and
+ * returned on BEFORE any presence or count test on its `data` — same
+ * fail-closed rule this app applies to every guard read that gates a money
+ * write (see CLAUDE.md, and decideCategoryOwnership's own comment): a
+ * blown-up query must never be read as "no moves, go ahead."
+ *
+ * `transactions` covers the hazard this file's own header comment leads
+ * with, and which the code used to skip: a transaction sitting in this
+ * category stops counting as `activity` and becomes `income(m)` instead the
+ * moment the role flips (lib/budget.ts's incomeBy). That hazard can be live
+ * with no moves and no target at all — exactly the shape migration 0041's
+ * eight restored categories are about to be in, carrying transactions
+ * before they carry an assignment.
  */
 export function decideIncomeRoleChange(
   currentRole: 'spending' | 'income',
   moves: RowsResult,
   targets: RowsResult,
+  transactions: RowsResult,
 ): { error: string } | null {
   if (currentRole === 'income') return null
 
@@ -65,6 +74,9 @@ export function decideIncomeRoleChange(
 
   if (targets.error) return { error: targets.error.message }
   if (targets.data && targets.data.length > 0) return { error: INCOME_ROLE_CHANGE_REFUSAL }
+
+  if (transactions.error) return { error: transactions.error.message }
+  if (transactions.data && transactions.data.length > 0) return { error: INCOME_ROLE_CHANGE_REFUSAL }
 
   return null
 }

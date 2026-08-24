@@ -16,6 +16,14 @@ type Fail = { error: string }
 
 const SANE_DATE_ERROR = "That date is outside the ledger's range (1990–2100)."
 
+// Same idiom as app/cal/[token]/route.ts and app/i/[token]/page.tsx: a
+// malformed id is a driver error from Postgres, not a normal "not found" —
+// guarded here because incomeRoleChangeAllowed below interpolates a
+// caller-supplied category id straight into a PostgREST `.or(...)` filter
+// string, which a shape check upstream of the query is cheaper (and safer)
+// than trusting to fail correctly downstream.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 /** Creates the one checking account a ledger starts from. */
 export async function createLedgerAccount(input: {
   name: string
@@ -100,25 +108,33 @@ export async function ensureDefaultCategories(): Promise<Fail | { ok: true; seed
  * category to budget_role 'income' silently drops it out of buildBudget's
  * spendingIds for every month, past included. Only called from the update
  * branch, and only when the caller asked for 'income' — a brand-new
- * category (id === null) can't have prior moves or a target yet, so it
- * never needs this.
+ * category (id === null) can't have prior moves, a target, or transactions
+ * yet, so it never needs this.
  *
- * All three reads (current role, moves, targets) run even when the
- * category turns out to already be 'income' — decideIncomeRoleChange
+ * The id is shape-checked against UUID before it touches any query: it's
+ * caller-supplied and lands unescaped in the `.or(...)` filter string below,
+ * so a malformed id is refused here rather than trusted to fail safely once
+ * it reaches Postgres.
+ *
+ * All four reads (current role, moves, targets, transactions) run even when
+ * the category turns out to already be 'income' — decideIncomeRoleChange
  * short-circuits on that case, but fetching unconditionally keeps this
  * function simple and the query cost is one row each, nowhere near hot.
  * `error` on the current-role read is checked and returned on before
  * touching `current` at all, same fail-closed rule decideIncomeRoleChange
- * itself applies to the other two reads.
+ * itself applies to the other three reads.
  */
 async function incomeRoleChangeAllowed(
   supabase: Awaited<ReturnType<typeof createClient>>,
   categoryId: string,
 ): Promise<Fail | null> {
+  if (!UUID.test(categoryId)) return { error: 'That category does not belong to you.' }
+
   const [
     { data: current, error: currentError },
     moves,
     targets,
+    transactions,
   ] = await Promise.all([
     supabase.from('ledger_categories').select('budget_role').eq('id', categoryId).maybeSingle(),
     supabase
@@ -128,11 +144,12 @@ async function incomeRoleChangeAllowed(
       .is('undone_at', null)
       .limit(1),
     supabase.from('ledger_category_targets').select('id').eq('category_id', categoryId).limit(1),
+    supabase.from('ledger_transactions').select('id').eq('category_id', categoryId).limit(1),
   ])
   if (currentError) return { error: currentError.message }
   const currentRole = (current?.budget_role === 'income' ? 'income' : 'spending') as 'spending' | 'income'
 
-  return decideIncomeRoleChange(currentRole, moves, targets)
+  return decideIncomeRoleChange(currentRole, moves, targets, transactions)
 }
 
 /**
