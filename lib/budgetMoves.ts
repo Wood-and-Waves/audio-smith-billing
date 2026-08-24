@@ -46,6 +46,10 @@ export function assignmentDiff(
   currentAssignedCents: number,
   typedCents: number,
 ): MoveWrite {
+  // Same Number.isInteger discipline as lib/ledgerRules.ts's validateTxnShape,
+  // for the same reason: NaN sails past a `< 0` check (NaN < 0 is false) and a
+  // fractional cent would reach the DB as a type error instead of a refusal.
+  if (!Number.isInteger(currentAssignedCents) || !Number.isInteger(typedCents)) return null
   if (typedCents < 0) return null
 
   const diff = typedCents - currentAssignedCents

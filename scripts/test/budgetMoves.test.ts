@@ -223,3 +223,9 @@ test('a tie on created_at breaks toward the id, ok direction', () => {
 test('nothing active and nothing undone -> nothing to redo', () => {
   assert.equal(redoTarget({ newestActive: null, newestUndone: null }), 'nothing')
 })
+
+test('assignmentDiff refuses NaN and fractional cents — NaN < 0 is false, so the sign check alone misses it', () => {
+  assert.equal(assignmentDiff('c', 50_000, NaN), null)
+  assert.equal(assignmentDiff('c', NaN, 50_000), null)
+  assert.equal(assignmentDiff('c', 50_000, 100.5), null)
+})
