@@ -154,6 +154,41 @@ header. **No Payment/Transfer button** (gated on the kind decision below);
   budget page's own figures for three categories · gates · commit
   `feat: the category picker shows where the money stands`.
 
+## Task 3b: The move flow becomes YNAB's directional popover
+
+**Files:** Modify `components/MoveMoneyDialog.tsx` (or replace with
+`components/MovePopover.tsx`), `components/BudgetRow.tsx`.
+
+Dan's finding on 2026-08-24, with YNAB screenshots on file: the current
+modal's Select listbox fights the panel's scroll container (clipped, stray
+scrollbars), and the flow itself should be directional and anchored at the
+pill, the way YNAB does it:
+
+- **Green pill (available > 0):** a small popover anchored to the pill —
+  "Move" + an amount field prefilled with the full available (selected, so
+  typing replaces) + a **To** picker offering Ready to Assign and every
+  visible spending category. OK commits via `moveBetweenCategories`
+  (from = this category).
+- **Red pill (available < 0):** "Cover overspending from" + a **From**
+  picker offering ONLY Ready to Assign and categories with money
+  (`availableCents > 0`); the amount is implied — the full shortfall — no
+  amount field, exactly YNAB's own flow. OK commits (to = this category).
+- **Zero pill:** keep the current general dialog behaviour or a green-style
+  popover with an empty amount — implementer's call, stated in the report.
+- The picker inside is **Task 3's `CategoryPicker`** (balances, groups,
+  filter) — build order matters: 3 before 3b.
+- Anchored popover, not a fixed modal: position against the pill (the
+  TargetEditor popover idiom), flipping above when the row sits low in the
+  viewport; this removes the max-height scroll container and with it the
+  clipping bug.
+- Server contract unchanged — `moveBetweenCategories` already takes both
+  directions; the popover only changes what is offered and prefilled.
+
+- [ ] Browser-verify: green flow to a category and to RTA; red flow covers
+  the exact shortfall and the pill goes grey-checked; the popover never
+  clips against the viewport edges; Escape/outside-click behave.
+- [ ] Gates → commit `feat: directional move popover`.
+
 ## Awaiting Dan — gated, not built
 
 1. **Retire the income/expense/owner-pay dropdown?** Direction now derives
