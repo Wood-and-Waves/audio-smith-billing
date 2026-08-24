@@ -63,6 +63,7 @@ const budget = buildBudget({
 const monthOut = budget.get(now)
 const appByName = new Map(monthOut.rows.map((r) => [cats.find((k) => k.id === r.categoryId)?.name, r]))
 
+const usd = (cents) => (cents / 100).toFixed(2)
 let rtaLine = null
 const month = await api('/months/current')
 {
@@ -75,7 +76,6 @@ const month = await api('/months/current')
        : delta === 101 ? ' — the known $1.01 Novo remainder'
        : `  (Δ ${usd(delta)} — investigate)`)
 }
-const usd = (cents) => (cents / 100).toFixed(2)
 let ok = 0
 const diffs = []
 
