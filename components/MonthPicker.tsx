@@ -77,10 +77,13 @@ export default function MonthPicker({
     if (open) setViewYear(Number(month.slice(0, 4)))
   }, [open, month])
 
-  // Escape and a click outside both close the popover AND hand focus back to
-  // the trigger — same outside-click/Escape idiom as MobileNav's dropdown,
-  // plus the focus return this menu also promises. Only wired while open, so
-  // the listeners aren't live for nothing.
+  // Escape and a click outside both close the popover; Escape also hands
+  // focus back to the trigger — a keyboard user who dismissed the popover
+  // that way has nowhere else for focus to go. A click outside does NOT
+  // return focus (see onDown's own comment below for why not) — same
+  // outside-click idiom as MobileNav's and Select.tsx's own dropdowns,
+  // neither of which returns focus on an outside click either. Only wired
+  // while open, so the listeners aren't live for nothing.
   useEffect(() => {
     if (!open) return
     function onKey(e: KeyboardEvent) {
@@ -90,15 +93,20 @@ export default function MonthPicker({
       }
     }
     function onDown(e: MouseEvent) {
+      // Closes the popover, same as Select.tsx's and MobileNav's own
+      // outside-click handlers — but unlike the Escape branch above, focus
+      // is NOT returned to the trigger here. A mousedown's own default
+      // action is what focuses whatever was actually clicked; preventing
+      // that default to force focus back onto the trigger would steal every
+      // outside click page-wide while this popover happens to be open — the
+      // first click into an unrelated input would focus the trigger instead
+      // of the input, and a stray Space there would reopen this popover.
+      // Select.tsx has no such preventDefault on ITS outside-click listener
+      // either (its only preventDefault is a different mechanism: keeping
+      // focus on ITS OWN trigger while clicking one of ITS OWN options, via
+      // onMouseDown on the listbox, never document-wide).
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
-        // A mousedown's own default action shifts focus to whatever was
-        // clicked (or clears it to <body> when that target isn't
-        // focusable) AFTER every listener has run, so it would otherwise
-        // overwrite the focus() call below the instant it fires. Same
-        // preventDefault Select.tsx uses to keep focus put through a click.
-        e.preventDefault()
         setOpen(false)
-        buttonRef.current?.focus()
       }
     }
     document.addEventListener('keydown', onKey)
