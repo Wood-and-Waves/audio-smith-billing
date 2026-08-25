@@ -121,10 +121,14 @@ drop pending — the arithmetic does not).
 
 ## What this unlocks on day one
 
-Dan splits the 3/5 row properly — the last accepted variance dies, and
-`npm run parity` should read exactly zero with no asterisks beyond the
-Novo penny. His next statement import lands as a reviewable queue instead
-of instantly moving the budget.
+(Corrected at the final review, from a read of prod's actual March rows:
+Dan had ALREADY hand-split the 3/5 transfer into two bank rows — −$2,512.60
+and −$400.00 — and aligned both books; `npm run parity` reads zero with that
+in place. Splitting it again would DOUBLE-COUNT $400. The instruction is
+therefore: **leave the 3/5 rows alone.** Splits serve future multi-category
+bank rows; collapsing the historical hand-split into one true split row is
+an optional both-books cleanup, never a required step.) His next statement
+import lands as a reviewable queue instead of instantly moving the budget.
 
 ## Testing
 

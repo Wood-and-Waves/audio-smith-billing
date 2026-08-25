@@ -10,7 +10,7 @@ semantics and the register UI adapted from his YNAB screenshot.
 
 **Ship authorization (Dan, 2026-08-24): full approval — merge and push to
 main when the wave passes every gate and review.** Ship order stays law:
-migrations 0042 AND 0043 to prod FIRST (0043 = the RPC's anon-EXECUTE revoke, the 0024 precedent), then merge/push, then smoke + `npm run parity`.
+migrations 0042, 0043 AND 0044 to prod FIRST, in order, then merge/push, then smoke + `npm run parity`.
 
 ## Global Constraints
 
@@ -185,7 +185,7 @@ BACKLOG: Wave C shipped; the $400 variance entry updated to "fixable in-app
   the register's split/pending UI states.
 - [ ] Fix wave if needed → re-review to READY.
 - [ ] Controller walkthrough + parity.
-- [ ] **Ship (pre-authorized):** 0042+0043 to PROD first → merge → push → smoke
+- [ ] **Ship (pre-authorized):** 0042+0043+0044 to PROD first → merge → push → smoke
   → `npm run parity` → report to Dan, including how to split the 3/5 row.
 
 ## Verification
