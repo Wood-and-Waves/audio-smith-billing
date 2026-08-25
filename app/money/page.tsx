@@ -105,9 +105,15 @@ type RawSplitLegRow = {
 /** Every split leg, owner-wide (Wave C Task 4) — joined client-side onto
  *  its parent transaction below, same "one paged fetch, bucket by foreign
  *  key" shape as fetchAllInvoiceLinks/fetchAllExpenseLinks further down
- *  this file. Ordered by created_at so a transaction's legs render in the
- *  same order replace_transaction_splits wrote them (its own insert order,
- *  Task 3) — the order Dan built the split in, not an arbitrary one. */
+ *  this file. Ordered by (created_at, id), but that does NOT reproduce the
+ *  order Dan built a split in (M1, Wave C final review): every leg from one
+ *  replace_transaction_splits call comes from a SINGLE insert...select
+ *  statement (migration 0042), so they all share one `created_at` — the
+ *  tiebreak actually deciding render order is `id`, a random uuid
+ *  (gen_random_uuid()) with no relation to leg order at all. The order legs
+ *  render in is arbitrary within one save, not the app lying about it; a
+ *  real ordinal column on ledger_transaction_splits is the future fix, not
+ *  something this ORDER BY can paper over today. */
 async function fetchAllSplitLegs(
   supabase: Awaited<ReturnType<typeof createClient>>,
 ): Promise<{ rows: RawSplitLegRow[]; error: string | null }> {
