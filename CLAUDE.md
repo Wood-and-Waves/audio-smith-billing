@@ -322,7 +322,7 @@ status.
   merging — that double-counts $400; merge-then-split is the sanctioned
   path, parity re-run after).
 
-## Current state (2026-08-24) & where things are written
+## Current state (2026-08-25) & where things are written
 
 - LIVE in prod: billing + full Money module; receipt corner
   detection/flattening (CornerAdjuster + loupe; PDFs skip corners); attach/
@@ -369,6 +369,13 @@ status.
   a real payment date — the forecast must learn pay-lag only from
   deposit-LINKED invoices (pinned in BACKLOG). Dropbox archive LIVE (nightly cron; helper: `npm run dropbox:auth`,
   with `--push` to Vercel and `--probe` diagnostics; secrets never printed).
+  **The two books are at live parity as of 2026-08-25**: `npm run parity`
+  (scripts/parity/ynab-live.mjs, needs `YNAB_API_TOKEN`/`YNAB_BUDGET_ID` in
+  .env.local) reads 25/25 categories exact against live YNAB, Ready to
+  Assign off only by the accepted $1.01 Novo remainder. September, budgeted
+  independently in both tools, is the standing month-end proof. His 17
+  targets are still unentered (prod `ledger_category_targets` = 0 rows),
+  and the pending-import queue has yet to see its first real OFX month.
 - **Backlog:** `docs/BACKLOG.md` (canonical). Module design reference:
   `docs/superpowers/specs/2026-08-18-bookkeeping-module-reference.md` (incl.
   Dan's CPA homework questions). Of the pieces Dan filed 2026-08-22:

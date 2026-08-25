@@ -19,9 +19,10 @@ January), migration 0041 restored the eight categories (Hotels via rename of
 the hidden Lodging row; the four money-movement ones non-deductible; Dan's
 YNAB-hidden four deliberately omitted — zero 2026 transactions), the budget
 table names its columns, and the register's header pins below the app bar.
-The $400 punch-list item is *partly* unblocked: Temporary Transfer exists,
-but fixing it is still a hand edit of both legs — see the importer-collapse
-item below.
+The $400 punch-list item was later closed for good: Wave C built splits,
+and on 2026-08-25 Dan merged the two hand-split 3/5 rows into the bank's
+one line and split it Temporary Transfer / Owner Investment, mirroring
+YNAB — parity 25/25 after.
 Prod migration order at the gate: 0038→0039→0040→0041, then a delta
 whole-branch review of every commit after `de2529e`.
 
@@ -84,7 +85,7 @@ Five findings that all touch `components/MoneyRegister.tsx`; do as one pass:
 9. **Math in money boxes.** Typing `24.36+45.72` in an amount field should
    enter 70.08. YNAB does this; parseUSD is the entry point.
 
-### Wave C — BUILT 2026-08-24 (branch splits-pending; final review pending)
+### Wave C — SHIPPED 2026-08-24 (merge e81ae70; one-save follow-up d57727f 2026-08-25, migration 0045)
 
 Splits (cross-kind legs, DB-enforced sums, inline editor per Dan's YNAB
 screenshot, Approve-on-pending) and pending imports (Enter Now/All, Reject
@@ -203,7 +204,7 @@ Deliberately left out of phase two (ready for future work):
   Activity and Available stay exact — only the status wording on closed months
   can read oddly. Versioning targets by month is real work for a cosmetic gain.
 - **Split transactions.** Exactly one occurred in all of 2026 (a 3/5 transfer
-  YNAB split two ways).
+  YNAB split two ways). Since built — Wave C, 2026-08-24.
 - **Credit-card handling.** No card in the books; YNAB's hardest feature is out
   of scope by circumstance.
 - **A second budget account.** `fetchAllBudgetTxns` filters to the one open
@@ -227,12 +228,16 @@ Deliberately left out of phase two (ready for future work):
   parity with 0030's `ledger_envelope_moves`, so not a regression, but the same
   gap the target actions now close by walking the category's own FK.
 
-**Dan's ledger punch list** (independent of the code; doing these makes the two
-books agree to the penny — every one was confirmed against the underlying rows):
+**Dan's ledger punch list — DONE (live parity 2026-08-25: 25/25 categories
+exact, RTA off only by the accepted $1.01 Novo remainder; `npm run parity`
+is the standing check).** As originally filed:
 1. Import the **$592.10** Fairmont Hotel Chicago charge (8/20).
 2. Add the missing **$35.00** Insurance refund.
 3. Add the missing **$112.51** of Audio Tools refunds.
-4. **The $400 round trip — accept it as a known variance for now.** YNAB splits
+4. **The $400 round trip — RESOLVED 2026-08-25** (Wave C splits + Dan's
+   merge-then-split of the 3/5 row; both books now hold one $2,912.60 line
+   split Owner Investment / Temporary Transfer). As originally filed —
+   "accept it as a known variance for now": YNAB splits
    the 3/5 owner-pay row two ways, $400 of it to "Temporary Transfer"; the app
    records it whole. Its counterpart is already in the ledger: a **+$400.00**
    inflow on 3/2 from Smith Checking, sitting as an uncategorised `transfer`.
@@ -247,6 +252,8 @@ books agree to the penny — every one was confirmed against the underlying rows
    to **Retained Earnings**, which is where YNAB books them.
 
 **And his 17 targets need entering by hand** — YNAB has no target export.
+(Checked on prod 2026-08-25: `ledger_category_targets` holds 0 rows — still
+outstanding.)
 
 **Move flow redesign (Dan, 2026-08-24, shipped-as-is knowingly):** the move
 dialog's Select clips against its scroll container, and the flow should be
@@ -265,11 +272,11 @@ Wood and Waves), so a future register re-import would pool their activity
 onto Owner Pay while `import:plan` happily writes their assignments — four
 budget rows showing Assigned against $0 Activity, surfacing in the September
 YNAB-vs-app comparison. No data is at risk today (the backfill is a guarded
-one-off). **Manual workaround for the $400 item:** edit the 3/5 owner-pay row
-down by $400 and add a $400 expense-kind row on Temporary Transfer (the
-outflow leg), then change the 3/2 inflow's kind off `transfer` (which cannot
-carry a category) and book it to Temporary Transfer too. Fix properly by
-teaching `mapYnabRow` to respect the row's own category within that group.
+one-off). The manual $400 workaround once described here is superseded —
+the 3/5 row is now a true split (2026-08-25). The mapYnabRow gap itself
+still stands: fix properly by teaching it to respect the row's own
+category within the Owner Transactions group before any future YNAB
+register re-import.
 
 **Month picker (added 2026-08-23, `components/MonthPicker.tsx`).** The month label
 opens a YNAB-style popover: a `‹ 2026 ›` year row over a 4x3 month grid, current
