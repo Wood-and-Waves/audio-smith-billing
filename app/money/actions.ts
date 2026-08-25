@@ -425,7 +425,7 @@ export async function updateLedgerTransaction(input: {
   if (!user) return { error: 'Not signed in.' }
 
   const { data: existing } = await supabase
-    .from('ledger_transactions').select('cleared, amount_cents').eq('id', input.id).maybeSingle()
+    .from('ledger_transactions').select('cleared, amount_cents, category_id').eq('id', input.id).maybeSingle()
   if (!existing) return { error: 'That transaction no longer exists.' }
   if (existing.cleared === 'reconciled') return { error: 'Reconciled transactions are locked.' }
 
@@ -433,9 +433,15 @@ export async function updateLedgerTransaction(input: {
   // 0042's own `ledger_transactions_refuse_amount_edit_with_legs` trigger —
   // same WHEN condition (only an actual amount change pays for the legs
   // lookup), same refusal, but caught here in the app's own friendly voice
-  // ahead of the DB trigger's raw exception text. Payee/memo/date/category
-  // edits on a split parent are untouched by this check and stay allowed.
-  if (input.amountCents !== existing.amount_cents) {
+  // ahead of the DB trigger's raw exception text. Payee/memo/date edits on
+  // a split parent stay allowed; amount AND category changes are refused.
+  // …and the same gate for a CATEGORY change (review catch): a stale edit
+  // row opened before the row was split still holds its old category — a
+  // save from that tab would silently un-null a split parent's category_id,
+  // contradicting its legs AND letting payeeMemory (which skips splits only
+  // via `category_id === null`) learn a category the row doesn't hold.
+  // Payee/memo/date-only edits stay allowed either way.
+  if (input.amountCents !== existing.amount_cents || input.categoryId !== existing.category_id) {
     const splitCheck = await isSplitParent(supabase, input.id)
     if ('error' in splitCheck) return splitCheck
     if (splitCheck.isSplit) return { error: SPLIT_PARENT_ERROR }
