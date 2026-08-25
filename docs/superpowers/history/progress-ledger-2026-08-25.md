@@ -760,3 +760,11 @@ SHIPPED 2026-08-25: prod 0046 applied and column-verified FIRST (the deployed co
   POST-SHIP: prod holds 97 moves / 0 batched (every hand move stays single-flip, as designed);
   PARITY 25/25 exact + $1.01 Novo — the wave provably changed no numbers.
   Dan out of credit here; next session resumes from a clean main with nothing pending.
+--- Calendar show-bars wave (plan: docs/superpowers/plans/2026-08-25-calendar-show-bars.md, branch calendar-bars, base a4b4a6e) ---
+Task 1: complete (e37f207, review clean — reviewer fuzz-probed span/lane/overflow invariants, zero findings)
+Task 2: complete (7360b77 + fix 
+87e5dcc, review clean; minor money-guard coverage drift fixed by controller)
+Task 4: docs + final review (READY FOR THE GATE, 0 critical) + fix wave 37d55a2 (cross-week lane continuity via layOutMonth; pre-0047 feed fallback; 4 minors). WALKTHROUGH PASS: corners verified in computed CSS (Crosser L=0px/R=4px, OverlapB wk1 L=4/R=0, wk2 L=0/R=4, FullWeek span7 both 4px); OverlapB holds lane 1 across the week break (was 1->0); empty cell -> day dialog; bar -> /shows/<id>; mobile 375px renders bars + flight dot; feed DTENDs exclusive (Crosser 0828->0904, single-day 0901->0902). Sandbox seed removed. AWAITING DAN'S SHIP GATE: prod 0047 FIRST, then merge/push/smoke.
+
+SHIPPED 2026-08-25: prod 0047 applied and verified FIRST (RPC returns show_id; anon+authenticated grants preserved by create-or-replace), then merged a4b4a6e..37d55a2, pushed, smoke calendar=307 money=307 on poll 1, branch pruned.
+  LIVE FEED VERIFIED: 15 events = 13 show RUNS + 2 flights, ZERO legacy showday UIDs. A1 PwC 11/06->DTEND 11/15 (9 days), PwC TAX 08/28->DTEND 09/04 (month-crossing). Exclusive DTEND correct on real data.
