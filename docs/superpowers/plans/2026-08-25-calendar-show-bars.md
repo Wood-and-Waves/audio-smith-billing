@@ -623,31 +623,39 @@ In `app/calendar/page.tsx`, the `show_days` half of the existing `Promise.all` c
 
   const showIds = [...new Set((windowRows ?? []).map((r) => r.show_id as string))]
 
-  const { data: dayRows, error: dayError } = showIds.length === 0
-    ? { data: [] as unknown[], error: null }
-    : await supabase
-        .from('show_days')
-        .select(
-          'id, date, travel_in, travel_out, pay_as_half_day, show_id, ' +
-            'shows(name, venue, location, timezone, clients(name))',
-        )
-        .in('show_id', showIds)
-        .order('date')
-  if (dayError) return <LoadError message={dayError.message} />
+  // A plain guarded read rather than a ternary around `await`: the two
+  // branches of a ternary have different result shapes and the union does
+  // not narrow cleanly under `tsc --noEmit`.
+  let dayRows: unknown[] = []
+  if (showIds.length > 0) {
+    const { data, error: dayError } = await supabase
+      .from('show_days')
+      .select(
+        'id, date, travel_in, travel_out, pay_as_half_day, show_id, ' +
+          'shows(name, venue, location, timezone, clients(name))',
+      )
+      .in('show_id', showIds)
+      .order('date')
+    if (dayError) return <LoadError message={dayError.message} />
+    dayRows = data ?? []
+  }
 ```
 
 `dayRowsTyped` stays as it is. Then, where `showsByDate` is built, clip it to the rendered window (it feeds the day dialog, which only ever asks about a visible date) and build `runs` from the full set:
 
+The `showsByDate` loop keeps its existing body verbatim (the `DayEntry`
+construction is unchanged). Insert exactly ONE new line, immediately after
+its `if (!d.shows) continue`:
+
 ```ts
-  const showsByDate: Record<string, DayEntry[]> = {}
-  for (const d of dayRowsTyped) {
-    if (!d.shows) continue
     // The fetch above deliberately reaches outside the grid for run
     // boundaries; the dialog only ever asks about a cell that is on screen.
     if (d.date < first || d.date > last) continue
-    const entry: DayEntry = { /* unchanged */ }
-    ;(showsByDate[d.date] ??= []).push(entry)
-  }
+```
+
+Then add the runs derivation after that loop:
+
+```ts
 
   const runs: ShowRun[] = contiguousRuns(
     dayRowsTyped.flatMap((d) =>
@@ -674,6 +682,11 @@ const DATE_ROW_H = 18
 const LANE_GAP = 4
 const LANE_H = 20
 ```
+
+The overlay's own `top` is those two constants PLUS the cell's padding,
+which is responsive (`p-1.5` = 6px on phone, `p-2` = 8px from sm+) — hence
+`top-[28px] sm:top-[30px]` below, not a single computed value. Get this
+wrong and every bar sits two pixels off its lane at one breakpoint.
 
 4. Replace the single flat `grid grid-cols-7` (the weekday header plus `grid.flat().map(...)`) with a weekday header row followed by one container per week:
 
@@ -758,8 +771,9 @@ const LANE_H = 20
                   itself is click-through; only the bars take pointer events. */}
               {bars.length > 0 && (
                 <div
-                  className="pointer-events-none absolute inset-x-0 grid grid-cols-7"
-                  style={{ top: DATE_ROW_H + LANE_GAP + 6, rowGap: LANE_H - 17 }}
+                  className="pointer-events-none absolute inset-x-0 grid grid-cols-7
+                             top-[28px] sm:top-[30px]"
+                  style={{ rowGap: LANE_H - 17 }}
                 >
                   {bars.map((b) => (
                     <Link
