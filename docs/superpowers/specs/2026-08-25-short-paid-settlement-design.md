@@ -16,7 +16,7 @@ Approved same day. His four decisions:
 
 ## The accounting, first
 
-On cash basis (which his CPA should confirm) the books need NO correction:
+On cash basis — **confirmed by Dan 2026-08-25** — the books need NO correction:
 income is what landed, the ledger already records the true deposit, and the
 $10 was never income. There is nothing to write off and nothing that reaches
 the year-end figures. What is missing is purely a bookkeeping affordance —
