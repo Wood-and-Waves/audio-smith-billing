@@ -9,7 +9,9 @@ import { clearedBalance, type BalanceLike } from '@/lib/ledgerBalance'
 import { parseOfx, type ParsedOfx } from '@/lib/ofx'
 import { planImport, type ExistingTxn } from '@/lib/ledgerImport'
 import { normalizePayee, rememberedCategories, memoryKey } from '@/lib/payeeMemory'
-import { validateTxnShape, isSaneLedgerDate, type LedgerKind } from '@/lib/ledgerRules'
+import {
+  validateTxnShape, isSaneLedgerDate, deriveKind, type LedgerKind, type CategoryForKind, type LedgerDirection,
+} from '@/lib/ledgerRules'
 import { decideIncomeRoleChange } from '@/lib/incomeRoleGuard'
 
 type Fail = { error: string }
@@ -1178,21 +1180,49 @@ async function fetchUncategorizedSamePayeeCandidates(
  * assignment moves no money and touches nothing reconcileAccount's cleared-
  * balance math depends on, so there is no reason to make an uncategorized
  * import sit locked forever just because it was swept into a reconciliation
- * before anyone got to it. Amount, date, kind, and deletion stay locked
- * through updateLedgerTransaction/deleteLedgerTransaction; only this one
- * field is exempt.
+ * before anyone got to it. Amount, date, and deletion stay locked through
+ * updateLedgerTransaction/deleteLedgerTransaction; only category (and, since
+ * H2, the kind it implies) is exempt.
+ *
+ * H2 (Wave B final review): this used to write category_id alone, leaving
+ * kind whatever it already was. The register's edit form derives kind from
+ * category + sign through lib/ledgerRules.ts's deriveKind (Wave B Task 5);
+ * this inline picker didn't, so it could leave an expense sitting
+ * uncategorized-in-spirit on the owner-pay category, or hand a row an
+ * income-role category on an outflow — a shape deriveKind itself refuses,
+ * permanently unsaveable through the edit form afterward, and payee memory
+ * would then learn and reproduce it on every future import of that payee.
+ * The fix is the same derivation, server-side: re-derive kind from the row's
+ * OWN sign (never trust the client) and the category actually being
+ * assigned, through the exact same deriveKind the add/edit forms call, and
+ * write category_id and kind together so the two can never drift apart
+ * again. A refusal here (only possible now: an income-role category on an
+ * outflow row) returns the same structured `{ error }` shape every other
+ * failure in this function already does — the inline picker's existing
+ * error path (setRowCategory, MoneyRegister) surfaces it unchanged.
  *
  * `applyToSamePayee` is the sweep half of payee memory: rememberedCategories
  * (lib/payeeMemory) only pre-fills NEW imports, so the first time a payee is
  * categorized by hand there can already be a pile of older uncategorized
  * rows for it sitting in the register. Turning this on backfills exactly
  * those — fetchUncategorizedSamePayeeCandidates above already limits the
- * pool to uncategorized income/expense rows, and the sweep below is gated
- * the same way, so a row that already has a category, a transfer row, or an
- * owner_pay row is never touched by the SWEEP (owner_pay can be categorized
- * directly, same as income/expense — see the guard below — it just isn't
- * part of payee memory's fan-out). Off, or `categoryId` null (clearing a
- * category isn't something to fan out), it's a no-op and `applied` reports 0.
+ * pool to uncategorized income/expense rows (a real owner_pay CANDIDATE row
+ * is never touched by the sweep — it isn't in that pool), and the sweep
+ * below reuses that same limit for the query. Off, or `categoryId` null
+ * (clearing a category isn't something to fan out), it's a no-op and
+ * `applied` reports 0. The sweep goes through the SAME re-derivation, but
+ * without a second deriveKind call per candidate: every candidate shares
+ * `sourceKind` (below, direction-derived — NOT `existing.kind`, see that
+ * variable's own comment for why), and for an income/expense row kind and
+ * amount sign always agree (validateTxnShape enforces income>0/expense<0 on
+ * every write path that can produce one), so every candidate has the SAME
+ * direction as the source row — deriveKind being a pure function of
+ * (category, direction) alone means it would yield the exact same
+ * `derived.kind` for each of them, including `owner_pay` when the category
+ * being applied is the owner-pay one. Reusing `derived.kind` for every
+ * candidate is correct, not a shortcut — MoneyRegister's own "Apply to all"
+ * offers this sweep for an owner-pay pick same as any other; nothing about
+ * this action refuses it.
  */
 export async function setTransactionCategory(
   id: string,
@@ -1204,7 +1234,7 @@ export async function setTransactionCategory(
   if (!user) return { error: 'Not signed in.' }
 
   const { data: existing } = await supabase
-    .from('ledger_transactions').select('kind, account_id, payee').eq('id', id).maybeSingle()
+    .from('ledger_transactions').select('kind, account_id, payee, amount_cents').eq('id', id).maybeSingle()
   if (!existing) return { error: 'That transaction no longer exists.' }
   // A transfer moves money between your own accounts and never carries a
   // category (the DB still enforces this: lt_nocat_for_transfer, migration
@@ -1215,13 +1245,25 @@ export async function setTransactionCategory(
     return { error: 'Transfers do not use a category.' }
   }
 
-  if (categoryId !== null && !(await belongsToCaller(supabase, 'ledger_categories', categoryId))) {
-    return { error: 'That category does not belong to you.' }
+  // Replaces the old bare belongsToCaller ownership check: name and
+  // budget_role are exactly what deriveKind needs, and RLS still refuses a
+  // category id that isn't the caller's own the same way belongsToCaller's
+  // narrower `select('id')` did — a miss here (wrong owner or a stale id)
+  // reads as "not found", same error text as before.
+  let category: CategoryForKind = null
+  if (categoryId !== null) {
+    const { data: cat } = await supabase
+      .from('ledger_categories').select('name, budget_role').eq('id', categoryId).maybeSingle()
+    if (!cat) return { error: 'That category does not belong to you.' }
+    category = { name: cat.name, budgetRole: cat.budget_role === 'income' ? 'income' : 'spending' }
   }
+  const direction: LedgerDirection = existing.amount_cents > 0 ? 'inflow' : 'outflow'
+  const derived = deriveKind(category, direction)
+  if ('error' in derived) return { error: derived.error }
 
   const { error } = await supabase
     .from('ledger_transactions')
-    .update({ category_id: categoryId })
+    .update({ category_id: categoryId, kind: derived.kind })
     .eq('id', id)
   if (error) return { error: error.message }
 
@@ -1230,21 +1272,41 @@ export async function setTransactionCategory(
   // and sweeping every other payee-less row would categorize rows that share
   // no payee at all — the same rule rememberedCategories applies when it
   // refuses to learn from a blank payee.
-  if (
-    applyToSamePayee && categoryId !== null && normalizePayee(existing.payee) !== ''
-    && (existing.kind === 'income' || existing.kind === 'expense')
-  ) {
-    // existing.kind is checked again here, not just excluded above — only
-    // transfer is refused outright now, so owner_pay reaches this point too,
-    // and fetchUncategorizedSamePayeeCandidates below is typed to exactly
-    // 'income' | 'expense'. Passed through so the sweep can never cross from
-    // an expense row into that payee's income rows (or the reverse) — the
-    // same kind-aware rule payeeMemory's memoryKey enforces on the import
-    // side. Narrowing here also keeps the sweep scoped to income/expense on
-    // purpose: payee memory was never meant to fan out across owner_pay rows,
-    // which the UI itself never offers this sweep for anyway.
+  //
+  // Browser verification (Wave B final review, post-H2): gated on
+  // `sourceKind` (direction-derived, below) rather than `existing.kind` —
+  // H2 itself made kind mutable on THIS row two statements up, and
+  // MoneyRegister's own applyToAll ("Apply to all" under the prompt)
+  // re-invokes this exact action a SECOND time on the SAME source row id,
+  // now with `applyToSamePayee` true, after the FIRST call (the plain pick,
+  // `setRowCategory`) already committed `kind: derived.kind` to it.
+  // `existing.kind` used to mean "this row's kind before this pick"; on
+  // that second call it instead reads back THIS ACTION'S OWN prior write.
+  // For an ordinary category that's harmless (derived.kind already equalled
+  // the row's kind), but for the owner-pay category specifically — the one
+  // pick that actually changes kind, expense -> owner_pay — the second call
+  // would see `existing.kind === 'owner_pay'`, fail the old gate, skip
+  // fetchUncategorizedSamePayeeCandidates entirely, and return `applied: 0`:
+  // "Apply to all" silently doing nothing on exactly the category this
+  // feature exists to sweep (caught live in the browser: two same-payee
+  // uncategorized rows, pick owner-pay on one, "Apply to all" on the
+  // other — "Applied to 0 more rows" with a real candidate still sitting
+  // uncategorized on screen). `direction` is the one fact about this row
+  // this action can never have just changed (amount_cents is immutable
+  // here), so `sourceKind` — what kind this row would carry with NO
+  // category, the same fallback deriveKind itself applies to an
+  // uncategorized row — is the stable value both the gate and the candidate
+  // query actually want.
+  const sourceKind: 'income' | 'expense' = direction === 'inflow' ? 'income' : 'expense'
+  if (applyToSamePayee && categoryId !== null && normalizePayee(existing.payee) !== '') {
+    // fetchUncategorizedSamePayeeCandidates below is typed to exactly
+    // 'income' | 'expense' — sourceKind (LedgerDirection has only two
+    // values) is always one of those, so no further narrowing is needed.
+    // Passed through so the sweep can never cross from an expense row into
+    // that payee's income rows (or the reverse) — the same kind-aware rule
+    // payeeMemory's memoryKey enforces on the import side.
     const { rows: candidates, error: candidatesError } =
-      await fetchUncategorizedSamePayeeCandidates(supabase, existing.account_id, id, existing.kind)
+      await fetchUncategorizedSamePayeeCandidates(supabase, existing.account_id, id, sourceKind)
     if (candidatesError) return { error: candidatesError }
 
     const targetKey = normalizePayee(existing.payee)
@@ -1253,9 +1315,12 @@ export async function setTransactionCategory(
       .map((c) => c.id)
 
     if (ids.length > 0) {
+      // derived.kind, not existing.kind — see this function's own doc
+      // comment for why every candidate re-derives to the same kind as the
+      // source row without a second deriveKind call.
       const { error: applyError } = await supabase
         .from('ledger_transactions')
-        .update({ category_id: categoryId })
+        .update({ category_id: categoryId, kind: derived.kind })
         .in('id', ids)
       if (applyError) return { error: applyError.message }
       applied = ids.length
