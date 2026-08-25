@@ -1,4 +1,4 @@
-// Ledger transaction rules, pure. Two independent checks live here:
+// Ledger transaction rules, pure. Three independent checks live here:
 //
 // validateTxnShape mirrors the DB's own check constraints (lt_income_positive,
 // lt_outflow_negative, lt_nocat_for_transfer) so a bad row is refused with a
@@ -12,6 +12,13 @@
 // way to violate it — is pinned by node --test instead of only exercised
 // through a live Server Action.
 //
+// deriveKind is the register's kind dropdown, retired (Wave B Task 5, Dan's
+// approved call, 2026-08-24) — kind is no longer a choice the form offers,
+// it is computed from which category is selected and which box (Outflow/
+// Inflow) carries the amount. validateTxnShape above stays the real backstop
+// after it: a caller that skips deriveKind (or gets it wrong) still can't
+// post a shape the DB itself would reject.
+//
 // isSaneLedgerDate is a second, unrelated guard: a plain YYYY-MM-DD date is
 // already validated upstream by lib/dates.ts's isPlainDate, which only checks
 // the string is a REAL calendar date. It does nothing about the year itself —
@@ -22,6 +29,8 @@
 //
 // No '@/' imports and no JSX — exercised by node --test, same as
 // lib/ledgerBalance.ts.
+
+import { OWNER_PAY_CATEGORY_NAME } from './ledgerCategories.ts'
 
 export type LedgerKind = 'income' | 'expense' | 'owner_pay' | 'transfer'
 export const VALID_KINDS: readonly LedgerKind[] = ['income', 'expense', 'owner_pay', 'transfer']
@@ -55,6 +64,87 @@ export function validateTxnShape(input: {
     return { error: 'Transfers do not use a category.' }
   }
   return null
+}
+
+/** Which of the register's two boxes carried the amount — the other half of
+ *  deriveKind's input, alongside the category. */
+export type LedgerDirection = 'inflow' | 'outflow'
+
+/**
+ * The category info deriveKind reasons about — never a raw category id.
+ * The caller (MoneyRegister) resolves a picker value into this shape first —
+ * `'payment-transfer'` for its own pinned Payment/Transfer row, a plain
+ * object for a real category, or `null` for Uncategorized — so this file
+ * never has to know about a sentinel id that lives in a client component.
+ * `name`, not `grp` (Wave B final review, H1) — see the doctrine-exception
+ * comment on deriveKind below for why.
+ */
+export type CategoryForKind =
+  | 'payment-transfer'
+  | { budgetRole: 'spending' | 'income'; name: string }
+  | null
+
+/**
+ * Kind is no longer picked from a dropdown (Wave B Task 5) — it's derived
+ * from WHICH category is selected and WHICH box the amount landed in. Every
+ * branch below is one row of the task's own derivation table, read top to
+ * bottom in that order:
+ *
+ *   Payment/Transfer, either direction          -> transfer, no category
+ *   an income-role category, inflow             -> income
+ *   an income-role category, outflow            -> refused — an income
+ *     category (buildBudget's own spendingIds excludes it) has no outflow
+ *     side to book against
+ *   OWNER_PAY_CATEGORY_NAME, outflow            -> owner_pay
+ *   OWNER_PAY_CATEGORY_NAME, inflow             -> falls through to the
+ *     general rule below, same as any other spending category (a
+ *     reimbursement back into the same line — the refund shape)
+ *   any other spending category, or none        -> income on inflow (a
+ *     refund — the category is carried, today's own behaviour), expense on
+ *     outflow
+ *
+ * H1 (Wave B final review): this used to key owner_pay on `grp ===
+ * 'Owner Transactions'` — but that GROUP holds five categories (Temporary
+ * Transfer, Loan to Wood and Waves, Charitable Giving, the one
+ * OWNER_PAY_CATEGORY_NAME, Money Due Wood and Waves), and only the one is
+ * actually owner pay. Keying on the group booked an outflow on any of the
+ * OTHER four as `owner_pay` too (dropping it off the P&L's expense side,
+ * lib/ledgerReports.ts branches on kind directly) and refused an inflow on
+ * all five outright (a loan repayment couldn't even be entered) — both
+ * wrong. The fix is this one exact NAME match below instead: a deliberate,
+ * narrow exception to the budget's own doctrine ("budget_role says which
+ * categories are budget rows. It is an explicit column, never inferred from
+ * the group name, which is user-editable text" — CLAUDE.md, the budget
+ * section) — budget_role IS that explicit column and is used above; this
+ * one remaining match is for a KIND, not a budget row, and there is no
+ * column for it (0038/0040 gave owner pay a real budget category, not a
+ * dedicated kind-inference column). The failure mode if Dan ever RENAMES
+ * OWNER_PAY_CATEGORY_NAME in /money/categories: an owner draw stops matching
+ * the branch below and falls through to "any other spending category",
+ * silently posting as `expense` instead of `owner_pay` — wrong, but LOUD,
+ * not silent: it shows up immediately as an inflated expense line in the
+ * P&L, the same day it happens, not months later as a quietly wrong Ready
+ * to Assign. The escape hatch if it ever bites is the same as budget_role's:
+ * give ledger_categories an explicit boolean column (an `is_owner_pay`, say)
+ * and point this one lookup at it instead of the name — one migration, one
+ * line here.
+ */
+export function deriveKind(
+  category: CategoryForKind,
+  direction: LedgerDirection,
+): { kind: LedgerKind } | { error: string } {
+  if (category === 'payment-transfer') {
+    return { kind: 'transfer' }
+  }
+  if (category !== null && category.budgetRole === 'income') {
+    return direction === 'inflow'
+      ? { kind: 'income' }
+      : { error: 'Income categories take inflows.' }
+  }
+  if (category !== null && category.name === OWNER_PAY_CATEGORY_NAME && direction === 'outflow') {
+    return { kind: 'owner_pay' }
+  }
+  return { kind: direction === 'inflow' ? 'income' : 'expense' }
 }
 
 /**

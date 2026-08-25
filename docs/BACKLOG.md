@@ -44,7 +44,23 @@ whole-branch review of every commit after `de2529e`.
 4. **Ledger headers don't stick.** Date/Payee/Category/etc. scroll away; the
    whole header row should pin while the register scrolls.
 
-### Wave B — the register's editing experience (one coherent redesign)
+### Wave B — BUILT 2026-08-24 (branch register-edit; Dan's gate pending)
+
+All five findings shipped (plan: 2026-08-24-wave-b-register-editing.md): the
+edit/add rows on the live register template with Outflow/Inflow boxes; the
+YNAB category picker with live budget balances (pinnedOptions mechanism); the
+directional move popover (Dan's spec — clipping bug dead); math in every
+money box (`parseUSDMath`); the kind dropdown retired (kind derives from
+category + box; Payment/Transfer pinned row = the form's first way to create
+transfers); the show tag off the row. Final review FIX FIRST -> five fixes
+(chief: owner_pay keys on the ONE category, not the group — the group holds
+five and only one is owner pay) -> re-review READY FOR THE GATE.
+Open residuals (backlog): applyToAll's double-write of the anchor row;
+MovePopover's Enter-commits-to-RTA default; LedgerReconcile still on
+parseUSD; the edit row's ~800px minimum between 640-800px; dead
+LedgerTxnRow.showName; M1's silent degradation lacks a diagnostic.
+
+### Wave B items as originally filed (register editing)
 
 Five findings that all touch `components/MoneyRegister.tsx`; do as one pass:
 

@@ -22,7 +22,7 @@ const HISTORY_BUTTON =
  * `undoLastMove`/`redoLastMove` (app/money/budget/actions.ts) each
  * `revalidatePath('/money/budget')` on a real write; this component follows
  * the same pending/`router.refresh()` idiom as AssignedCell and
- * MoveMoneyDialog to pick that up — no optimistic math anywhere, because a
+ * MovePopover to pick that up — no optimistic math anywhere, because a
  * move landing or lifting changes figures all over the page (Ready to
  * Assign, every affected category's Available), not just this list.
  *

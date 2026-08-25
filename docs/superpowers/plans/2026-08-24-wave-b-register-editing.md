@@ -6,8 +6,7 @@
 row aligned under its own headers with real Outflow/Inflow boxes, a
 YNAB-style category picker with live budget balances, and math in every
 money box. The two taste calls he has not made yet — retiring the kind
-dropdown, and the show tag — are explicitly **gated, not built** (see
-"Awaiting Dan").
+dropdown, and the show tag — are approved and planned as Tasks 5–6.
 
 **Architecture:** One pure expression evaluator (`lib/moneyMath.ts`), one new
 `CategoryPicker` component replacing `Select` for categories in the register,
@@ -189,23 +188,51 @@ pill, the way YNAB does it:
   clips against the viewport edges; Escape/outside-click behave.
 - [ ] Gates → commit `feat: directional move popover`.
 
-## Awaiting Dan — gated, not built
+## Task 5: Retire the kind dropdown (Dan approved 2026-08-24)
 
-1. **Retire the income/expense/owner-pay dropdown?** Direction now derives
-   from the boxes; what remains is expense-vs-owner_pay (a category can
-   decide: Owner Pay category ⇒ owner_pay kind) and transfers, which have no
-   category — YNAB routes those through a Payment/Transfer control inside
-   the picker. Ripples: P&L and reports branch on kind; refunds (inflow
-   against a spending category) currently mean kind `income` with a category
-   — retirement must define that mapping. **Recommendation: retire it**, in
-   a follow-up task with its own review, once Tasks 1–3 have settled the
-   ground it stands on.
-2. **The show tag on ledger rows?** Options: remove from the row entirely
-   (it remains in edit); keep it only when a row is linked (current
-   behaviour, real shows only). **Recommendation: keep it edit-only** — the
-   register's payee column is where his eyes go, and the tag competes.
+**Files:** Modify `components/MoneyRegister.tsx`, `components/CategoryPicker.tsx`,
+`lib/ledgerRules.ts` (one pure helper + tests); actions unchanged.
 
-## Task 4: Review + ship
+Kind derives from **(category, which box)**; the dropdown leaves both rows.
+The derivation, exact — a pure `deriveKind(category, direction)` in
+`lib/ledgerRules.ts` beside `validateTxnShape`, TDD:
+
+| Category | Inflow | Outflow |
+|---|---|---|
+| **Payment/Transfer** (picker's special row) | `transfer`, category null | `transfer`, category null |
+| income-role (`budget_role === 'income'`) | `income` | **refuse** — "Income categories take inflows." |
+| the one **Owner Pay** category (`OWNER_PAY_CATEGORY_NAME`) | `income` (money in from Dan — a rare shape; bookable) | `owner_pay` |
+| any other spending category — **including the other four Owner-Transactions categories** (Temporary Transfer, Loan to Wood and Waves, Charitable Giving, Money Due Wood and Waves) | `income` (a refund/repayment, category carried) | `expense` |
+| none | `income`, uncategorized | `expense`, uncategorized |
+
+- (Corrected at the final review, 2026-08-24: the table originally keyed
+  owner_pay on the GROUP name, but the group holds five categories and only
+  one is owner pay — Charitable Giving outflows would have vanished from the
+  P&L's expense side. The inference keys on `OWNER_PAY_CATEGORY_NAME`; the
+  failure mode is a rename of that one category, loud in the P&L; the escape
+  hatch stays an explicit column, one migration.)
+- **Payment/Transfer** joins `CategoryPicker` as a pinned row (Dan's YNAB
+  screenshot). Selecting it = category null + kind `transfer` — which also
+  gives the register its FIRST way to create transfer rows from the form,
+  un-blocking the $400 punch-list item's inflow leg properly.
+- Editing an existing row seeds the picker from its category, or
+  Payment/Transfer for a transfer row. `saveEdit`/`add` submit the derived
+  kind through the same actions — `validateTxnShape` stays the backstop.
+- `ledgerReports`/P&L untouched: every row still carries a kind, derived
+  instead of picked.
+- [ ] TDD the helper (every cell of the table, both refusals) → wire →
+  browser-verify each derivation lands the right kind (check the row's
+  rendered category/sign) → gates → commit.
+
+## Task 6: The show tag leaves the row (Dan approved 2026-08-24)
+
+**Files:** Modify `components/MoneyRegister.tsx`.
+
+Remove the show-name chip from `renderDesktopRow` and the phone row; the
+Show select stays in the edit second line, and rows linked to shows keep
+their invoice chips untouched. One commit.
+
+## Task 7: Review + ship
 
 - [ ] Final whole-branch review (top model): the sign/kind invariant under
   the new boxes (each existing kind round-trips), one evaluator entry point

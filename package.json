@@ -16,7 +16,8 @@
     "db:sql": "node --env-file=.env.local scripts/run-sql.mjs",
     "db:migrate": "node --env-file=.env.local scripts/db-migrate.mjs",
     "pdf:sample": "node scripts/pdf-sample.mjs",
-    "dropbox:auth": "node scripts/dropbox-auth.mjs"
+    "dropbox:auth": "node scripts/dropbox-auth.mjs",
+    "parity": "node --env-file=.env.local scripts/parity/ynab-live.mjs"
   },
   "engines": {
     "node": ">=22.6"

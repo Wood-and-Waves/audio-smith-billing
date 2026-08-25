@@ -1,12 +1,15 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { formatDateShort } from '@/lib/dates'
+import { formatDateShort, todayInChicago } from '@/lib/dates'
 import {
   workingBalance, clearedBalance, compareLedgerOrder, runningBalances, type BalanceLike,
 } from '@/lib/ledgerBalance'
 import {
   proposeMatches, type BankRow, type CandidateInvoice, type CandidateExpense, type Dismissal,
 } from '@/lib/ledgerMatch'
+import {
+  buildBudget, OPENING_MONTH, FIRST_BUDGET_MONTH, type BudgetCategory, type BudgetMove, type BudgetTxn,
+} from '@/lib/budget'
 import AppShell from '@/components/AppShell'
 import MoneyRegister, {
   type CategoryOption, type LedgerAccountSummary, type LedgerTxnRow, type ShowOption,
@@ -42,8 +45,16 @@ type RawTxnRow = {
   // transaction tagged to an old show or a since-hidden category still shows
   // its real name in the register — those two lists only exist to populate
   // the Select pickers, and neither is guaranteed to still contain a name
-  // some past transaction points at.
-  category: { name: string } | null
+  // some past transaction points at. budget_role rides along for the same
+  // reason as name (Wave B Task 5, name-keyed since H1): MoneyRegister's
+  // deriveKind needs a category's own name and budget role to re-derive kind
+  // on save, and a since-hidden category (categories can be hidden, never
+  // hard-deleted — see /money/categories) is exactly the case where that
+  // lookup can't go through the not-hidden `categories` list below either.
+  // No `grp` here (H1 dropped it — deriveKind keys owner_pay on name, not
+  // group; `categories` below still selects its own grp, for the picker's
+  // "Group: Name" display, an unrelated need).
+  category: { name: string; budget_role: string } | null
   show: { name: string } | null
 }
 
@@ -58,13 +69,86 @@ async function fetchAllTransactions(
       .from('ledger_transactions')
       .select(`id, date, amount_cents, kind, category_id, show_id, payee, memo, cleared, created_at,
                 receipt_path, receipt_original,
-                category:ledger_categories(name), show:shows(name)`)
+                category:ledger_categories(name, budget_role), show:shows(name)`)
       .eq('account_id', accountId)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
       .range(from, from + LEDGER_TXN_PAGE_SIZE - 1)
     if (error) return { rows: [], error: error.message }
     rows.push(...((data ?? []) as unknown as RawTxnRow[]))
+    if (!data || data.length < LEDGER_TXN_PAGE_SIZE) break
+    from += LEDGER_TXN_PAGE_SIZE
+  }
+  return { rows, error: null }
+}
+
+type RawBudgetCategoryRow = {
+  id: string; name: string; grp: string; sort: number; hidden: boolean; budget_role: string
+}
+
+/**
+ * Every category, hidden or not — CategoryPicker's own balance map (Wave B
+ * Task 3, categoryBalanceCents below) is built by running buildBudget, and
+ * that function's own comment (lib/budget.ts) is explicit that a hidden
+ * category's assigned/activity must still be counted, since hiding is a
+ * presentation concern, never an accounting one. `categories` above (the
+ * `.eq('hidden', false)` query CategoryPicker's own option LIST is built
+ * from) can't double as buildBudget's input for exactly that reason — it
+ * would silently undercount every hidden category's carry-in from month to
+ * month. Paged for the same PostgREST 1000-row-cap reason every other
+ * fetcher on this page is (see LEDGER_TXN_PAGE_SIZE's own comment); mirrors
+ * app/money/budget/page.tsx's own fetchAllCategories exactly (same columns,
+ * same order) since that page's own budget is the ground truth this map has
+ * to agree with.
+ */
+async function fetchAllCategoriesForBudget(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<{ rows: RawBudgetCategoryRow[]; error: string | null }> {
+  const rows: RawBudgetCategoryRow[] = []
+  let from = 0
+  for (;;) {
+    const { data, error } = await supabase
+      .from('ledger_categories')
+      .select('id, name, grp, sort, hidden, budget_role')
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + LEDGER_TXN_PAGE_SIZE - 1)
+    if (error) return { rows: [], error: error.message }
+    rows.push(...((data ?? []) as RawBudgetCategoryRow[]))
+    if (!data || data.length < LEDGER_TXN_PAGE_SIZE) break
+    from += LEDGER_TXN_PAGE_SIZE
+  }
+  return { rows, error: null }
+}
+
+type RawBudgetMoveRow = {
+  month: string; from_category_id: string | null; to_category_id: string | null
+  amount_cents: number; undone_at: string | null
+}
+
+/**
+ * Every budget move, owner-wide — the other half of CategoryPicker's balance
+ * map, paged the same way app/money/budget/page.tsx's own fetchAllBudgetMoves
+ * is (see that file's own comment for the PostgREST cap reasoning this
+ * mirrors). Trimmed to the four columns buildBudget's own BudgetMove type
+ * actually reads: this page never needs a move's id/created_at the way
+ * BudgetHistory's Undo/Redo does on the budget page itself — it only sums
+ * moves into a balance map, it never orders or replays them.
+ */
+async function fetchAllBudgetMoves(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<{ rows: RawBudgetMoveRow[]; error: string | null }> {
+  const rows: RawBudgetMoveRow[] = []
+  let from = 0
+  for (;;) {
+    const { data, error } = await supabase
+      .from('ledger_budget_moves')
+      .select('month, from_category_id, to_category_id, amount_cents, undone_at')
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + LEDGER_TXN_PAGE_SIZE - 1)
+    if (error) return { rows: [], error: error.message }
+    rows.push(...((data ?? []) as RawBudgetMoveRow[]))
     if (!data || data.length < LEDGER_TXN_PAGE_SIZE) break
     from += LEDGER_TXN_PAGE_SIZE
   }
@@ -259,7 +343,10 @@ export default async function MoneyPage({
   // in principle return more than one row.
   const { data: accountRow, error: accountError } = await supabase
     .from('ledger_accounts')
-    .select('id, name, opening_balance_cents, last_reconciled_at')
+    // opening_date rides along for the budget seed's own clamp below
+    // (mirroring app/money/budget/page.tsx's own openingMonth/seedMonth
+    // logic) — nothing else on this page needed it before now.
+    .select('id, name, opening_balance_cents, opening_date, last_reconciled_at')
     .eq('closed', false)
     .order('created_at', { ascending: true })
     .limit(1)
@@ -275,16 +362,19 @@ export default async function MoneyPage({
 
   const { data: categoryRows, error: categoryError } = await supabase
     .from('ledger_categories')
-    .select('id, name, grp, sort')
+    .select('id, name, grp, sort, budget_role')
     .eq('hidden', false)
     .order('grp', { ascending: true })
     .order('sort', { ascending: true })
   if (categoryError) return <LoadError message={categoryError.message} />
 
-  // grp rides along for MoneyRegister's "Group: Name" category cell — this
-  // query already selected it (below) for no reason beyond ordering until
-  // now.
-  const categories: CategoryOption[] = (categoryRows ?? []).map((c) => ({ id: c.id, name: c.name, grp: c.grp }))
+  // grp rides along for MoneyRegister's "Group: Name" category cell; both it
+  // and budget_role also feed MoneyRegister's deriveKind (Wave B Task 5) —
+  // this query already selected grp (below) for no reason beyond ordering
+  // until now, and now selects budget_role for the same reason.
+  const categories: CategoryOption[] = (categoryRows ?? []).map((c) => ({
+    id: c.id, name: c.name, grp: c.grp, budgetRole: c.budget_role as 'spending' | 'income',
+  }))
 
   // For the Add row's show tag picker only — capped, and ordered by however
   // recently the show was created, not by its own dates. A transaction tagged
@@ -311,6 +401,7 @@ export default async function MoneyPage({
         <MoneyRegister
           account={null}
           categories={categories}
+          categoryBalanceCents={{}}
           shows={shows}
           transactions={[]}
           workingBalanceCents={0}
@@ -324,6 +415,72 @@ export default async function MoneyPage({
 
   const { rows: allTxns, error: txnError } = await fetchAllTransactions(supabase, accountRow.id)
   if (txnError) return <LoadError message={txnError} />
+
+  // CategoryPicker's own balance map (Wave B Task 3) — the SAME validated
+  // arithmetic app/money/budget/page.tsx runs (lib/budget.ts's buildBudget),
+  // zero new math here. `budgetCategoryRows` and `moveRows` are the two
+  // fetches that page has and this one didn't; `allTxns` above already IS
+  // this page's own paged read of ledger_transactions, so building
+  // buildBudget's own BudgetTxn list from it (below) needs no second paged
+  // query — only the same `.gte(FIRST_BUDGET_MONTH)` filter and the same
+  // opening-balance seed row that page's own txns assembly injects.
+  //
+  // M1 (Wave B final review): either fetch failing used to LoadError the
+  // WHOLE register — but this map only feeds CategoryPicker's balance
+  // FIGURES, a decoration on top of the register, not a guard. (Every
+  // ownership/money read elsewhere on this page still fails closed with
+  // LoadError, unchanged — this is the one map that's display-only.) A
+  // transient error here now degrades to an empty map instead: no balance
+  // figures show in the picker, but Dan can still see and edit every
+  // transaction. Nothing sensitive is logged — the error text itself is
+  // simply dropped, the same as it would have been inside LoadError's own
+  // rendered message.
+  const { rows: budgetCategoryRows, error: budgetCategoryError } = await fetchAllCategoriesForBudget(supabase)
+  const { rows: moveRows, error: moveError } = await fetchAllBudgetMoves(supabase)
+
+  const categoryBalanceCents: Record<string, number> = {}
+  if (!budgetCategoryError && !moveError) {
+    const budgetCategories: BudgetCategory[] = budgetCategoryRows.map((c) => ({
+      id: c.id, name: c.name, grp: c.grp, sort: c.sort, hidden: c.hidden,
+      budgetRole: c.budget_role as 'spending' | 'income',
+    }))
+    const budgetMoves: BudgetMove[] = moveRows.map((m) => ({
+      month: m.month.slice(0, 7),
+      fromCategoryId: m.from_category_id,
+      toCategoryId: m.to_category_id,
+      amountCents: m.amount_cents,
+      undoneAt: m.undone_at,
+    }))
+
+    const currentMonth = todayInChicago().slice(0, 7)
+    // The account's opening balance is not a transaction, but it is money
+    // that needs a job just like app/money/budget/page.tsx's own RTA seed —
+    // clamped the exact same way that file's own seedMonth is (see its own
+    // comment for why both ends need the clamp), just against
+    // `currentMonth` in place of that page's navigable `last` (this page
+    // never looks past today).
+    const openingMonth = accountRow.opening_date.slice(0, 7)
+    const budgetSeedMonth =
+      openingMonth < OPENING_MONTH ? OPENING_MONTH :
+      openingMonth > currentMonth ? currentMonth :
+      openingMonth
+    const budgetTxns: BudgetTxn[] = [
+      { month: budgetSeedMonth, categoryId: null, amountCents: accountRow.opening_balance_cents },
+      // Same `.gte(FIRST_BUDGET_MONTH)` filter app/money/budget/page.tsx's
+      // own fetchAllBudgetTxns applies at the DB level — applied here in JS
+      // instead, over the SAME paged `allTxns` this page already fetched
+      // above, rather than a second query for rows this page already holds.
+      ...allTxns
+        .filter((t) => t.date >= `${FIRST_BUDGET_MONTH}-01`)
+        .map((t) => ({ month: t.date.slice(0, 7), categoryId: t.category_id, amountCents: t.amount_cents })),
+    ]
+
+    const budget = buildBudget({
+      categories: budgetCategories, moves: budgetMoves, txns: budgetTxns, targets: [],
+      fromMonth: OPENING_MONTH, toMonth: currentMonth,
+    })
+    for (const row of budget.get(currentMonth)?.rows ?? []) categoryBalanceCents[row.categoryId] = row.availableCents
+  }
 
   // Link tables + everything the Matches badge needs — both pages that touch
   // these (this one and app/money/matches/page.tsx) page past 1000 rows for
@@ -462,7 +619,11 @@ export default async function MoneyPage({
     amount_cents: t.amount_cents,
     kind: t.kind,
     category_id: t.category_id,
+    // deriveKind's own fallback for a since-hidden category (see RawTxnRow's
+    // own comment above) — undefined-vs-null doesn't matter here since
+    // t.category is either the whole join or null, never partial.
     categoryName: t.category?.name ?? null,
+    categoryBudgetRole: t.category ? (t.category.budget_role === 'income' ? 'income' : 'spending') : null,
     show_id: t.show_id,
     showName: t.show?.name ?? null,
     payee: t.payee,
@@ -490,6 +651,7 @@ export default async function MoneyPage({
       <MoneyRegister
         account={account}
         categories={categories}
+        categoryBalanceCents={categoryBalanceCents}
         shows={shows}
         transactions={transactions}
         workingBalanceCents={workingBalanceCents}

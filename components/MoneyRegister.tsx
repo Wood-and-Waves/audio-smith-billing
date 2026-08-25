@@ -5,12 +5,14 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { formatAmount, formatUSD, parseUSD } from '@/lib/money'
+import { parseUSDMath } from '@/lib/moneyMath'
 import { formatDateLong, formatDateShort, todayInChicago } from '@/lib/dates'
 import { normalizePayee } from '@/lib/payeeMemory'
-import { OWNER_PAY_CATEGORY_NAME } from '@/lib/ledgerCategories'
+import { deriveKind, type CategoryForKind, type LedgerDirection, type LedgerKind } from '@/lib/ledgerRules'
 import { type Quad } from '@/lib/receiptQuad'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select from '@/components/ui/Select'
+import CategoryPicker, { type CategoryPickerOption } from '@/components/CategoryPicker'
 import CornerAdjuster from '@/components/CornerAdjuster'
 import ReceiptLightbox from '@/components/ReceiptLightbox'
 import {
@@ -23,9 +25,7 @@ import {
   attachLedgerReceipt, replaceLedgerReceipt, removeLedgerReceipt, unlinkTransaction,
 } from '@/app/money/actions'
 
-export type LedgerKind = 'income' | 'expense' | 'owner_pay'
-
-export type CategoryOption = { id: string; name: string; grp: string }
+export type CategoryOption = { id: string; name: string; grp: string; budgetRole: 'spending' | 'income' }
 export type ShowOption = { id: string; label: string }
 
 export type LedgerTxnRow = {
@@ -35,6 +35,17 @@ export type LedgerTxnRow = {
   kind: 'income' | 'expense' | 'owner_pay' | 'transfer'
   category_id: string | null
   categoryName: string | null
+  // The row's own category's budget_role, denormalized the same way
+  // categoryName already is (see its own comment) — deriveKind's fallback
+  // (Wave B Task 5, name-keyed since H1) for a row whose category has since
+  // been hidden: hidden categories drop out of the `categories` list a
+  // lookup-by-id would otherwise use, but the row itself must still
+  // re-derive the SAME kind on an edit that never touches the category.
+  // categoryName above already carries the name half of that fallback pair
+  // (H1 dropped this field's own now-unused categoryGrp twin — deriveKind
+  // keys owner_pay on name, not group, since H1). null exactly when
+  // category_id is null.
+  categoryBudgetRole: 'spending' | 'income' | null
   show_id: string | null
   showName: string | null
   payee: string
@@ -54,22 +65,24 @@ export type LedgerAccountSummary = {
   lastReconciledAt: string | null
 }
 
-const KIND_OPTIONS = [
-  { value: 'income', label: 'Income' },
-  { value: 'expense', label: 'Expense' },
-  { value: 'owner_pay', label: 'Owner pay' },
-] as const
-
 // Transfer never carries a category (the DB agrees — lt_nocat_for_transfer,
 // migration 0038), so a transfer row shows its kind here instead of a
-// category name (see CategoryText below). It has no UI path to create one
-// yet (schema-ready for phase 2 account pairing only), but a row of that
-// kind still has to render something sane if one ever shows up. Owner pay
-// DOES carry a category now (0038 relaxed that; 0040 backfilled it) — its
-// entry here backs the Kind Select's own label instead.
+// category name (see CategoryText below). Owner pay DOES carry a category
+// now (0038 relaxed that; 0040 backfilled it) — its entry here is unused by
+// CategoryText (an owner_pay row always renders its category like any other)
+// but kept so this map still covers every kind, the same reason
+// validateTxnShape's VALID_KINDS does.
 const KIND_LABEL: Record<string, string> = {
   income: 'Income', expense: 'Expense', owner_pay: 'Owner pay', transfer: 'Transfer',
 }
+
+// Payment/Transfer's own id in CategoryPicker's pinnedOptions (Wave B Task 5,
+// Dan's YNAB screenshot) — never a real category id (those come from the
+// database), so it can't collide with one. Same pattern CategoryPicker's own
+// NEW_CATEGORY_ID uses for its "+ New Category" row. Picking this row means
+// category null + kind 'transfer' (categoryForKind/deriveKind, below) —
+// the register's first form path that can create (or edit into) a transfer.
+const TRANSFER_SENTINEL = '__transfer__'
 
 /** A click inside a cell that carries its own control (a Select, a button, a
  *  link) must never also fire the row's own click-to-edit — Select is not a
@@ -359,12 +372,22 @@ function CreateAccountCard() {
 }
 
 export default function MoneyRegister({
-  account: accountProp, categories, shows, transactions, workingBalanceCents, clearedBalanceCents,
-  uncategorizedCount, totalCount, uncategorizedOnly, headerActions,
+  account: accountProp, categories, categoryBalanceCents, shows, transactions, workingBalanceCents,
+  clearedBalanceCents, uncategorizedCount, totalCount, uncategorizedOnly, headerActions,
 }: {
   /** Null in first-run mode — every other prop is meaningless then. */
   account: LedgerAccountSummary | null
   categories: CategoryOption[]
+  /**
+   * This month's budget Available, in cents, per category id — CategoryPicker's
+   * own balances (Wave B Task 3), computed once by app/money/page.tsx via
+   * lib/budget.ts's buildBudget (the same validated arithmetic app/money/budget/page.tsx
+   * runs, not a second implementation) and handed down as a plain map so this
+   * component does no budget arithmetic of its own. A category buildBudget never
+   * scores a row for (an income-role category) is simply absent from this map,
+   * which CategoryPicker reads as "no balance to show," never a fabricated $0.00.
+   */
+  categoryBalanceCents: Record<string, number>
   shows: ShowOption[]
   /**
    * Newest first, optionally filtered by uncategorized status — see app/money/page.tsx.
@@ -415,8 +438,16 @@ export default function MoneyRegister({
   // yet" and "account just created" renders.
   const [date, setDate] = useState(todayInChicago())
   const [payee, setPayee] = useState('')
-  const [amount, setAmount] = useState('')
-  const [kind, setKind] = useState<LedgerKind>('expense')
+  // Outflow/Inflow: the register's own two boxes, not one field plus an
+  // implied sign — YNAB's own idiom (Dan's top edit-row complaint: "Everything
+  // is out of order from the headers"). Exactly one holds a value at a time;
+  // onOutflowChange/onInflowChange below enforce that. Kind is no longer
+  // state at all (Wave B Task 5, Dan's approved call): the dropdown that used
+  // to own it is gone, and add()/saveEdit() call lib/ledgerRules.ts's
+  // deriveKind at submit time instead, from whichever box holds the amount
+  // and the selected category — see categoryForKind/add() below.
+  const [outflowAmount, setOutflowAmount] = useState('')
+  const [inflowAmount, setInflowAmount] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [showId, setShowId] = useState('')
   const [memo, setMemo] = useState('')
@@ -429,8 +460,11 @@ export default function MoneyRegister({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editDate, setEditDate] = useState('')
   const [editPayee, setEditPayee] = useState('')
-  const [editAmount, setEditAmount] = useState('')
-  const [editKind, setEditKind] = useState<LedgerKind>('expense')
+  // Same Outflow/Inflow pair as the add row's own state above, seeded by
+  // startEdit from the row's sign (see its own comment). Same "no editKind
+  // state" change as the add row's kind, above.
+  const [editOutflowAmount, setEditOutflowAmount] = useState('')
+  const [editInflowAmount, setEditInflowAmount] = useState('')
   const [editCategoryId, setEditCategoryId] = useState('')
   const [editShowId, setEditShowId] = useState('')
   const [editMemo, setEditMemo] = useState('')
@@ -644,35 +678,81 @@ export default function MoneyRegister({
   // counts toward workingBalanceCents but not clearedBalanceCents.
   const unclearedCents = workingBalanceCents - clearedBalanceCents
 
-  const categoryOptions = [
-    { value: '', label: '—' },
-    ...categories.map((c) => ({ value: c.id, label: c.name })),
-  ]
+  // CategoryPicker's own option shape (Wave B Task 3) — id/name/grp plus this
+  // month's Available, looked up from the map app/money/page.tsx built via
+  // buildBudget. Undefined (not 0) for a category the map never scored (an
+  // income-role category — see categoryBalanceCents' own doc comment above);
+  // CategoryPicker reads that as "no figure," never a fabricated "$0.00".
+  const categoryPickerOptions: CategoryPickerOption[] = categories.map((c) => ({
+    id: c.id, name: c.name, grp: c.grp, availableCents: categoryBalanceCents[c.id],
+  }))
   const showOptions = [
     { value: '', label: '—' },
     ...shows.map((s) => ({ value: s.id, label: s.label })),
   ]
-  // C1: owner_pay carries a real category since 0038/0040. Looked up by name
-  // (matching migration 0039's insert/0040's backfill exactly — see
-  // OWNER_PAY_CATEGORY_NAME's own comment) so switching the Kind Select to
-  // "Owner pay" can default the picker to it instead of leaving it blank.
-  // undefined when the owner has renamed or deleted that category — the
-  // picker just starts blank in that case, same as any other kind.
-  const ownerPayCategoryId = categories.find((c) => c.name === OWNER_PAY_CATEGORY_NAME)?.id
+
+  /** Resolves a CategoryPicker value into what lib/ledgerRules.ts's
+   *  deriveKind reasons about (Wave B Task 5) — never a raw id.
+   *  `hiddenFallback` covers the one case a live lookup by id can miss: the
+   *  edit row seeded from a row whose category has since been hidden (see
+   *  LedgerTxnRow's own categoryName/categoryBudgetRole comment) — the add
+   *  row never has one, since every id it can hold came from the live
+   *  picker list below. */
+  function categoryForKind(
+    id: string,
+    hiddenFallback?: { name: string; budgetRole: 'spending' | 'income' } | null,
+  ): CategoryForKind {
+    if (id === '') return null
+    if (id === TRANSFER_SENTINEL) return 'payment-transfer'
+    const cat = categories.find((c) => c.id === id)
+    return cat ? { budgetRole: cat.budgetRole, name: cat.name } : (hiddenFallback ?? null)
+  }
+
+  /** Typing into Outflow always wins that box and always clears Inflow — YNAB's
+   *  own exclusivity rule, so "exactly one non-empty at save" holds by
+   *  construction rather than being re-checked field by field. Kind is no
+   *  longer tracked reactively while typing (Wave B Task 5): add()/saveEdit()
+   *  derive it from category + whichever box is non-empty at SUBMIT time
+   *  (deriveKind, above), so there is nothing left for this handler to flip. */
+  function onOutflowChange(v: string) {
+    setOutflowAmount(v)
+    setInflowAmount('')
+  }
+
+  /** Mirror of onOutflowChange. */
+  function onInflowChange(v: string) {
+    setInflowAmount(v)
+    setOutflowAmount('')
+  }
 
   function add() {
     setError(null)
     if (!payee.trim()) { setError('Say who this was to or from.'); return }
-    const typed = parseUSD(amount)
+    const outflowTyped = outflowAmount.trim() !== ''
+    const inflowTyped = inflowAmount.trim() !== ''
+    if (outflowTyped === inflowTyped) { setError('Enter an amount in Outflow or Inflow.'); return }
+    const typed = parseUSDMath(outflowTyped ? outflowAmount : inflowAmount)
     if (typed === null || typed <= 0) { setError('Enter an amount.'); return }
     if (!date) { setError('Pick a date.'); return }
 
-    // The user always types a positive number; the sign it posts to the
-    // ledger comes from the kind they picked, mirroring the same signed-cents
-    // rule addLedgerTransaction itself enforces (lt_income_positive /
-    // lt_outflow_negative, migration 0027) rather than trusting a minus sign
-    // Dan might or might not have typed.
-    const amountCents = kind === 'income' ? typed : -typed
+    // Kind is no longer picked — it's derived from the category and which
+    // box the amount landed in (Wave B Task 5). A refusal (an income
+    // category on an outflow — the one shape that cannot be booked)
+    // surfaces here, inline, before addLedgerTransaction is ever called.
+    const direction: LedgerDirection = outflowTyped ? 'outflow' : 'inflow'
+    const derived = deriveKind(categoryForKind(categoryId), direction)
+    if ('error' in derived) { setError(derived.error); return }
+    const kind: LedgerKind = derived.kind
+
+    // The user always types a positive number, in whichever box; the sign it
+    // posts to the ledger comes from which box, not from kind — Payment/
+    // Transfer (Wave B Task 5) can land in EITHER box, so kind alone can no
+    // longer decide this the way it could when income only ever came from
+    // Inflow and expense/owner_pay only ever came from Outflow. Mirrors the
+    // same signed-cents rule addLedgerTransaction itself enforces
+    // (lt_income_positive / lt_outflow_negative, migration 0027) rather than
+    // trusting a minus sign Dan might or might not have typed.
+    const amountCents = direction === 'inflow' ? typed : -typed
 
     start(async () => {
       const result = await addLedgerTransaction({
@@ -680,17 +760,22 @@ export default function MoneyRegister({
         date,
         amountCents,
         kind,
-        categoryId: categoryId || null,
+        // Payment/Transfer's sentinel is never a real category id — null it
+        // explicitly rather than relying on `kind === 'transfer'` to imply
+        // it, so this stays correct even if deriveKind's own rules change.
+        categoryId: categoryId === TRANSFER_SENTINEL ? null : (categoryId || null),
         showId: showId || null,
         payee,
         memo,
       })
       if ('error' in result) { setError(result.error); return }
-      // Date, kind and category carry over — a batch of entries is usually
-      // the same day, the same kind of money, and often the same category.
-      // Payee, amount and memo are specific to the one just added.
+      // Date and category carry over — a batch of entries is usually the
+      // same day and often the same category (kind isn't state to carry
+      // over anymore; it falls out of category + box every time). Payee,
+      // amount and memo are specific to the one just added.
       setPayee('')
-      setAmount('')
+      setOutflowAmount('')
+      setInflowAmount('')
       setMemo('')
       setShowId('')
       router.refresh()
@@ -780,13 +865,24 @@ export default function MoneyRegister({
     setEditingId(row.id)
     setEditDate(row.date)
     setEditPayee(row.payee)
-    setEditAmount(formatAmount(Math.abs(row.amount_cents)))
-    // 'transfer' never actually reaches here yet — nothing in this UI writes
-    // one (see KIND_LABEL's own comment) — but the edit Select only offers
-    // the three kinds the add row does, so a row of that kind still needs a
-    // safe starting point if one ever shows up.
-    setEditKind(row.kind === 'income' || row.kind === 'expense' || row.kind === 'owner_pay' ? row.kind : 'expense')
-    setEditCategoryId(row.category_id ?? '')
+    // Seed the box matching the row's own sign (income positive, expense/
+    // owner_pay negative — 0027's own constraint), never both — mirrors
+    // add()'s exclusivity rather than leaving the other box's stale value
+    // from a previous edit sitting there.
+    if (row.amount_cents > 0) {
+      setEditInflowAmount(formatAmount(row.amount_cents))
+      setEditOutflowAmount('')
+    } else {
+      setEditOutflowAmount(formatAmount(Math.abs(row.amount_cents)))
+      setEditInflowAmount('')
+    }
+    // Payment/Transfer (Wave B Task 5) is CategoryPicker's own pinned
+    // sentinel, never a real category id — a transfer row's own category_id
+    // is always null (lt_nocat_for_transfer), so seeding editCategoryId from
+    // it directly would show the picker blank/Uncategorized instead of
+    // checked on Payment/Transfer. Every other kind seeds from the row's
+    // real category_id exactly as before.
+    setEditCategoryId(row.kind === 'transfer' ? TRANSFER_SENTINEL : (row.category_id ?? ''))
     setEditShowId(row.show_id ?? '')
     setEditMemo(row.memo ?? '')
   }
@@ -797,29 +893,62 @@ export default function MoneyRegister({
     setEditingId(null)
   }
 
+  // Same pair as onOutflowChange/onInflowChange above, for the edit form's
+  // own state — kept as separate functions (not parameterized over which
+  // form) so each stays a plain closure over its own setters, matching every
+  // other add/edit pair in this file (startEdit vs add, cancelEdit vs the add
+  // row's own reset). Same "nothing left to flip" simplification as
+  // onOutflowChange/onInflowChange above.
+  function onEditOutflowChange(v: string) {
+    setEditOutflowAmount(v)
+    setEditInflowAmount('')
+  }
+
+  function onEditInflowChange(v: string) {
+    setEditInflowAmount(v)
+    setEditOutflowAmount('')
+  }
+
   function saveEdit(row: LedgerTxnRow) {
     setError(null)
     if (!editPayee.trim()) { setError('Say who this was to or from.'); return }
-    const typed = parseUSD(editAmount)
+    const outflowTyped = editOutflowAmount.trim() !== ''
+    const inflowTyped = editInflowAmount.trim() !== ''
+    if (outflowTyped === inflowTyped) { setError('Enter an amount in Outflow or Inflow.'); return }
+    const typed = parseUSDMath(outflowTyped ? editOutflowAmount : editInflowAmount)
     if (typed === null || typed <= 0) { setError('Enter an amount.'); return }
     if (!editDate) { setError('Pick a date.'); return }
 
-    // Same re-derivation rule as the add row: the field always holds a
-    // positive number; the sign that reaches the ledger comes from kind.
-    const amountCents = editKind === 'income' ? typed : -typed
+    // Same re-derivation as add(), above — with the row's own denormalized
+    // categoryName/categoryBudgetRole as categoryForKind's hidden-category
+    // fallback: editCategoryId can only hold an off-list id when it's
+    // exactly row.category_id (see editExtraOption's own comment,
+    // renderEditRow), so this is the one case that needs it.
+    const direction: LedgerDirection = outflowTyped ? 'outflow' : 'inflow'
+    const hiddenFallback = row.categoryName !== null && row.categoryBudgetRole !== null
+      ? { name: row.categoryName, budgetRole: row.categoryBudgetRole }
+      : null
+    const derived = deriveKind(categoryForKind(editCategoryId, hiddenFallback), direction)
+    if ('error' in derived) { setError(derived.error); return }
+    const kind: LedgerKind = derived.kind
+
+    // Same box-decides-the-sign rule as add(), above.
+    const amountCents = direction === 'inflow' ? typed : -typed
 
     start(async () => {
       const result = await updateLedgerTransaction({
         id: row.id,
         date: editDate,
         amountCents,
-        kind: editKind,
+        kind,
         // C1: this used to force categoryId: null whenever editKind was
         // owner_pay, which nulled out a REAL, already-assigned category on
         // every single edit of an owner_pay row — quietly undoing 0038/0040
         // one save at a time. Owner pay carries a category like any other
-        // kind now; only the picker's own value goes here.
-        categoryId: editCategoryId || null,
+        // kind now; only the picker's own value goes here (nulled instead
+        // when it's the Payment/Transfer sentinel — same reasoning as
+        // add()'s own categoryId line, above).
+        categoryId: editCategoryId === TRANSFER_SENTINEL ? null : (editCategoryId || null),
         showId: editShowId || null,
         payee: editPayee,
         memo: editMemo,
@@ -1045,198 +1174,261 @@ export default function MoneyRegister({
   }
 
   /**
-   * The edit-mode grid — identical markup for both layouts (it already
-   * stacks 2-col under sm, same as the add row above it), so this is the
-   * ONE place either layout's row switches to when `editingId` matches. The
-   * per-row × that used to sit on the display row lives here now as a plain
-   * "Delete" link, alongside the same "Adjust corners"/"Remove receipt"
-   * links the two display rows below also render (quietly, in the memo
-   * cell / chips line) for a row that HAS a receipt but ISN'T editable —
-   * Delete stays edit-mode-only, but the receipt links are never gated to
-   * it, matching removeLedgerReceipt's own doc comment.
+   * The edit-mode grid — now the SAME nine-column template the display rows
+   * render on (`gridTemplate`, live and resizable), so an editing row's
+   * fields land under their own headers instead of a private, differently-
+   * ordered template (Dan's top complaint: "Everything is out of order from
+   * the headers"). Because that template only makes sense at sm+ (below sm
+   * the register drops it entirely for the phone's 2-col stack — see
+   * `registerTemplate`'s own callers), and because a `style` attribute always
+   * wins over a class regardless of viewport, this can't be one shared block
+   * with responsive classes the way the old flat grid was: `desktop` picks
+   * between two literal layouts instead, one per call site below
+   * (renderDesktopRow's copy lives inside "hidden sm:block" and always passes
+   * true; renderPhoneRow's copy lives inside "sm:hidden" and always passes
+   * false) — each copy only ever renders while its own breakpoint is the one
+   * actually visible, so there is no flash of the wrong template.
+   *
+   * The second line (Show, Save/Cancel, and the same "Adjust corners"/
+   * "Remove receipt"/"Unlink"/"Delete" links the two display rows below also
+   * render for a row that HAS a receipt but ISN'T editable) is genuinely
+   * shared — nothing in it depends on the resizable template, so one block
+   * with a `sm:pl-9` indent (past the 2.25rem receipt rail + its gap) works
+   * for both copies: the phone copy's `sm:` never fires because that copy is
+   * never visible at sm+ in the first place.
    */
-  function renderEditRow(t: LedgerTxnRow) {
-    // categoryOptions is filtered to unhidden categories (app/money/page.tsx's
+  function renderEditRow(t: LedgerTxnRow, desktop: boolean) {
+    // categoryPickerOptions is filtered to unhidden categories (app/money/page.tsx's
     // query), so a row whose category was hidden after the fact isn't in it —
-    // the Select would show "—" for editCategoryId, which reads as "no
+    // the picker would show blank for editCategoryId, which reads as "no
     // category" and invites overwriting a real, still-assigned one by
     // accident. editCategoryId can only hold an out-of-list id in that exact
-    // case (startEdit seeds it from row.category_id and the Select below
-    // only ever hands back one of its own option values), so when that
-    // happens, append one extra option for it — labeled from t.categoryName,
+    // case (startEdit seeds it from row.category_id and the picker below
+    // only ever hands back one of its own option ids), so when that happens,
+    // pass CategoryPicker its own extraOption — labeled from t.categoryName,
     // the denormalized join already carried on the row for exactly this
     // "since-hidden or since-deleted" case (see RawTxnRow's own comment in
     // app/money/page.tsx) — rather than leave the picker lying about there
-    // being nothing there.
-    const editCategoryOptions = editCategoryId && !categoryOptions.some((o) => o.value === editCategoryId)
-      ? [...categoryOptions, { value: editCategoryId, label: `${t.categoryName ?? 'Unknown'} (hidden)` }]
-      : categoryOptions
+    // being nothing there. Unlike the old Select, this isn't spliced into
+    // the option list itself (it has no real `grp` to sit under); CategoryPicker
+    // renders it as its own checked row under "Selected" instead. Excludes
+    // the Payment/Transfer sentinel explicitly (Wave B Task 5) — that id is
+    // ALSO never in categoryPickerOptions, by design, so without this check
+    // a transfer row would spuriously get an extraOption of its own here too
+    // and the picker's closed display would show "Unknown (hidden)" instead
+    // of "Payment/Transfer" (CategoryPicker's own `selected` takes the
+    // extraOption over a merely-pinned row when both match `value`).
+    const editExtraOption = editCategoryId && editCategoryId !== TRANSFER_SENTINEL
+      && !categoryPickerOptions.some((o) => o.id === editCategoryId)
+      ? { id: editCategoryId, label: `${t.categoryName ?? 'Unknown'} (hidden)` }
+      : null
     const canAdjust = t.receipt_original !== null && t.receipt_path !== null && !t.receipt_original.endsWith('.pdf')
     const hasReceipt = t.receipt_path !== null || t.receipt_original !== null
 
-    return (
-      <>
-        {/* Mirrors the add row's own grid exactly (same columns, same phone
-            pairing) so editing feels like the same form, just pre-filled —
-            the only addition is the Save/Cancel pair filling the trailing
-            "auto" column instead of one "+ Add". */}
-        <div className="grid gap-2 grid-cols-2 sm:grid-cols-[9rem_8rem_1fr_7rem_9rem_9rem_1fr_auto] items-center">
-          <input aria-label="Date" type="date" className={FIELD_FULL} value={editDate} disabled={pending}
-                 onChange={(e) => setEditDate(e.target.value)} />
-          <Select
-            ariaLabel="Kind"
-            value={editKind}
-            disabled={pending}
-            onChange={(v) => {
-              const nextKind = v as LedgerKind
-              setEditKind(nextKind)
-              // C1: same default the add row gets — switching Kind to
-              // owner_pay defaults the picker to the Owner Pay category
-              // rather than leaving whatever was there from the row's
-              // previous kind. Editing INTO owner_pay from a different kind
-              // is the only path that reaches this; startEdit already seeds
-              // editCategoryId from the row's own real category_id when the
-              // row already IS owner_pay, so this never clobbers that.
-              if (nextKind === 'owner_pay' && ownerPayCategoryId) setEditCategoryId(ownerPayCategoryId)
-            }}
-            options={KIND_OPTIONS}
-          />
-          <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={editPayee}
-                 disabled={pending} onChange={(e) => setEditPayee(e.target.value)} />
-          <input aria-label="Amount" inputMode="decimal" placeholder="0.00"
-                 className={`${FIELD_FULL} tabular text-right`} value={editAmount} disabled={pending}
-                 onChange={(e) => setEditAmount(e.target.value)} />
-          {/* C1: owner_pay can carry a category now — this used to hide/
-              disable the picker for that kind and force-null it in saveEdit,
-              which quietly stripped a real, already-assigned category on
-              every edit. Transfer still cannot carry one, but nothing in
-              this edit form can select transfer (see KIND_OPTIONS) — a
-              transfer row that reaches here keeps whatever editKind
-              startEdit fell it back to (income/expense/owner_pay only). */}
-          <Select
-            ariaLabel="Category"
-            value={editCategoryId}
-            disabled={pending}
-            onChange={setEditCategoryId}
-            options={editCategoryOptions}
-          />
-          <Select
-            ariaLabel="Show"
-            value={editShowId}
-            disabled={pending}
-            onChange={setEditShowId}
-            options={showOptions}
-          />
-          <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={editMemo}
-                 disabled={pending} onChange={(e) => setEditMemo(e.target.value)} />
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => saveEdit(t)}
-              disabled={pending}
-              className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
-                         border border-line text-muted hover:text-ink disabled:opacity-40"
-            >
-              {pending ? 'Saving…' : 'Save'}
-            </button>
-            <button
-              type="button"
-              onClick={cancelEdit}
-              disabled={pending}
-              className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
-                         border border-line text-muted hover:text-ink disabled:opacity-40"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
+    const categorySelect = (
+      <CategoryPicker
+        ariaLabel="Category"
+        value={editCategoryId}
+        disabled={pending}
+        onChange={setEditCategoryId}
+        options={categoryPickerOptions}
+        extraOption={editExtraOption}
+        pinnedOptions={[{ id: '', label: 'Uncategorized' }, { id: TRANSFER_SENTINEL, label: 'Payment/Transfer' }]}
+      />
+    )
 
-        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-          {/* PDFs skip detection entirely (see detectCorners), so this only
-              ever shows for a photo receipt still attached. */}
-          {canAdjust && (
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => openFixLater(t)}
-              className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
-            >
-              Adjust corners
-            </button>
-          )}
-          {hasReceipt && (
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => removeReceipt(t)}
-              className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
-            >
-              Remove receipt
-            </button>
-          )}
-          {(t.invoiceNumbers.length > 0 || t.expenseLinked) && (
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => unlinkRow(t)}
-              className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
-            >
-              Unlink
-            </button>
-          )}
-          {/* Deletion of bank data is recoverable by re-import, and this row
-              was explicitly opened for editing — a single danger link, not a
-              two-step arm/confirm, matching the plan's "keep it simple". */}
+    // The second line, shared verbatim by both copies below — see the
+    // function's own doc comment for why this one can be shared while row1
+    // can't. Kind used to live here as a Select (retired, Wave B Task 5 —
+    // Dan's approved call: kind is derived from categorySelect above and
+    // which Outflow/Inflow box carries the amount, not picked).
+    //
+    // M2 (Wave B final review): `error` used to have exactly one render
+    // site, a single node below all 328+ rows (see this component's own
+    // bottom `{error &&...}`) — invisible without scrolling past the whole
+    // register, which is exactly where deriveKind's own refusals (H1/H2)
+    // fire from: a category pick this row's saveEdit rejects. A copy right
+    // here, at the point of the save/cancel buttons the error is actually
+    // ABOUT, is the fix. role="alert" here is the live one; the bottom node
+    // (this same shared `error` state) is aria-hidden now so a screen reader
+    // never announces the identical message twice for the same failure —
+    // see that node's own comment for why aria-hidden was chosen over
+    // gating it out entirely.
+    const secondLine = (
+      <>
+        <div className="mt-2 flex flex-wrap items-center gap-3 sm:pl-9">
+        <Select
+          ariaLabel="Show"
+          className="w-36"
+          value={editShowId}
+          disabled={pending}
+          onChange={setEditShowId}
+          options={showOptions}
+        />
+        <button
+          type="button"
+          onClick={() => saveEdit(t)}
+          disabled={pending}
+          className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
+                     border border-line text-muted hover:text-ink disabled:opacity-40"
+        >
+          {pending ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          type="button"
+          onClick={cancelEdit}
+          disabled={pending}
+          className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
+                     border border-line text-muted hover:text-ink disabled:opacity-40"
+        >
+          Cancel
+        </button>
+        {/* PDFs skip detection entirely (see detectCorners), so this only
+            ever shows for a photo receipt still attached. */}
+        {canAdjust && (
           <button
             type="button"
             disabled={pending}
-            onClick={() => removeRow(t)}
-            className="text-xs text-danger hover:opacity-80 underline disabled:opacity-40"
+            onClick={() => openFixLater(t)}
+            className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
           >
-            Delete
+            Adjust corners
           </button>
+        )}
+        {hasReceipt && (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => removeReceipt(t)}
+            className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
+          >
+            Remove receipt
+          </button>
+        )}
+        {(t.invoiceNumbers.length > 0 || t.expenseLinked) && (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => unlinkRow(t)}
+            className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
+          >
+            Unlink
+          </button>
+        )}
+        {/* Deletion of bank data is recoverable by re-import, and this row
+            was explicitly opened for editing — a single danger link, not a
+            two-step arm/confirm, matching the plan's "keep it simple". */}
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => removeRow(t)}
+          className="text-xs text-danger hover:opacity-80 underline disabled:opacity-40"
+        >
+          Delete
+        </button>
         </div>
+        {error && <p role="alert" className="text-xs text-danger mt-2 sm:pl-9">{error}</p>}
+      </>
+    )
+
+    if (desktop) {
+      return (
+        <>
+          <div className="grid items-center gap-x-3" style={{ gridTemplateColumns: gridTemplate }}>
+            <span aria-hidden />
+            <input aria-label="Date" type="date" className={FIELD_FULL} value={editDate} disabled={pending}
+                   onChange={(e) => setEditDate(e.target.value)} />
+            <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={editPayee}
+                   disabled={pending} onChange={(e) => setEditPayee(e.target.value)} />
+            {categorySelect}
+            <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={editMemo}
+                   disabled={pending} onChange={(e) => setEditMemo(e.target.value)} />
+            <input aria-label="Outflow" inputMode="decimal" placeholder="0.00"
+                   className={`${FIELD_FULL} tabular text-right`} value={editOutflowAmount} disabled={pending}
+                   onChange={(e) => onEditOutflowChange(e.target.value)} />
+            <input aria-label="Inflow" inputMode="decimal" placeholder="0.00"
+                   className={`${FIELD_FULL} tabular text-right`} value={editInflowAmount} disabled={pending}
+                   onChange={(e) => onEditInflowChange(e.target.value)} />
+            {/* The row's existing balance — static, muted; nothing about
+                editing changes it until the save round-trips. */}
+            <span className="tabular text-right text-muted">{formatUSD(t.balanceCents)}</span>
+            <span aria-hidden />
+          </div>
+          {secondLine}
+        </>
+      )
+    }
+
+    // Phone: the same 2-col stacked idiom the display row and the add row
+    // both use — no rail placeholders (phone has no rail columns) and no
+    // Balance cell (phone never shows one — see renderPhoneRow's own doc
+    // comment).
+    return (
+      <>
+        <div className="grid gap-2 grid-cols-2 items-center">
+          <input aria-label="Date" type="date" className={FIELD_FULL} value={editDate} disabled={pending}
+                 onChange={(e) => setEditDate(e.target.value)} />
+          <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={editPayee}
+                 disabled={pending} onChange={(e) => setEditPayee(e.target.value)} />
+          {categorySelect}
+          <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={editMemo}
+                 disabled={pending} onChange={(e) => setEditMemo(e.target.value)} />
+          <input aria-label="Outflow" inputMode="decimal" placeholder="0.00"
+                 className={`${FIELD_FULL} tabular text-right`} value={editOutflowAmount} disabled={pending}
+                 onChange={(e) => onEditOutflowChange(e.target.value)} />
+          <input aria-label="Inflow" inputMode="decimal" placeholder="0.00"
+                 className={`${FIELD_FULL} tabular text-right`} value={editInflowAmount} disabled={pending}
+                 onChange={(e) => onEditInflowChange(e.target.value)} />
+        </div>
+        {secondLine}
       </>
     )
   }
 
   /** The sm+ table row — a plain object, not a component, so it can close
    *  over every handler above without threading a dozen props through. Row
-   *  background click opens edit mode (guarded to non-reconciled,
-   *  non-transfer rows, same gate the old per-row Edit button used); every
+   *  background click opens edit mode (guarded to non-reconciled rows, same
+   *  gate the old per-row Edit button used — transfer rows became editable
+   *  in Wave B Task 5, now that Payment/Transfer can round-trip through the
+   *  form; updateLedgerTransaction never had a kind-based restriction, only
+   *  this UI's own dropdown could never produce one to edit); every
    *  interactive cell stops that click from bubbling first. */
   function renderDesktopRow(t: LedgerTxnRow) {
     if (editingId === t.id) {
       return (
         <div key={t.id} className="border-b border-line py-4 pl-3 -ml-3 pr-3">
-          {renderEditRow(t)}
+          {renderEditRow(t, true)}
         </div>
       )
     }
 
-    const editable = t.cleared !== 'reconciled' && t.kind !== 'transfer'
+    const editable = t.cleared !== 'reconciled'
     // owner_pay included: updateLedgerTransaction refuses reconciled rows
     // outright, and setTransactionCategory (the write this picker calls) is
     // the one category write exempt from that lock — so a reconciled,
     // uncategorised owner-pay row would otherwise have no path to a category
     // at all. No such row exists today (owner-pay rows auto-default), but
-    // there's no reason to leave the corner unreachable.
+    // there's no reason to leave the corner unreachable. Transfer excluded
+    // here (unlike `editable` above) on purpose: its category is ALWAYS null
+    // by the DB's own lt_nocat_for_transfer, so there is never anything for
+    // this inline picker to offer it — see CategoryText below for how a
+    // transfer row's cell renders instead.
     const inlineCategory = t.category_id === null
       && (t.kind === 'income' || t.kind === 'expense' || t.kind === 'owner_pay')
     const outflowCents = t.amount_cents < 0 ? -t.amount_cents : 0
     const inflowCents = t.amount_cents > 0 ? t.amount_cents : 0
-    // A reconciled (or transfer) row can't be opened for edit, so it never
-    // reaches renderEditRow's own "Adjust corners"/"Remove receipt" links —
-    // but removeLedgerReceipt (see its own doc comment) works on a reconciled
+    // A reconciled row can't be opened for edit, so it never reaches
+    // renderEditRow's own "Adjust corners"/"Remove receipt" links — but
+    // removeLedgerReceipt (see its own doc comment) works on a reconciled
     // row on purpose. Surface the same two links here, quietly, whenever the
     // row still has a receipt to act on.
     const showReceiptLinks = !editable && (t.receipt_path !== null || t.receipt_original !== null)
     const canAdjustReceipt = showReceiptLinks
       && t.receipt_original !== null && t.receipt_path !== null && !t.receipt_original.endsWith('.pdf')
     // Same non-editable carve-out as showReceiptLinks above, but keyed off
-    // link state instead of receipt state — a reconciled/transfer row must
-    // still be able to unlink (renderEditRow's own Unlink covers editable
-    // rows via edit mode).
+    // link state instead of receipt state — a reconciled row must still be
+    // able to unlink (renderEditRow's own Unlink covers editable rows via
+    // edit mode).
     const showUnlink = !editable && (t.invoiceNumbers.length > 0 || t.expenseLinked)
 
     return (
@@ -1254,12 +1446,6 @@ export default function MoneyRegister({
         <span className="tabular text-xs text-muted">{formatDateShort(t.date)}</span>
         <span className="min-w-0 flex items-center gap-2">
           <span className="truncate font-medium">{t.payee || '—'}</span>
-          {t.showName && (
-            <span className="text-[11px] font-bold uppercase tracking-wider text-muted
-                             bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
-              {t.showName}
-            </span>
-          )}
           {t.invoiceNumbers.length > 0 && (
             <span className="text-[11px] font-bold uppercase tracking-wider text-muted
                              bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
@@ -1269,13 +1455,13 @@ export default function MoneyRegister({
         </span>
         <div className="min-w-0" onClick={stopPropagation}>
           {inlineCategory ? (
-            <Select
+            <CategoryPicker
               size="sm"
               ariaLabel={`Category for ${t.payee || 'this transaction'}`}
               value=""
               disabled={pending}
               onChange={(v) => setRowCategory(t, v)}
-              options={categoryOptions}
+              options={categoryPickerOptions}
             />
           ) : (
             <CategoryText row={t} categories={categories} />
@@ -1334,18 +1520,14 @@ export default function MoneyRegister({
     if (editingId === t.id) {
       return (
         <li key={t.id} className="border-b border-line py-4">
-          {renderEditRow(t)}
+          {renderEditRow(t, false)}
         </li>
       )
     }
 
-    const editable = t.cleared !== 'reconciled' && t.kind !== 'transfer'
-    // owner_pay included: updateLedgerTransaction refuses reconciled rows
-    // outright, and setTransactionCategory (the write this picker calls) is
-    // the one category write exempt from that lock — so a reconciled,
-    // uncategorised owner-pay row would otherwise have no path to a category
-    // at all. No such row exists today (owner-pay rows auto-default), but
-    // there's no reason to leave the corner unreachable.
+    const editable = t.cleared !== 'reconciled'
+    // Same reasoning as renderDesktopRow's own inlineCategory — see its
+    // comment for both the owner_pay-included and transfer-excluded halves.
     const inlineCategory = t.category_id === null
       && (t.kind === 'income' || t.kind === 'expense' || t.kind === 'owner_pay')
     const outflowCents = t.amount_cents < 0 ? -t.amount_cents : 0
@@ -1375,14 +1557,14 @@ export default function MoneyRegister({
         <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
           <div onClick={stopPropagation}>
             {inlineCategory ? (
-              <Select
+              <CategoryPicker
                 size="sm"
                 className="w-40"
                 ariaLabel={`Category for ${t.payee || 'this transaction'}`}
                 value=""
                 disabled={pending}
                 onChange={(v) => setRowCategory(t, v)}
-                options={categoryOptions}
+                options={categoryPickerOptions}
               />
             ) : (
               <span className="inline-block text-[11px] text-muted bg-surface-2 rounded-field
@@ -1391,12 +1573,6 @@ export default function MoneyRegister({
               </span>
             )}
           </div>
-          {t.showName && (
-            <span className="text-[11px] font-bold uppercase tracking-wider text-muted
-                             bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
-              {t.showName}
-            </span>
-          )}
           {t.invoiceNumbers.length > 0 && (
             <span className="text-[11px] font-bold uppercase tracking-wider text-muted
                              bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
@@ -1549,63 +1725,142 @@ export default function MoneyRegister({
 
       <h2 className="eyebrow mb-4">Transactions</h2>
 
-      {/* Phone: a 2-col grid, each pair filling one row in DOM order
-          (Date+Kind, Payee+Amount, Category+Show, Memo+Add) — same idiom as
-          ExpenseLog's add row. The sm+ template gives every field its own
-          fixed-width column instead. */}
-      <div className="grid gap-2 grid-cols-2 sm:grid-cols-[9rem_8rem_1fr_7rem_9rem_9rem_1fr_auto] items-center mb-3">
-        <input aria-label="Date" type="date" className={FIELD_FULL} value={date} disabled={pending}
-               onChange={(e) => setDate(e.target.value)} />
-        <Select
-          ariaLabel="Kind"
-          value={kind}
-          disabled={pending}
-          onChange={(v) => {
-            const nextKind = v as LedgerKind
-            setKind(nextKind)
-            // C1: default the picker to the Owner Pay category the moment
-            // Kind switches to owner_pay, rather than leaving it blank the
-            // way this used to force it null outright.
-            if (nextKind === 'owner_pay' && ownerPayCategoryId) setCategoryId(ownerPayCategoryId)
-          }}
-          options={KIND_OPTIONS}
-        />
-        <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={payee} disabled={pending}
-               onChange={(e) => setPayee(e.target.value)} />
-        <input aria-label="Amount" inputMode="decimal" placeholder="0.00"
-               className={`${FIELD_FULL} tabular text-right`} value={amount} disabled={pending}
-               onChange={(e) => setAmount(e.target.value)} />
-        {/* Every kind offered here can carry a category now (C1: owner_pay
-            got one back in 0038/0040 — this used to hide/disable the picker
-            for that kind, which is exactly the bug that let the app keep
-            nulling it out on every write). Transfer still cannot, but
-            nothing in this add form ever creates a transfer row (see
-            KIND_OPTIONS), so there is no kind left here to hide this for. */}
-        <Select
-          ariaLabel="Category"
-          value={categoryId}
-          disabled={pending}
-          onChange={setCategoryId}
-          options={categoryOptions}
-        />
-        <Select
-          ariaLabel="Show"
-          value={showId}
-          disabled={pending}
-          onChange={setShowId}
-          options={showOptions}
-        />
-        <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={memo} disabled={pending}
-               onChange={(e) => setMemo(e.target.value)} />
-        <button
-          type="button"
-          onClick={add}
-          disabled={pending}
-          className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
-                     border border-line text-muted hover:text-ink disabled:opacity-40"
-        >
-          {pending ? 'Saving…' : '+ Add'}
-        </button>
+      {/* The add row now lands on the SAME live gridTemplate the display rows
+          and headers use (see renderEditRow's own doc comment for why that
+          means two literal copies rather than one shared responsive grid: a
+          `style` attribute always wins over a class, at every viewport, so
+          the resizable template can't share a block with the phone's 2-col
+          stack). Category picker, Show and the state they share (categoryId,
+          showId, ...) live above with the rest of the add row's own state —
+          kind isn't state at all anymore (Wave B Task 5): add() derives it
+          from categoryId and whichever box below carries the amount. */}
+      <div className="mb-3">
+        {/* Desktop/tablet: fields under their own headers, Outflow/Inflow as
+            real boxes instead of one Amount field plus an implied sign. */}
+        <div className="hidden sm:block">
+          {/* Same pl-3 -ml-3 pr-3 inset as the header/display rows below (they
+              carry it directly on the grid itself; the edit row's desktop
+              copy gets the same inset for free from renderDesktopRow's own
+              wrapper, but nothing wraps the add row that way, so it needs its
+              own copy here for the columns to land at the identical x
+              positions). */}
+          <div className="grid items-center gap-x-3 pl-3 -ml-3 pr-3" style={{ gridTemplateColumns: gridTemplate }}>
+            <span aria-hidden />
+            <input aria-label="Date" type="date" className={FIELD_FULL} value={date} disabled={pending}
+                   onChange={(e) => setDate(e.target.value)} />
+            <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={payee} disabled={pending}
+                   onChange={(e) => setPayee(e.target.value)} />
+            {/* Every kind offered here can carry a category now (C1: owner_pay
+                got one back in 0038/0040 — this used to hide/disable the picker
+                for that kind, which is exactly the bug that let the app keep
+                nulling it out on every write). Transfer still cannot, but that's
+                exactly what picking Payment/Transfer here means: category null,
+                kind 'transfer' — the register's first form path that creates one
+                (Wave B Task 5). */}
+            <CategoryPicker
+              ariaLabel="Category"
+              value={categoryId}
+              disabled={pending}
+              onChange={setCategoryId}
+              options={categoryPickerOptions}
+              pinnedOptions={[{ id: '', label: 'Uncategorized' }, { id: TRANSFER_SENTINEL, label: 'Payment/Transfer' }]}
+            />
+            <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={memo} disabled={pending}
+                   onChange={(e) => setMemo(e.target.value)} />
+            <input aria-label="Outflow" inputMode="decimal" placeholder="0.00"
+                   className={`${FIELD_FULL} tabular text-right`} value={outflowAmount} disabled={pending}
+                   onChange={(e) => onOutflowChange(e.target.value)} />
+            <input aria-label="Inflow" inputMode="decimal" placeholder="0.00"
+                   className={`${FIELD_FULL} tabular text-right`} value={inflowAmount} disabled={pending}
+                   onChange={(e) => onInflowChange(e.target.value)} />
+            {/* Balance: a not-yet-saved row has none — left empty rather than
+                guessing ahead of the server's own running total. */}
+            <span aria-hidden />
+            <span aria-hidden />
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-3 sm:pl-9">
+            <Select
+              ariaLabel="Show"
+              className="w-36"
+              value={showId}
+              disabled={pending}
+              onChange={setShowId}
+              options={showOptions}
+            />
+            <button
+              type="button"
+              onClick={add}
+              disabled={pending}
+              className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
+                         border border-line text-muted hover:text-ink disabled:opacity-40"
+            >
+              {pending ? 'Saving…' : '+ Add'}
+            </button>
+          </div>
+          {/* M2 (Wave B final review): a second, live copy of the shared
+              `error` state, right under the row whose deriveKind refusal
+              (H1/H2) most often produced it — the ORIGINAL single copy sits
+              below all 328+ rows, effectively invisible. See renderEditRow's
+              own doc comment on its matching copy, and the bottom node's own
+              comment, for the full aria-hidden-to-avoid-double-announcement
+              reasoning shared by all three copies. */}
+          {error && editingId === null && <p role="alert" className="text-xs text-danger mt-2 sm:pl-9">{error}</p>}
+        </div>
+
+        {/* Phone: the same 2-col stacked idiom as before (Date+Payee,
+            Category+Memo, Outflow+Inflow), Show/+Add on their own line
+            beneath — same idiom the edit row's phone copy uses. Kept in step
+            with the desktop copy above (same CategoryPicker pinnedOptions,
+            same removed Kind Select) — see that copy's own comments. */}
+        <div className="sm:hidden">
+          <div className="grid gap-2 grid-cols-2 items-center">
+            <input aria-label="Date" type="date" className={FIELD_FULL} value={date} disabled={pending}
+                   onChange={(e) => setDate(e.target.value)} />
+            <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={payee} disabled={pending}
+                   onChange={(e) => setPayee(e.target.value)} />
+            <CategoryPicker
+              ariaLabel="Category"
+              value={categoryId}
+              disabled={pending}
+              onChange={setCategoryId}
+              options={categoryPickerOptions}
+              pinnedOptions={[{ id: '', label: 'Uncategorized' }, { id: TRANSFER_SENTINEL, label: 'Payment/Transfer' }]}
+            />
+            <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={memo} disabled={pending}
+                   onChange={(e) => setMemo(e.target.value)} />
+            <input aria-label="Outflow" inputMode="decimal" placeholder="0.00"
+                   className={`${FIELD_FULL} tabular text-right`} value={outflowAmount} disabled={pending}
+                   onChange={(e) => onOutflowChange(e.target.value)} />
+            <input aria-label="Inflow" inputMode="decimal" placeholder="0.00"
+                   className={`${FIELD_FULL} tabular text-right`} value={inflowAmount} disabled={pending}
+                   onChange={(e) => onInflowChange(e.target.value)} />
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <Select
+              ariaLabel="Show"
+              className="w-36"
+              value={showId}
+              disabled={pending}
+              onChange={setShowId}
+              options={showOptions}
+            />
+            <button
+              type="button"
+              onClick={add}
+              disabled={pending}
+              className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
+                         border border-line text-muted hover:text-ink disabled:opacity-40"
+            >
+              {pending ? 'Saving…' : '+ Add'}
+            </button>
+          </div>
+          {/* Phone twin of the desktop copy above — same reasoning, same
+              shared `error`. Only one of the two is ever in the accessible
+              tree at once (Tailwind's hidden/sm:hidden is display:none, same
+              guarantee the rest of this add row already relies on), so
+              having both never double-announces. */}
+          {error && editingId === null && <p role="alert" className="text-xs text-danger mt-2">{error}</p>}
+        </div>
       </div>
 
       {uncategorizedOnly ? (
@@ -1706,7 +1961,22 @@ export default function MoneyRegister({
         </>
       )}
 
-      {error && <p role="alert" className="text-xs text-danger mt-3">{error}</p>}
+      {/* M2 (Wave B final review): this was the ONLY render site for
+          `error` — below all 328+ rows, effectively off-screen, which is
+          exactly why deriveKind's refusals (H1/H2) were invisible when they
+          fired. Two live copies now sit where the error actually happens
+          (the add row's own second line, and the edit row's), both
+          role="alert" — see their own comments. This one stays for the
+          error sources that aren't add/edit at all (receipt upload,
+          delete, the payee-memory sweep, ...), so those still have SOME
+          on-screen surface even for a row scrolled far down. But it fires
+          on the exact same `error` state as the two copies above, so
+          whenever THEY fire, this one would too — aria-hidden here (rather
+          than gating it off entirely, which would silence it for every
+          error source that has no other copy at all) keeps it visually
+          present without a screen reader announcing the same message a
+          second or third time. */}
+      {error && <p aria-hidden className="text-xs text-danger mt-3">{error}</p>}
     </section>
   )
 }
