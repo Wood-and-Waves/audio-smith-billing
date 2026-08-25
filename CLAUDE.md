@@ -332,6 +332,24 @@ status.
 
 ## Current state (2026-08-25) & where things are written
 
+- **Shipped 2026-08-25 (three waves, all live, prod migrations through
+  0047):** (1) **one-save split edit** (0045) — the split editor validates
+  against the amount the edit boxes HOLD and one Save persists date/payee/
+  memo/total/legs in ONE atomic RPC; Dan then collapsed the 3/5 hand-split
+  into a single bank-matching $2,912.60 split row. (2) **auto-assign**
+  (0046) — one button funds every underfunded target from RTA, fully, even
+  when RTA goes negative; the batch shares a `batch_id` and Undo reverses
+  the whole batch in one tap. (3) **calendar one bar per show** (0047) —
+  `lib/showRuns.ts` turns days into contiguous runs, week segments and
+  lanes; the feed publishes one VEVENT per run with an EXCLUSIVE DTEND.
+  912 tests. **Live YNAB parity after all three: 25/25 categories exact,
+  RTA off only by the accepted $1.01 Novo remainder.**
+- **What is waiting on DAN, not on code:** his 17 budget targets are still
+  unentered (prod `ledger_category_targets` = 0 rows), and auto-assign
+  renders nothing until they exist. Then September budgeted in both tools
+  and `npm run parity` at month end is the YNAB switch-off test. The
+  pending-import queue has yet to see its first real OFX month.
+
 - LIVE in prod: billing + full Money module; receipt corner
   detection/flattening (CornerAdjuster + loupe; PDFs skip corners); attach/
   replace receipts on expenses AND on ledger rows; original PDF receipts ride
