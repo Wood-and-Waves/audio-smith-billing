@@ -15,6 +15,7 @@ import InvoiceHoursToggle from '@/components/InvoiceHoursToggle'
 import { signedReceiptUrls } from '@/app/expenses/actions'
 import type { ExpenseCategory } from '@/lib/expenses'
 import type { BackupSnapshot } from '@/lib/backupSnapshot'
+import { settlementFor, type Settlement } from '@/lib/invoicePayment'
 
 export const dynamic = 'force-dynamic'
 
@@ -61,7 +62,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
     // return.
     supabase
       .from('ledger_transaction_invoices')
-      .select('ledger_transactions(date)')
+      .select('transaction_id, ledger_transactions(id, date, amount_cents)')
       .eq('invoice_id', id)
       .order('created_at', { ascending: true })
       .limit(1),
@@ -120,9 +121,35 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   // The query itself already narrowed this to one deterministic row (oldest
   // link first) via .order + .limit(1) above.
   const depositRow = (depositTxns ?? [])[0] as unknown as
-    | { ledger_transactions: { date: string } | null }
+    | {
+        transaction_id: string
+        ledger_transactions: { id: string; date: string; amount_cents: number } | null
+      }
     | undefined
   const deposit = depositRow?.ledger_transactions ?? null
+
+  // How many invoices this ONE deposit covers. A combo (the matcher's two-
+  // or three-invoice match) is exact by construction, and settlementFor
+  // needs the count to tell a combo from a lone link. null means "could not
+  // find out" — on this page an unknown must never resolve to a guess, so
+  // the settlement line below simply does not render in that case rather
+  // than risk printing a shortfall that isn't real.
+  let linkInvoiceCount: number | null = null
+  if (depositRow) {
+    const { data: siblingLinks, error: siblingError } = await supabase
+      .from('ledger_transaction_invoices')
+      .select('invoice_id')
+      .eq('transaction_id', depositRow.transaction_id)
+    if (!siblingError) linkInvoiceCount = (siblingLinks ?? []).length
+  }
+
+  const settlement: Settlement | null =
+    deposit && linkInvoiceCount !== null
+      ? settlementFor(inv.total_cents, {
+          amountCents: deposit.amount_cents,
+          invoiceCount: linkInvoiceCount,
+        })
+      : null
 
   // Fetched here, not by the PDF renderer: letting it pull a dozen remote URLs
   // would serialise a dozen round trips inside a function with a timeout — the
@@ -308,6 +335,18 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           {deposit && (
             <p className="text-xs text-muted mt-1">
               Bank deposit · {formatDateShort(deposit.date)}
+              {/* Only a real mismatch earns extra words. An exact settlement
+                  reads exactly as it did before this feature, and 'unpaid'
+                  renders nothing at all — it is reachable on an invoice
+                  hand-marked paid that carries no link, where printing
+                  "unpaid" beside a Paid badge would flatly contradict it. */}
+              {settlement && (settlement.state === 'short' || settlement.state === 'over') && (
+                <>
+                  {' · '}Paid {formatUSD(settlement.paidCents)}
+                  {' · '}{formatUSD(Math.abs(settlement.deltaCents))}{' '}
+                  {settlement.state === 'short' ? 'short' : 'over'}
+                </>
+              )}
             </p>
           )}
         </div>
