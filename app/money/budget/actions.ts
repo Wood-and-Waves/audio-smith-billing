@@ -6,6 +6,8 @@ import { isPlainDate, todayInChicago } from '@/lib/dates'
 import { FIRST_BUDGET_MONTH, MAX_MONTHS_AHEAD } from '@/lib/budget'
 import { decideCategoryOwnership } from '@/lib/categoryOwnership'
 import { assignmentDiff, validBudgetMonth, redoTarget } from '@/lib/budgetMoves'
+import { underfundedPlan } from '@/lib/budgetAutoAssign'
+import { assembleBudget } from './data'
 
 /**
  * Same return shape everywhere in this file, spelled out by Task 7's own
@@ -402,6 +404,61 @@ export async function moveBetweenCategories(
 }
 
 /**
+ * Auto-assign (Dan's decisions, 2026-08-25): fund every underfunded
+ * target this month from Ready to Assign, fully, even when that drives
+ * RTA negative — one multi-row insert sharing a batch_id so undoLastMove
+ * reverses the whole batch in one tap. `month` is the only caller input;
+ * the plan comes from the server's OWN assembly (assembleBudget — the
+ * same code the page renders from), so no client-supplied category id
+ * ever reaches this write and hidden-but-targeted categories fund
+ * correctly. An empty plan (stale button) is { ok: true, wrote: false }.
+ */
+export async function autoAssignUnderfunded(month: string): Promise<WriteResult> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not signed in.' }
+
+  const validMonth = validBudgetMonth(
+    month, todayInChicago().slice(0, 7), FIRST_BUDGET_MONTH, MAX_MONTHS_AHEAD,
+  )
+  if (!validMonth) return { ok: false, error: "That month is outside the budget's range." }
+
+  // assembleBudget's `viewMonth` and its own `months` map keys are both
+  // 'YYYY-MM' (see data.ts: buildBudget's map keys come from addMonths,
+  // always 7 chars — the same shape page.tsx's own `month` already is when
+  // it calls assembleBudget). `validMonth` above is 'YYYY-MM-01' — the DB
+  // write shape every other action in this file uses for the `month`
+  // column — so it is passed to the insert below, but NOT to assembleBudget
+  // or months.get(): `month` itself is already shape- and range-checked the
+  // instant validMonth is non-null (validBudgetMonth tests `month` before
+  // ever appending "-01"), so it is exactly assembleBudget's expected input.
+  const assembled = await assembleBudget(supabase, month)
+  if (!assembled.ok) return { ok: false, error: assembled.error }
+  if (!assembled.assembly) return { ok: false, error: 'There is no checking account yet.' }
+
+  const monthBudget = assembled.assembly.months.get(month)
+  const plan = monthBudget ? underfundedPlan(monthBudget.rows) : []
+  if (plan.length === 0) return { ok: true, wrote: false }
+
+  const batchId = crypto.randomUUID()
+  const { error } = await supabase.from('ledger_budget_moves').insert(
+    plan.map((p) => ({
+      owner_id: user.id,
+      month: validMonth,
+      from_category_id: null,
+      to_category_id: p.categoryId,
+      amount_cents: p.amountCents,
+      note: 'Auto-assign',
+      batch_id: batchId,
+    })),
+  )
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/money/budget')
+  return { ok: true, wrote: true }
+}
+
+/**
  * One move row's id + created_at, newest first by the register's own
  * tie-break order (`created_at desc, id desc` — `lbm_owner_created_idx`,
  * migration 0038). Paired with newestUndoneMove below: this one reads the
@@ -415,11 +472,12 @@ async function newestActiveMove(
   supabase: Awaited<ReturnType<typeof createClient>>,
   ownerId: string,
 ): Promise<
-  { ok: true; row: { id: string; created_at: string } | null } | { ok: false; error: string }
+  | { ok: true; row: { id: string; created_at: string; batch_id: string | null } | null }
+  | { ok: false; error: string }
 > {
   const { data, error } = await supabase
     .from('ledger_budget_moves')
-    .select('id, created_at')
+    .select('id, created_at, batch_id')
     .eq('owner_id', ownerId)
     .is('undone_at', null)
     .order('created_at', { ascending: false })
@@ -461,11 +519,12 @@ async function newestUndoneMove(
   supabase: Awaited<ReturnType<typeof createClient>>,
   ownerId: string,
 ): Promise<
-  { ok: true; row: { id: string; created_at: string } | null } | { ok: false; error: string }
+  | { ok: true; row: { id: string; created_at: string; batch_id: string | null } | null }
+  | { ok: false; error: string }
 > {
   const { data, error } = await supabase
     .from('ledger_budget_moves')
-    .select('id, created_at, undone_at')
+    .select('id, created_at, undone_at, batch_id')
     .eq('owner_id', ownerId)
     .not('undone_at', 'is', null)
     .order('undone_at', { ascending: false })
@@ -521,13 +580,18 @@ export async function undoLastMove(): Promise<WriteResult> {
   if (!active.ok) return active
   if (!active.row) return { ok: true, wrote: false }
 
-  const { data: updated, error } = await supabase
+  const stamp = new Date().toISOString()
+  let query = supabase
     .from('ledger_budget_moves')
-    .update({ undone_at: new Date().toISOString() })
-    .eq('id', active.row.id)
+    .update({ undone_at: stamp })
     .eq('owner_id', user.id)
     .is('undone_at', null)
-    .select('id')
+  // A batch head widens the flip to its whole batch (Dan's one-tap batch
+  // undo); a batchless head keeps the single-row shape, filters unchanged.
+  query = active.row.batch_id !== null
+    ? query.eq('batch_id', active.row.batch_id)
+    : query.eq('id', active.row.id)
+  const { data: updated, error } = await query.select('id')
   if (error) return { ok: false, error: error.message }
 
   revalidatePath('/money/budget')
@@ -585,13 +649,20 @@ export async function redoLastMove(): Promise<WriteResult> {
   const target = redoTarget({ newestActive: active.row, newestUndone: undone.row })
   if (target !== 'ok' || !undone.row) return { ok: true, wrote: false }
 
-  const { data: updated, error } = await supabase
+  let query = supabase
     .from('ledger_budget_moves')
     .update({ undone_at: null })
-    .eq('id', undone.row.id)
     .eq('owner_id', user.id)
     .not('undone_at', 'is', null)
-    .select('id')
+  // Mirrors undoLastMove's own widen, in reverse: a batch is only ever
+  // undone or redone as a unit, so every row sharing this batch_id already
+  // carries the same undone_at as the row newestUndoneMove picked — that
+  // single row is a faithful stand-in for the whole batch, never a partial
+  // view of one that's split across two states.
+  query = undone.row.batch_id !== null
+    ? query.eq('batch_id', undone.row.batch_id)
+    : query.eq('id', undone.row.id)
+  const { data: updated, error } = await query.select('id')
   if (error) return { ok: false, error: error.message }
 
   revalidatePath('/money/budget')
