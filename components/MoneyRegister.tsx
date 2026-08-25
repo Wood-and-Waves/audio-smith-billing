@@ -9,10 +9,12 @@ import { parseUSDMath } from '@/lib/moneyMath'
 import { formatDateLong, formatDateShort, todayInChicago } from '@/lib/dates'
 import { normalizePayee } from '@/lib/payeeMemory'
 import { deriveKind, type CategoryForKind, type LedgerDirection, type LedgerKind } from '@/lib/ledgerRules'
+import { type SplitLegInput } from '@/lib/ledgerSplits'
 import { type Quad } from '@/lib/receiptQuad'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select from '@/components/ui/Select'
 import CategoryPicker, { type CategoryPickerOption } from '@/components/CategoryPicker'
+import SplitEditor, { freshSplitSeed, type SplitEditorSeedLeg } from '@/components/SplitEditor'
 import CornerAdjuster from '@/components/CornerAdjuster'
 import ReceiptLightbox from '@/components/ReceiptLightbox'
 import {
@@ -23,10 +25,25 @@ import {
   createLedgerAccount, addLedgerTransaction, updateLedgerTransaction,
   deleteLedgerTransaction, setTransactionCleared, setTransactionCategory,
   attachLedgerReceipt, replaceLedgerReceipt, removeLedgerReceipt, unlinkTransaction,
+  replaceSplits, unsplitTransaction, enterTransactions, rejectTransaction,
 } from '@/app/money/actions'
 
 export type CategoryOption = { id: string; name: string; grp: string; budgetRole: 'spending' | 'income' }
 export type ShowOption = { id: string; label: string }
+
+/** One split leg as the register displays and re-seeds it (Wave C Task 4) —
+ *  categoryName/categoryBudgetRole ride along for the exact same
+ *  since-hidden-category fallback reason LedgerTxnRow's own pair does (see
+ *  its comment below): a leg can point at a category that's since been
+ *  hidden, and categoryPickerOptions (built from the not-hidden list) would
+ *  otherwise have nothing to seed that leg's picker with. */
+export type SplitLegRow = {
+  categoryId: string | null
+  categoryName: string | null
+  categoryBudgetRole: 'spending' | 'income' | null
+  amountCents: number
+  note: string | null
+}
 
 export type LedgerTxnRow = {
   id: string
@@ -51,6 +68,18 @@ export type LedgerTxnRow = {
   payee: string
   memo: string | null
   cleared: 'uncleared' | 'cleared' | 'reconciled'
+  /** null = pending (migration 0042) — the Pending section's own axis.
+   *  Never read directly for anything category-shaped (that's
+   *  explodeForCategories' job, Task 5) — the register only ever asks
+   *  "is this row pending," never "what month did it enter." */
+  entered_at: string | null
+  /** Split legs (Wave C Task 4) — [] means unsplit, the ordinary row. A
+   *  split parent's own category_id is forced null by replace_transaction_
+   *  splits the instant legs exist (migration 0042), so `legs.length > 0`
+   *  is this component's one, single "is this row split" test — never
+   *  re-derived from category_id being null, which owner_pay/income/expense
+   *  rows can also be for the ordinary "uncategorized" reason. */
+  legs: SplitLegRow[]
   balanceCents: number
   receipt_path: string | null
   receipt_original: string | null
@@ -83,6 +112,18 @@ const KIND_LABEL: Record<string, string> = {
 // category null + kind 'transfer' (categoryForKind/deriveKind, below) —
 // the register's first form path that can create (or edit into) a transfer.
 const TRANSFER_SENTINEL = '__transfer__'
+
+/** "Split…"'s own sentinel in the EDIT row's CategoryPicker only (Wave C
+ *  Task 4, Dan's YNAB screenshot) — same never-a-real-category-id pattern
+ *  as TRANSFER_SENTINEL above. Picking it never calls onChange's real
+ *  setter (see renderEditRow's own categorySelect below): it opens
+ *  SplitEditor instead, seeded from whichever category was selected the
+ *  instant before. The add row's and the inline (uncategorized-row)
+ *  picker's own pinnedOptions deliberately omit this id — splitting a row
+ *  that doesn't exist yet, or from the quick-pick cell, isn't offered (the
+ *  design doc's own "splitting hand-entered rows at CREATE time" carve-out
+ *  — create then edit-split is one step removed, rarely needed). */
+const SPLIT_SENTINEL = '__split__'
 
 /** A click inside a cell that carries its own control (a Select, a button, a
  *  link) must never also fire the row's own click-to-edit — Select is not a
@@ -469,6 +510,31 @@ export default function MoneyRegister({
   const [editShowId, setEditShowId] = useState('')
   const [editMemo, setEditMemo] = useState('')
 
+  // SplitEditor's own open/closed flag (Wave C Task 4) — one at a time,
+  // same "single set of state, not a per-row map" rule as editingId itself:
+  // startEdit below seeds it from the row's own `legs.length > 0` (an
+  // already-split row opens straight into the editor), the "Split…" pinned
+  // row (categorySelect's own onChange) and the display row's "Edit split"
+  // affordance both set it true directly, and cancelEdit/saveEdit/saveSplit
+  // all reset it false on their way out. `pendingSplitSeed` is the ONE piece
+  // of state that outlives a single render for the "Split…" pinned pick: a
+  // never-yet-split row has no `legs` of its own to seed from (that's
+  // freshSplitSeed's whole job), so the seed computed the instant Split… is
+  // chosen has to be remembered somewhere between that click and the
+  // SplitEditor's own mount — null whenever the editor is seeding from a
+  // real `t.legs` instead.
+  const [splitEditorOpen, setSplitEditorOpen] = useState(false)
+  const [pendingSplitSeed, setPendingSplitSeed] = useState<SplitEditorSeedLeg[] | null>(null)
+
+  // Reject's own inline arm/confirm (Wave C Task 4) — same two-step idiom as
+  // DeleteDraftInvoiceButton (arm -> named confirm, auto-disarm on silence),
+  // folded in here rather than a standalone component because it needs the
+  // same shared `pending`/`start`/`router.refresh()` every other row action
+  // in this file already uses. One row armed at a time, like editingId.
+  const [rejectConfirmId, setRejectConfirmId] = useState<string | null>(null)
+  const rejectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (rejectTimeoutRef.current) clearTimeout(rejectTimeoutRef.current) }, [])
+
   // Apply-to-more: the one-line offer under a row that was just categorized,
   // to sweep every other loaded row sharing its payee, plus the briefly-shown
   // confirmation after that sweep runs. A plain timeout (not a transition),
@@ -824,9 +890,16 @@ export default function MoneyRegister({
       if ('error' in result) { setError(result.error); return }
       const key = normalizePayee(row.payee)
       if (newCategoryId && key !== '') {
+        // legs.length === 0: a split parent's category_id is null too (the
+        // ordinary "uncategorized" reason isn't why), and the server's own
+        // sweep already excludes split parents outright (setTransactionCategory's
+        // own doc comment, app/money/actions.ts) — this mirrors that so the
+        // count shown here is never an overcount the sweep then quietly
+        // shorts.
         const count = transactions.filter((other) => (
           other.id !== row.id &&
           other.category_id === null &&
+          other.legs.length === 0 &&
           (other.kind === 'income' || other.kind === 'expense') &&
           normalizePayee(other.payee) === key
         )).length
@@ -885,12 +958,21 @@ export default function MoneyRegister({
     setEditCategoryId(row.kind === 'transfer' ? TRANSFER_SENTINEL : (row.category_id ?? ''))
     setEditShowId(row.show_id ?? '')
     setEditMemo(row.memo ?? '')
+    // A split parent (legs.length > 0) opens straight into the editor —
+    // the display row's own "Edit split" affordance and a plain click on
+    // the row body both land here, and either way there is no reason to
+    // show the row's category cell collapsed first. A never-split row
+    // opens collapsed, same as before Wave C.
+    setSplitEditorOpen(row.legs.length > 0)
+    setPendingSplitSeed(null)
   }
 
   /** Cancel restores the row — nothing was ever sent to the server. */
   function cancelEdit() {
     setError(null)
     setEditingId(null)
+    setSplitEditorOpen(false)
+    setPendingSplitSeed(null)
   }
 
   // Same pair as onOutflowChange/onInflowChange above, for the edit form's
@@ -955,6 +1037,89 @@ export default function MoneyRegister({
       })
       if ('error' in result) { setError(result.error); return }
       setEditingId(null)
+      router.refresh()
+    })
+  }
+
+  /**
+   * SplitEditor's own onSave (Wave C Task 4) — a zero-leg save routes to
+   * unsplitTransaction, otherwise replaceSplits; either way, when the row
+   * is PENDING the Save button already read "Approve" (SplitEditor's own
+   * approveOnSave prop), and a successful split write is followed by the
+   * same enterTransactions call Enter Now uses — Dan's screenshot's own
+   * "one tap does both" behavior. The enter call only fires after the split
+   * write succeeds, and only actually changes anything if the row is still
+   * pending (enterTransactions' own `is('entered_at', null)` no-ops
+   * otherwise) — never a second, redundant enter on an already-entered row.
+   */
+  function saveSplit(row: LedgerTxnRow, legs: SplitLegInput[]) {
+    setError(null)
+    start(async () => {
+      const result = legs.length === 0 ? await unsplitTransaction(row.id) : await replaceSplits(row.id, legs)
+      if ('error' in result) { setError(result.error); return }
+      if (row.entered_at === null) {
+        const entered = await enterTransactions([row.id])
+        if ('error' in entered) { setError(entered.error); return }
+      }
+      setSplitEditorOpen(false)
+      setPendingSplitSeed(null)
+      setEditingId(null)
+      router.refresh()
+    })
+  }
+
+  /** Enter Now (one id) and Enter All (the whole pending queue) share the
+   *  one enterTransactions action, same as the server side does — see its
+   *  own doc comment for why there is no separate code path per Dan's
+   *  naming. */
+  function enterNow(row: LedgerTxnRow) {
+    setError(null)
+    start(async () => {
+      const result = await enterTransactions([row.id])
+      if ('error' in result) { setError(result.error); return }
+      router.refresh()
+    })
+  }
+
+  function enterAll() {
+    setError(null)
+    const ids = transactions.filter((t) => t.entered_at === null).map((t) => t.id)
+    if (ids.length === 0) return
+    start(async () => {
+      const result = await enterTransactions(ids)
+      if ('error' in result) { setError(result.error); return }
+      router.refresh()
+    })
+  }
+
+  const REJECT_CONFIRM_TIMEOUT_MS = 4000
+
+  /** Reject's own two-step arm — see rejectConfirmId's own doc comment
+   *  above for why this lives here rather than as a standalone component. */
+  function armReject(id: string) {
+    setError(null)
+    setRejectConfirmId(id)
+    if (rejectTimeoutRef.current) clearTimeout(rejectTimeoutRef.current)
+    rejectTimeoutRef.current = setTimeout(() => setRejectConfirmId(null), REJECT_CONFIRM_TIMEOUT_MS)
+  }
+
+  function disarmReject() {
+    if (rejectTimeoutRef.current) clearTimeout(rejectTimeoutRef.current)
+    setRejectConfirmId(null)
+  }
+
+  /** The confirmed tap — rejectTransaction tombstones then deletes (its own
+   *  doc comment); the row is gone either way a warning surfaces, same
+   *  "not a rollback" policy removeRow's own storage warning already
+   *  follows. */
+  function confirmReject(row: LedgerTxnRow) {
+    if (rejectTimeoutRef.current) clearTimeout(rejectTimeoutRef.current)
+    setRejectConfirmId(null)
+    setError(null)
+    start(async () => {
+      const result = await rejectTransaction(row.id)
+      if ('error' in result) { setError(result.error); return }
+      if (result.warning) setError(result.warning)
       router.refresh()
     })
   }
@@ -1225,17 +1390,65 @@ export default function MoneyRegister({
     const canAdjust = t.receipt_original !== null && t.receipt_path !== null && !t.receipt_original.endsWith('.pdf')
     const hasReceipt = t.receipt_path !== null || t.receipt_original !== null
 
+    // A split parent's category IS its legs (migration 0042 forces
+    // category_id null the instant legs exist) — never re-derived from
+    // category_id being null, which an ordinary uncategorized row is also
+    // true for (see LedgerTxnRow's own `legs` doc comment).
+    const isSplit = t.legs.length > 0
+
+    // The edit row's own CategoryPicker gains the pinned "Split…" row (Wave
+    // C Task 4) — picking it never reaches setEditCategoryId at all: it
+    // seeds a fresh 2-leg draft from whatever category was selected the
+    // instant before (freshSplitSeed, components/SplitEditor.tsx) and opens
+    // SplitEditor instead. This picker is only ever rendered while
+    // !isSplit && !splitEditorOpen (see categoryCell below) — an
+    // already-split row shows "Split (N)"/"Edit split" in its place, per
+    // the design doc's own "the edit row's own CategoryPicker is NOT
+    // rendered for a split parent" requirement.
     const categorySelect = (
       <CategoryPicker
         ariaLabel="Category"
         value={editCategoryId}
         disabled={pending}
-        onChange={setEditCategoryId}
+        onChange={(v) => {
+          if (v === SPLIT_SENTINEL) {
+            setPendingSplitSeed(freshSplitSeed(
+              editCategoryId === TRANSFER_SENTINEL ? null : (editCategoryId || null),
+              t.amount_cents,
+            ))
+            setSplitEditorOpen(true)
+            return
+          }
+          setEditCategoryId(v)
+        }}
         options={categoryPickerOptions}
         extraOption={editExtraOption}
-        pinnedOptions={[{ id: '', label: 'Uncategorized' }, { id: TRANSFER_SENTINEL, label: 'Payment/Transfer' }]}
+        pinnedOptions={[
+          { id: '', label: 'Uncategorized' },
+          { id: TRANSFER_SENTINEL, label: 'Payment/Transfer' },
+          { id: SPLIT_SENTINEL, label: 'Split…' },
+        ]}
       />
     )
+
+    // What actually lands in the category grid slot: the SplitEditor's own
+    // footer replaces the picker entirely while it's open (nothing left to
+    // pick — the legs ARE being edited right below); an already-split row
+    // not currently mid-edit shows "Split (N)" plus the "Edit split"
+    // affordance that opens it; every other row gets the ordinary picker.
+    const categoryCell = splitEditorOpen ? (
+      <span className="block truncate text-sm text-muted">Split</span>
+    ) : isSplit ? (
+      <span className="block truncate text-sm">
+        <span className="text-muted">Split ({t.legs.length}) — </span>
+        <button
+          type="button" disabled={pending} onClick={() => setSplitEditorOpen(true)}
+          className="font-semibold text-accent underline hover:opacity-80 disabled:opacity-40"
+        >
+          Edit split
+        </button>
+      </span>
+    ) : categorySelect
 
     // The second line, shared verbatim by both copies below — see the
     // function's own doc comment for why this one can be shared while row1
@@ -1331,6 +1544,29 @@ export default function MoneyRegister({
       </>
     )
 
+    // SplitEditor replaces the second line entirely while open — its own
+    // Save/Approve and Cancel own that job instead (see its own doc
+    // comment for why the two can't coexist: this row's own Save would
+    // otherwise silently discard whatever legs are mid-edit, or try to
+    // post an amount the DB trigger refuses while legs exist). Cancel here
+    // is SplitEditor's own — it collapses the editor only, never the whole
+    // edit row (cancelEdit, by contrast, closes both).
+    const bottomBlock = splitEditorOpen ? (
+      <SplitEditor
+        parentAmountCents={t.amount_cents}
+        seedLegs={t.legs.length > 0
+          ? t.legs.map((l) => ({ categoryId: l.categoryId, amountCents: l.amountCents, note: l.note }))
+          : (pendingSplitSeed ?? [])}
+        categoryOptions={categoryPickerOptions}
+        pending={pending}
+        approveOnSave={t.entered_at === null}
+        gridTemplate={gridTemplate}
+        desktop={desktop}
+        onSave={(legs) => saveSplit(t, legs)}
+        onCancel={() => { setSplitEditorOpen(false); setPendingSplitSeed(null) }}
+      />
+    ) : secondLine
+
     if (desktop) {
       return (
         <>
@@ -1340,7 +1576,7 @@ export default function MoneyRegister({
                    onChange={(e) => setEditDate(e.target.value)} />
             <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={editPayee}
                    disabled={pending} onChange={(e) => setEditPayee(e.target.value)} />
-            {categorySelect}
+            {categoryCell}
             <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={editMemo}
                    disabled={pending} onChange={(e) => setEditMemo(e.target.value)} />
             <input aria-label="Outflow" inputMode="decimal" placeholder="0.00"
@@ -1354,7 +1590,7 @@ export default function MoneyRegister({
             <span className="tabular text-right text-muted">{formatUSD(t.balanceCents)}</span>
             <span aria-hidden />
           </div>
-          {secondLine}
+          {bottomBlock}
         </>
       )
     }
@@ -1370,7 +1606,7 @@ export default function MoneyRegister({
                  onChange={(e) => setEditDate(e.target.value)} />
           <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={editPayee}
                  disabled={pending} onChange={(e) => setEditPayee(e.target.value)} />
-          {categorySelect}
+          {categoryCell}
           <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={editMemo}
                  disabled={pending} onChange={(e) => setEditMemo(e.target.value)} />
           <input aria-label="Outflow" inputMode="decimal" placeholder="0.00"
@@ -1380,7 +1616,7 @@ export default function MoneyRegister({
                  className={`${FIELD_FULL} tabular text-right`} value={editInflowAmount} disabled={pending}
                  onChange={(e) => onEditInflowChange(e.target.value)} />
         </div>
-        {secondLine}
+        {bottomBlock}
       </>
     )
   }
@@ -1403,6 +1639,10 @@ export default function MoneyRegister({
     }
 
     const editable = t.cleared !== 'reconciled'
+    // A split parent's category is its legs — never the inline quick-pick
+    // (see LedgerTxnRow's own `legs` doc comment for why this is
+    // `legs.length > 0`, not a re-derivation from category_id being null).
+    const isSplit = t.legs.length > 0
     // owner_pay included: updateLedgerTransaction refuses reconciled rows
     // outright, and setTransactionCategory (the write this picker calls) is
     // the one category write exempt from that lock — so a reconciled,
@@ -1412,8 +1652,11 @@ export default function MoneyRegister({
     // here (unlike `editable` above) on purpose: its category is ALWAYS null
     // by the DB's own lt_nocat_for_transfer, so there is never anything for
     // this inline picker to offer it — see CategoryText below for how a
-    // transfer row's cell renders instead.
-    const inlineCategory = t.category_id === null
+    // transfer row's cell renders instead. Split excluded for the same
+    // reason as transfer: category_id is null here too, but the row is
+    // never "uncategorized" — see the isSplit branch in the category cell
+    // below.
+    const inlineCategory = !isSplit && t.category_id === null
       && (t.kind === 'income' || t.kind === 'expense' || t.kind === 'owner_pay')
     const outflowCents = t.amount_cents < 0 ? -t.amount_cents : 0
     const inflowCents = t.amount_cents > 0 ? t.amount_cents : 0
@@ -1430,6 +1673,10 @@ export default function MoneyRegister({
     // able to unlink (renderEditRow's own Unlink covers editable rows via
     // edit mode).
     const showUnlink = !editable && (t.invoiceNumbers.length > 0 || t.expenseLinked)
+    // Pending (Wave C Task 4): entered_at null. The chip's TEXT is the
+    // signal ("the chip text is the non-color signal", per the plan) — the
+    // muted row tone is decoration on top of it, never the only cue.
+    const isPending = t.entered_at === null
 
     return (
       <div
@@ -1439,13 +1686,19 @@ export default function MoneyRegister({
         className={
           `grid items-center gap-x-3 pl-3 -ml-3 pr-3 py-2 border-b border-line ${
             editable ? 'cursor-pointer hover:bg-surface' : ''
-          }`
+          } ${isPending ? 'opacity-70' : ''}`
         }
       >
         <ReceiptControl row={t} pending={pending} onView={openReceipt} onAttach={openAttach} />
         <span className="tabular text-xs text-muted">{formatDateShort(t.date)}</span>
         <span className="min-w-0 flex items-center gap-2">
           <span className="truncate font-medium">{t.payee || '—'}</span>
+          {isPending && (
+            <span className="text-[11px] font-bold uppercase tracking-wider text-muted
+                             bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
+              Pending
+            </span>
+          )}
           {t.invoiceNumbers.length > 0 && (
             <span className="text-[11px] font-bold uppercase tracking-wider text-muted
                              bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
@@ -1454,7 +1707,19 @@ export default function MoneyRegister({
           )}
         </span>
         <div className="min-w-0" onClick={stopPropagation}>
-          {inlineCategory ? (
+          {isSplit ? (
+            <span className="block truncate">
+              <span className="text-muted">Split ({t.legs.length}) — </span>
+              {editable && (
+                <button
+                  type="button" disabled={pending} onClick={() => startEdit(t)}
+                  className="font-semibold text-accent underline hover:opacity-80 disabled:opacity-40"
+                >
+                  Edit split
+                </button>
+              )}
+            </span>
+          ) : inlineCategory ? (
             <CategoryPicker
               size="sm"
               ariaLabel={`Category for ${t.payee || 'this transaction'}`}
@@ -1469,8 +1734,45 @@ export default function MoneyRegister({
         </div>
         <div className="min-w-0">
           <span className="block truncate text-xs text-muted">{t.memo}</span>
-          {(showReceiptLinks || showUnlink) && (
+          {(showReceiptLinks || showUnlink || isPending) && (
             <div className="flex items-center gap-x-3">
+              {isPending && (
+                rejectConfirmId === t.id ? (
+                  <>
+                    <button
+                      type="button" disabled={pending}
+                      onClick={(e) => { e.stopPropagation(); confirmReject(t) }}
+                      className="text-xs text-danger hover:opacity-80 underline disabled:opacity-40"
+                    >
+                      {pending ? 'Rejecting…' : 'Confirm reject?'}
+                    </button>
+                    <button
+                      type="button" disabled={pending}
+                      onClick={(e) => { e.stopPropagation(); disarmReject() }}
+                      className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
+                    >
+                      Never mind
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button" disabled={pending}
+                      onClick={(e) => { e.stopPropagation(); enterNow(t) }}
+                      className="text-xs text-accent hover:opacity-80 underline disabled:opacity-40"
+                    >
+                      Enter Now
+                    </button>
+                    <button
+                      type="button" disabled={pending}
+                      onClick={(e) => { e.stopPropagation(); armReject(t.id) }}
+                      className="text-xs text-danger hover:opacity-80 underline disabled:opacity-40"
+                    >
+                      Reject
+                    </button>
+                  </>
+                )
+              )}
               {showReceiptLinks && canAdjustReceipt && (
                 <button
                   type="button"
@@ -1526,9 +1828,11 @@ export default function MoneyRegister({
     }
 
     const editable = t.cleared !== 'reconciled'
-    // Same reasoning as renderDesktopRow's own inlineCategory — see its
-    // comment for both the owner_pay-included and transfer-excluded halves.
-    const inlineCategory = t.category_id === null
+    // Same reasoning as renderDesktopRow's own isSplit/inlineCategory —
+    // see that comment for both the owner_pay-included and
+    // transfer/split-excluded halves.
+    const isSplit = t.legs.length > 0
+    const inlineCategory = !isSplit && t.category_id === null
       && (t.kind === 'income' || t.kind === 'expense' || t.kind === 'owner_pay')
     const outflowCents = t.amount_cents < 0 ? -t.amount_cents : 0
     const inflowCents = t.amount_cents > 0 ? t.amount_cents : 0
@@ -1537,12 +1841,14 @@ export default function MoneyRegister({
     const canAdjustReceipt = showReceiptLinks
       && t.receipt_original !== null && t.receipt_path !== null && !t.receipt_original.endsWith('.pdf')
     const showUnlink = !editable && (t.invoiceNumbers.length > 0 || t.expenseLinked)
+    // Same pending flag as renderDesktopRow's own — see its comment.
+    const isPending = t.entered_at === null
 
     return (
       <li
         key={t.id}
         onClick={() => { if (editable) startEdit(t) }}
-        className={`border-b border-line py-3 ${editable ? 'cursor-pointer' : ''}`}
+        className={`border-b border-line py-3 ${editable ? 'cursor-pointer' : ''} ${isPending ? 'opacity-70' : ''}`}
       >
         <div className="flex items-baseline gap-2">
           <span className="font-semibold flex-1 min-w-0 truncate">{t.payee || '—'}</span>
@@ -1555,8 +1861,28 @@ export default function MoneyRegister({
           <ClearedControl row={t} pending={pending} onToggle={() => toggleCleared(t)} />
         </div>
         <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
+          {isPending && (
+            <span className="text-[11px] font-bold uppercase tracking-wider text-muted
+                             bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
+              Pending
+            </span>
+          )}
           <div onClick={stopPropagation}>
-            {inlineCategory ? (
+            {isSplit ? (
+              <span className="inline-flex items-center gap-1 text-[11px] text-muted
+                               bg-surface-2 rounded-field px-1.5 py-0.5 truncate max-w-[11rem]">
+                Split ({t.legs.length})
+                {editable && (
+                  <button
+                    type="button" disabled={pending}
+                    onClick={(e) => { e.stopPropagation(); startEdit(t) }}
+                    className="font-semibold text-accent underline hover:opacity-80 disabled:opacity-40"
+                  >
+                    Edit
+                  </button>
+                )}
+              </span>
+            ) : inlineCategory ? (
               <CategoryPicker
                 size="sm"
                 className="w-40"
@@ -1580,6 +1906,43 @@ export default function MoneyRegister({
             </span>
           )}
           <ReceiptControl row={t} pending={pending} onView={openReceipt} onAttach={openAttach} />
+          {isPending && (
+            rejectConfirmId === t.id ? (
+              <>
+                <button
+                  type="button" disabled={pending}
+                  onClick={(e) => { e.stopPropagation(); confirmReject(t) }}
+                  className="text-xs text-danger hover:opacity-80 underline disabled:opacity-40"
+                >
+                  {pending ? 'Rejecting…' : 'Confirm reject?'}
+                </button>
+                <button
+                  type="button" disabled={pending}
+                  onClick={(e) => { e.stopPropagation(); disarmReject() }}
+                  className="text-xs text-muted hover:text-ink underline disabled:opacity-40"
+                >
+                  Never mind
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button" disabled={pending}
+                  onClick={(e) => { e.stopPropagation(); enterNow(t) }}
+                  className="text-xs text-accent hover:opacity-80 underline disabled:opacity-40"
+                >
+                  Enter Now
+                </button>
+                <button
+                  type="button" disabled={pending}
+                  onClick={(e) => { e.stopPropagation(); armReject(t.id) }}
+                  className="text-xs text-danger hover:opacity-80 underline disabled:opacity-40"
+                >
+                  Reject
+                </button>
+              </>
+            )
+          )}
           {showReceiptLinks && (
             <>
               {canAdjustReceipt && (
@@ -1618,20 +1981,62 @@ export default function MoneyRegister({
     )
   }
 
-  // Phone grouping, over the same (newest-first) list the desktop table renders:
-  // every uncleared row first, under one "Pending" header, in whatever order they
-  // already carry; then the rest bucketed by date. Bucketing by "does this row's
-  // date match the open bucket" rather than a Map works because `transactions` is
-  // already sorted (newest ledger order first) — same-date rows are always
-  // contiguous once the interleaved uncleared ones are pulled out, so this never
-  // needs to re-sort.
-  const pendingRows = transactions.filter((t) => t.cleared === 'uncleared')
-  const clearedRows = transactions.filter((t) => t.cleared !== 'uncleared')
+  // Pending (Wave C Task 4, entered_at null) — Dan's own reviewable import
+  // queue, pinned above EVERYTHING else on both layouts (his YNAB
+  // screenshot's own "Pending Transactions" group). Partitioned out of
+  // `transactions` entirely rather than duplicated: a pending row renders
+  // once, in this section, never again in the dated list/table below —
+  // same "pulled out, not duplicated" shape the phone grouping already used
+  // for uncleared rows before this wave (see its own comment, now renamed,
+  // just below). Balances are untouched by this split: balanceCents is
+  // computed per-row in app/money/page.tsx over the FULL account regardless
+  // of which section a row ends up rendered in (Dan's option 1 — pending
+  // counts in working/cleared balances).
+  const pendingQueue = transactions.filter((t) => t.entered_at === null)
+  const nonPending = transactions.filter((t) => t.entered_at !== null)
+
+  // Phone grouping, over the same (newest-first) NON-PENDING rows the
+  // desktop table renders: every uncleared row first, under an "Uncleared"
+  // header (renamed from "Pending" now that Wave C gives that word its own,
+  // different meaning above — the section built from pendingQueue owns it
+  // instead), then the rest bucketed by date. Bucketing by "does this row's
+  // date match the open bucket" rather than a Map works because
+  // `nonPending` is still newest-first (a filter over an already-sorted
+  // array preserves order) — same-date rows are always contiguous once the
+  // interleaved uncleared ones are pulled out, so this never needs to
+  // re-sort.
+  const unclearedRows = nonPending.filter((t) => t.cleared === 'uncleared')
+  const clearedRows = nonPending.filter((t) => t.cleared !== 'uncleared')
   const dateGroups: { date: string; rows: LedgerTxnRow[] }[] = []
   for (const t of clearedRows) {
     const open = dateGroups[dateGroups.length - 1]
     if (open && open.date === t.date) open.rows.push(t)
     else dateGroups.push({ date: t.date, rows: [t] })
+  }
+
+  /** A plain, non-sticky, non-resizable copy of the desktop column header —
+   *  used above the Pending section's own rows so its grid still reads
+   *  under labels, without touching payeeHeadRef/memoHeadRef (which must
+   *  stay attached to exactly one DOM node — the real, sticky header below
+   *  still owns them and the column-resize math they feed) or duplicating
+   *  the drag grips onto a second set of pointer handlers. */
+  function pendingColumnHeader() {
+    return (
+      <div
+        style={{ gridTemplateColumns: gridTemplate }}
+        className="grid gap-x-3 pl-3 -ml-3 pr-3 pt-1 pb-2 mb-1 border-b border-line"
+      >
+        <span aria-hidden />
+        <span className="eyebrow">Date</span>
+        <span className="eyebrow">Payee</span>
+        <span className="eyebrow">Category</span>
+        <span className="eyebrow">Memo</span>
+        <span className="eyebrow text-right">Outflow</span>
+        <span className="eyebrow text-right">Inflow</span>
+        <span className="eyebrow text-right">Balance</span>
+        <span aria-hidden />
+      </div>
+    )
   }
 
   return (
@@ -1906,6 +2311,35 @@ export default function MoneyRegister({
         </p>
       )}
 
+      {/* Pending (Wave C Task 4) — pinned above EVERYTHING below, both
+          layouts, per the design doc's own "pinned above the dated list"
+          (Dan's YNAB screenshot's "Pending Transactions" group). Hidden
+          entirely at zero, same as the old uncleared-only phone group used
+          to be (now "Uncleared", just below) — an empty header with an
+          Enter All that would do nothing is worse than no section at all. */}
+      {pendingQueue.length > 0 && (
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-2">
+            <p className="eyebrow">Pending ({pendingQueue.length})</p>
+            <button
+              type="button"
+              onClick={enterAll}
+              disabled={pending}
+              className="text-xs font-semibold text-accent hover:opacity-80 disabled:opacity-40"
+            >
+              Enter All
+            </button>
+          </div>
+          <div className="hidden sm:block">
+            {pendingColumnHeader()}
+            {pendingQueue.map(renderDesktopRow)}
+          </div>
+          <ul className="sm:hidden border-t border-line">
+            {pendingQueue.map(renderPhoneRow)}
+          </ul>
+        </div>
+      )}
+
       {transactions.length === 0 ? (
         <p className="text-muted border-l-2 border-line pl-4 py-1">
           {uncategorizedOnly ? 'Nothing uncategorized.' : 'No transactions yet.'}
@@ -1914,7 +2348,9 @@ export default function MoneyRegister({
         <>
           {/* Desktop/tablet: a YNAB-style spreadsheet — one CSS grid per row,
               a shared column template (resizable via the header grips), matching the
-              edit-mode grid the phone list below also drops into. */}
+              edit-mode grid the phone list below also drops into. Rows here are
+              the NON-pending set (nonPending) — a pending row renders once, in
+              the Pending section above, never twice. */}
           <div className="hidden sm:block">
             <div
               style={{ gridTemplateColumns: gridTemplate }}
@@ -1935,17 +2371,19 @@ export default function MoneyRegister({
               <span className="eyebrow text-right">Balance</span>
               <span aria-hidden />
             </div>
-            {transactions.map(renderDesktopRow)}
+            {nonPending.map(renderDesktopRow)}
           </div>
 
-          {/* Phone: YNAB-mobile's date-grouped list — a "Pending" section for
-              every uncleared row, then one section per date. */}
+          {/* Phone: YNAB-mobile's date-grouped list — an "Uncleared" section
+              (Wave C's rename: the word "Pending" now belongs to the section
+              above) for every uncleared, non-pending row, then one section
+              per date. */}
           <div className="sm:hidden">
-            {pendingRows.length > 0 && (
+            {unclearedRows.length > 0 && (
               <div className="mb-2">
-                <p className="eyebrow mb-2">Pending</p>
+                <p className="eyebrow mb-2">Uncleared</p>
                 <ul className="border-t border-line">
-                  {pendingRows.map(renderPhoneRow)}
+                  {unclearedRows.map(renderPhoneRow)}
                 </ul>
               </div>
             )}

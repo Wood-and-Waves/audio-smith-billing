@@ -12,7 +12,7 @@ import {
 } from '@/lib/budget'
 import AppShell from '@/components/AppShell'
 import MoneyRegister, {
-  type CategoryOption, type LedgerAccountSummary, type LedgerTxnRow, type ShowOption,
+  type CategoryOption, type LedgerAccountSummary, type LedgerTxnRow, type ShowOption, type SplitLegRow,
 } from '@/components/MoneyRegister'
 import LedgerImportReconcile from '@/components/LedgerImportReconcile'
 import { ensureDefaultCategories } from '@/app/money/actions'
@@ -38,6 +38,12 @@ type RawTxnRow = {
   memo: string | null
   cleared: 'uncleared' | 'cleared' | 'reconciled'
   created_at: string
+  // null = pending (migration 0042) — the register's Pending section reads
+  // this directly (LedgerTxnRow.entered_at, unchanged here); nothing on
+  // THIS page re-derives anything from it yet (Task 5's job: exploding legs
+  // and dropping pending from the budget/CategoryPicker-balance assembly
+  // below — untouched by this wave, per the plan's own Global Constraints).
+  entered_at: string | null
   receipt_path: string | null
   receipt_original: string | null
   // Denormalized here (rather than cross-referenced client-side against the
@@ -68,7 +74,7 @@ async function fetchAllTransactions(
     const { data, error } = await supabase
       .from('ledger_transactions')
       .select(`id, date, amount_cents, kind, category_id, show_id, payee, memo, cleared, created_at,
-                receipt_path, receipt_original,
+                entered_at, receipt_path, receipt_original,
                 category:ledger_categories(name, budget_role), show:shows(name)`)
       .eq('account_id', accountId)
       .order('created_at', { ascending: true })
@@ -76,6 +82,45 @@ async function fetchAllTransactions(
       .range(from, from + LEDGER_TXN_PAGE_SIZE - 1)
     if (error) return { rows: [], error: error.message }
     rows.push(...((data ?? []) as unknown as RawTxnRow[]))
+    if (!data || data.length < LEDGER_TXN_PAGE_SIZE) break
+    from += LEDGER_TXN_PAGE_SIZE
+  }
+  return { rows, error: null }
+}
+
+type RawSplitLegRow = {
+  transaction_id: string
+  category_id: string | null
+  amount_cents: number
+  note: string | null
+  // Same since-hidden-category fallback reason as RawTxnRow's own
+  // category/categoryName pair above — a leg can point at a category
+  // that's since been hidden, and the not-hidden `categories` list
+  // (categoryPickerOptions' own source) has nothing to seed that leg's
+  // picker with otherwise.
+  category: { name: string; budget_role: string } | null
+}
+
+/** Every split leg, owner-wide (Wave C Task 4) — joined client-side onto
+ *  its parent transaction below, same "one paged fetch, bucket by foreign
+ *  key" shape as fetchAllInvoiceLinks/fetchAllExpenseLinks further down
+ *  this file. Ordered by created_at so a transaction's legs render in the
+ *  same order replace_transaction_splits wrote them (its own insert order,
+ *  Task 3) — the order Dan built the split in, not an arbitrary one. */
+async function fetchAllSplitLegs(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<{ rows: RawSplitLegRow[]; error: string | null }> {
+  const rows: RawSplitLegRow[] = []
+  let from = 0
+  for (;;) {
+    const { data, error } = await supabase
+      .from('ledger_transaction_splits')
+      .select('transaction_id, category_id, amount_cents, note, category:ledger_categories(name, budget_role)')
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + LEDGER_TXN_PAGE_SIZE - 1)
+    if (error) return { rows: [], error: error.message }
+    rows.push(...((data ?? []) as unknown as RawSplitLegRow[]))
     if (!data || data.length < LEDGER_TXN_PAGE_SIZE) break
     from += LEDGER_TXN_PAGE_SIZE
   }
@@ -416,6 +461,28 @@ export default async function MoneyPage({
   const { rows: allTxns, error: txnError } = await fetchAllTransactions(supabase, accountRow.id)
   if (txnError) return <LoadError message={txnError} />
 
+  // Split legs (Wave C Task 4) — owner-wide, bucketed by transaction_id
+  // below; a transaction absent from this map is simply unsplit (the
+  // ordinary case), never an error. Fetched here rather than per-account
+  // scoped since fetchAllSplitLegs mirrors every other owner-wide fetch on
+  // this page (fetchAllInvoiceLinks, fetchAllExpenseLinks, ...) — RLS
+  // already scopes it to the caller's own rows, and only THIS account's
+  // transactions ever look themselves up in it below.
+  const { rows: splitLegRows, error: splitLegError } = await fetchAllSplitLegs(supabase)
+  if (splitLegError) return <LoadError message={splitLegError} />
+  const legsByTxnId = new Map<string, SplitLegRow[]>()
+  for (const l of splitLegRows) {
+    const list = legsByTxnId.get(l.transaction_id) ?? []
+    list.push({
+      categoryId: l.category_id,
+      categoryName: l.category?.name ?? null,
+      categoryBudgetRole: l.category ? (l.category.budget_role === 'income' ? 'income' : 'spending') : null,
+      amountCents: l.amount_cents,
+      note: l.note,
+    })
+    legsByTxnId.set(l.transaction_id, list)
+  }
+
   // CategoryPicker's own balance map (Wave B Task 3) — the SAME validated
   // arithmetic app/money/budget/page.tsx runs (lib/budget.ts's buildBudget),
   // zero new math here. `budgetCategoryRows` and `moveRows` are the two
@@ -575,9 +642,14 @@ export default async function MoneyPage({
   // 0038) and owner_pay, though it can carry one since that same migration,
   // is categorized through the edit form rather than this queue. Counting
   // either kind here would inflate the queue with rows this workflow was
-  // never meant to surface.
+  // never meant to surface. `!legsByTxnId.has(t.id)` excludes a split
+  // parent (Wave C Task 4) — its own category_id is null too (replace_
+  // transaction_splits forces it the instant legs exist), but it is
+  // categorized through its legs, not this queue; without this it would
+  // inflate the badge with rows MoneyRegister's inline quick-pick doesn't
+  // even offer a picker for anymore (see LedgerTxnRow's own `legs` comment).
   const uncategorizedCount = allTxns.filter(
-    (t) => t.category_id === null && (t.kind === 'income' || t.kind === 'expense'),
+    (t) => t.category_id === null && !legsByTxnId.has(t.id) && (t.kind === 'income' || t.kind === 'expense'),
   ).length
 
   // Canonical (oldest-first) ledger order — date asc, created_at asc, id asc,
@@ -610,7 +682,7 @@ export default async function MoneyPage({
   // uncategorized rows only, so filtering here must never recompute or
   // re-derive it.
   const filtered = uncategorizedOnly
-    ? sorted.filter((t) => t.category_id === null && (t.kind === 'income' || t.kind === 'expense'))
+    ? sorted.filter((t) => t.category_id === null && !legsByTxnId.has(t.id) && (t.kind === 'income' || t.kind === 'expense'))
     : sorted
   const totalCount = filtered.length
   const transactions: LedgerTxnRow[] = filtered.map((t) => ({
@@ -629,6 +701,8 @@ export default async function MoneyPage({
     payee: t.payee,
     memo: t.memo,
     cleared: t.cleared,
+    entered_at: t.entered_at,
+    legs: legsByTxnId.get(t.id) ?? [],
     // Non-null assertion is safe: t comes from allTxns (via sorted/filtered),
     // and balanceById was built from ledgerOrdered — the exact same array,
     // just sorted differently — so every id here is guaranteed a key there.
