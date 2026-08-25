@@ -35,14 +35,16 @@ export type LedgerTxnRow = {
   kind: 'income' | 'expense' | 'owner_pay' | 'transfer'
   category_id: string | null
   categoryName: string | null
-  // The row's own category's grp/budget_role, denormalized the same way
+  // The row's own category's budget_role, denormalized the same way
   // categoryName already is (see its own comment) — deriveKind's fallback
-  // (Wave B Task 5) for a row whose category has since been hidden: hidden
-  // categories drop out of the `categories` list a lookup-by-id would
-  // otherwise use, but the row itself must still re-derive the SAME kind on
-  // an edit that never touches the category. null exactly when category_id
-  // is null.
-  categoryGrp: string | null
+  // (Wave B Task 5, name-keyed since H1) for a row whose category has since
+  // been hidden: hidden categories drop out of the `categories` list a
+  // lookup-by-id would otherwise use, but the row itself must still
+  // re-derive the SAME kind on an edit that never touches the category.
+  // categoryName above already carries the name half of that fallback pair
+  // (H1 dropped this field's own now-unused categoryGrp twin — deriveKind
+  // keys owner_pay on name, not group, since H1). null exactly when
+  // category_id is null.
   categoryBudgetRole: 'spending' | 'income' | null
   show_id: string | null
   showName: string | null
@@ -693,17 +695,17 @@ export default function MoneyRegister({
    *  deriveKind reasons about (Wave B Task 5) — never a raw id.
    *  `hiddenFallback` covers the one case a live lookup by id can miss: the
    *  edit row seeded from a row whose category has since been hidden (see
-   *  LedgerTxnRow's own categoryGrp/categoryBudgetRole comment) — the add
+   *  LedgerTxnRow's own categoryName/categoryBudgetRole comment) — the add
    *  row never has one, since every id it can hold came from the live
    *  picker list below. */
   function categoryForKind(
     id: string,
-    hiddenFallback?: { grp: string; budgetRole: 'spending' | 'income' } | null,
+    hiddenFallback?: { name: string; budgetRole: 'spending' | 'income' } | null,
   ): CategoryForKind {
     if (id === '') return null
     if (id === TRANSFER_SENTINEL) return 'payment-transfer'
     const cat = categories.find((c) => c.id === id)
-    return cat ? { budgetRole: cat.budgetRole, grp: cat.grp } : (hiddenFallback ?? null)
+    return cat ? { budgetRole: cat.budgetRole, name: cat.name } : (hiddenFallback ?? null)
   }
 
   /** Typing into Outflow always wins that box and always clears Inflow — YNAB's
@@ -918,13 +920,13 @@ export default function MoneyRegister({
     if (!editDate) { setError('Pick a date.'); return }
 
     // Same re-derivation as add(), above — with the row's own denormalized
-    // categoryGrp/categoryBudgetRole as categoryForKind's hidden-category
+    // categoryName/categoryBudgetRole as categoryForKind's hidden-category
     // fallback: editCategoryId can only hold an off-list id when it's
     // exactly row.category_id (see editExtraOption's own comment,
     // renderEditRow), so this is the one case that needs it.
     const direction: LedgerDirection = outflowTyped ? 'outflow' : 'inflow'
-    const hiddenFallback = row.categoryGrp !== null && row.categoryBudgetRole !== null
-      ? { grp: row.categoryGrp, budgetRole: row.categoryBudgetRole }
+    const hiddenFallback = row.categoryName !== null && row.categoryBudgetRole !== null
+      ? { name: row.categoryName, budgetRole: row.categoryBudgetRole }
       : null
     const derived = deriveKind(categoryForKind(editCategoryId, hiddenFallback), direction)
     if ('error' in derived) { setError(derived.error); return }
@@ -1240,8 +1242,21 @@ export default function MoneyRegister({
     // can't. Kind used to live here as a Select (retired, Wave B Task 5 —
     // Dan's approved call: kind is derived from categorySelect above and
     // which Outflow/Inflow box carries the amount, not picked).
+    //
+    // M2 (Wave B final review): `error` used to have exactly one render
+    // site, a single node below all 328+ rows (see this component's own
+    // bottom `{error &&...}`) — invisible without scrolling past the whole
+    // register, which is exactly where deriveKind's own refusals (H1/H2)
+    // fire from: a category pick this row's saveEdit rejects. A copy right
+    // here, at the point of the save/cancel buttons the error is actually
+    // ABOUT, is the fix. role="alert" here is the live one; the bottom node
+    // (this same shared `error` state) is aria-hidden now so a screen reader
+    // never announces the identical message twice for the same failure —
+    // see that node's own comment for why aria-hidden was chosen over
+    // gating it out entirely.
     const secondLine = (
-      <div className="mt-2 flex flex-wrap items-center gap-3 sm:pl-9">
+      <>
+        <div className="mt-2 flex flex-wrap items-center gap-3 sm:pl-9">
         <Select
           ariaLabel="Show"
           className="w-36"
@@ -1311,7 +1326,9 @@ export default function MoneyRegister({
         >
           Delete
         </button>
-      </div>
+        </div>
+        {error && <p role="alert" className="text-xs text-danger mt-2 sm:pl-9">{error}</p>}
+      </>
     )
 
     if (desktop) {
@@ -1780,6 +1797,14 @@ export default function MoneyRegister({
               {pending ? 'Saving…' : '+ Add'}
             </button>
           </div>
+          {/* M2 (Wave B final review): a second, live copy of the shared
+              `error` state, right under the row whose deriveKind refusal
+              (H1/H2) most often produced it — the ORIGINAL single copy sits
+              below all 328+ rows, effectively invisible. See renderEditRow's
+              own doc comment on its matching copy, and the bottom node's own
+              comment, for the full aria-hidden-to-avoid-double-announcement
+              reasoning shared by all three copies. */}
+          {error && <p role="alert" className="text-xs text-danger mt-2 sm:pl-9">{error}</p>}
         </div>
 
         {/* Phone: the same 2-col stacked idiom as before (Date+Payee,
@@ -1829,6 +1854,12 @@ export default function MoneyRegister({
               {pending ? 'Saving…' : '+ Add'}
             </button>
           </div>
+          {/* Phone twin of the desktop copy above — same reasoning, same
+              shared `error`. Only one of the two is ever in the accessible
+              tree at once (Tailwind's hidden/sm:hidden is display:none, same
+              guarantee the rest of this add row already relies on), so
+              having both never double-announces. */}
+          {error && <p role="alert" className="text-xs text-danger mt-2">{error}</p>}
         </div>
       </div>
 
@@ -1930,7 +1961,22 @@ export default function MoneyRegister({
         </>
       )}
 
-      {error && <p role="alert" className="text-xs text-danger mt-3">{error}</p>}
+      {/* M2 (Wave B final review): this was the ONLY render site for
+          `error` — below all 328+ rows, effectively off-screen, which is
+          exactly why deriveKind's refusals (H1/H2) were invisible when they
+          fired. Two live copies now sit where the error actually happens
+          (the add row's own second line, and the edit row's), both
+          role="alert" — see their own comments. This one stays for the
+          error sources that aren't add/edit at all (receipt upload,
+          delete, the payee-memory sweep, ...), so those still have SOME
+          on-screen surface even for a row scrolled far down. But it fires
+          on the exact same `error` state as the two copies above, so
+          whenever THEY fire, this one would too — aria-hidden here (rather
+          than gating it off entirely, which would silence it for every
+          error source that has no other copy at all) keeps it visually
+          present without a screen reader announcing the same message a
+          second or third time. */}
+      {error && <p role="alert" aria-hidden className="text-xs text-danger mt-3">{error}</p>}
     </section>
   )
 }
