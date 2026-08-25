@@ -6,6 +6,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { validateTxnShape, isSaneLedgerDate, deriveKind, VALID_KINDS } from '../../lib/ledgerRules.ts'
+import { OWNER_PAY_CATEGORY_NAME } from '../../lib/ledgerCategories.ts'
 
 test('VALID_KINDS is the four ledger kinds', () => {
   assert.deepEqual(VALID_KINDS, ['income', 'expense', 'owner_pay', 'transfer'])
@@ -101,12 +102,24 @@ test('isSaneLedgerDate rejects a plausible-looking typo year', () => {
 })
 
 // deriveKind — the kind dropdown's replacement (Wave B Task 5). Every test
-// below is one cell of the task's own derivation table, same row order the
-// helper's own doc comment reads top to bottom.
+// below is one cell of the CORRECTED derivation table (Wave B final review,
+// H1), pinned with the five REAL "Owner Transactions" category names —
+// (lib/ledgerCategories.ts's DEFAULT_CATEGORIES) — the original review's own
+// fixtures used a synthetic `grp: 'Owner Transactions'` stand-in instead of
+// real names, which is exactly how it missed that the group holds five
+// categories and only one of them is actually owner pay.
 
-const spending = { budgetRole: 'spending' as const, grp: 'Bills' }
-const income = { budgetRole: 'income' as const, grp: 'Income' }
-const ownerGroup = { budgetRole: 'spending' as const, grp: 'Owner Transactions' }
+const spending = { budgetRole: 'spending' as const, name: 'Bills' }
+const income = { budgetRole: 'income' as const, name: 'Show Income' }
+
+// The five real categories DEFAULT_CATEGORIES seeds into the Owner
+// Transactions group — only the fourth, OWNER_PAY_CATEGORY_NAME, is owner
+// pay; the other four are ordinary spending categories in every direction.
+const temporaryTransfer = { budgetRole: 'spending' as const, name: 'Temporary Transfer' }
+const loanToWoodAndWaves = { budgetRole: 'spending' as const, name: 'Loan to Wood and Waves' }
+const charitableGiving = { budgetRole: 'spending' as const, name: 'Charitable Giving' }
+const ownerPay = { budgetRole: 'spending' as const, name: OWNER_PAY_CATEGORY_NAME }
+const moneyDueWoodAndWaves = { budgetRole: 'spending' as const, name: 'Money Due Wood and Waves' }
 
 test('Payment/Transfer derives transfer regardless of direction', () => {
   assert.deepEqual(deriveKind('payment-transfer', 'inflow'), { kind: 'transfer' })
@@ -121,17 +134,6 @@ test('an income-role category on an outflow is refused', () => {
   assert.deepEqual(
     deriveKind(income, 'outflow'),
     { error: 'Income categories take inflows.' },
-  )
-})
-
-test('the Owner Transactions group on an outflow derives owner_pay', () => {
-  assert.deepEqual(deriveKind(ownerGroup, 'outflow'), { kind: 'owner_pay' })
-})
-
-test('the Owner Transactions group on an inflow is refused', () => {
-  assert.deepEqual(
-    deriveKind(ownerGroup, 'inflow'),
-    { error: 'Money in from you is a transfer — use Payment/Transfer.' },
   )
 })
 
@@ -151,20 +153,53 @@ test('no category (Uncategorized) on an outflow derives expense', () => {
   assert.deepEqual(deriveKind(null, 'outflow'), { kind: 'expense' })
 })
 
-// The group match is by NAME (a deliberate, documented exception — see the
-// helper's own comment) — a spending category that merely happens to share
-// the same grp string, regardless of case or surrounding text, is what
-// actually trips the owner_pay/refusal branches; this pins that it is an
-// exact match, not a substring or case-insensitive one, so a group like
-// "owner transactions" or "Owner Transactions HQ" does NOT accidentally
+// H1's corrected table, the five real Owner Transactions categories. Only
+// the owner-pay category's own OUTFLOW is special-cased to `owner_pay`;
+// every other cell — all four of the other categories in both directions,
+// AND the owner-pay category's own inflow — is ordinary spending-category
+// behavior: expense on outflow, income on inflow (the refund shape). The
+// old group-based inflow refusal ("Money in from you is a transfer") is
+// gone entirely — none of these five ever refuse an inflow anymore.
+
+test('Temporary Transfer: outflow derives expense, inflow derives income', () => {
+  assert.deepEqual(deriveKind(temporaryTransfer, 'outflow'), { kind: 'expense' })
+  assert.deepEqual(deriveKind(temporaryTransfer, 'inflow'), { kind: 'income' })
+})
+
+test('Loan to Wood and Waves: outflow derives expense, inflow derives income', () => {
+  assert.deepEqual(deriveKind(loanToWoodAndWaves, 'outflow'), { kind: 'expense' })
+  assert.deepEqual(deriveKind(loanToWoodAndWaves, 'inflow'), { kind: 'income' })
+})
+
+test('Charitable Giving: outflow derives expense, inflow derives income', () => {
+  assert.deepEqual(deriveKind(charitableGiving, 'outflow'), { kind: 'expense' })
+  assert.deepEqual(deriveKind(charitableGiving, 'inflow'), { kind: 'income' })
+})
+
+test('Owner Investment, Pay, and Personal Expenses: outflow derives owner_pay — the ONE real owner-pay category', () => {
+  assert.deepEqual(deriveKind(ownerPay, 'outflow'), { kind: 'owner_pay' })
+})
+
+test('Owner Investment, Pay, and Personal Expenses: inflow derives income, same as any other spending category — a loan repayment or reimbursement can now actually be entered', () => {
+  assert.deepEqual(deriveKind(ownerPay, 'inflow'), { kind: 'income' })
+})
+
+test('Money Due Wood and Waves: outflow derives expense, inflow derives income', () => {
+  assert.deepEqual(deriveKind(moneyDueWoodAndWaves, 'outflow'), { kind: 'expense' })
+  assert.deepEqual(deriveKind(moneyDueWoodAndWaves, 'inflow'), { kind: 'income' })
+})
+
+// The owner-pay match is by exact NAME (a deliberate, documented exception —
+// see deriveKind's own comment) — a spending category that merely happens to
+// share the string, regardless of case or surrounding text, must NOT
 // qualify.
-test('the Owner Transactions match is exact, not case-insensitive or a substring', () => {
+test('the owner-pay match is exact, not case-insensitive or a substring', () => {
   assert.deepEqual(
-    deriveKind({ budgetRole: 'spending', grp: 'owner transactions' }, 'outflow'),
+    deriveKind({ budgetRole: 'spending', name: OWNER_PAY_CATEGORY_NAME.toLowerCase() }, 'outflow'),
     { kind: 'expense' },
   )
   assert.deepEqual(
-    deriveKind({ budgetRole: 'spending', grp: 'Owner Transactions HQ' }, 'outflow'),
+    deriveKind({ budgetRole: 'spending', name: `${OWNER_PAY_CATEGORY_NAME} (old)` }, 'outflow'),
     { kind: 'expense' },
   )
 })
