@@ -153,7 +153,7 @@ export default function CalendarMonth({
                       {/* Reserves exactly the space the bar overlay occupies
                           in THIS week, so flights never render underneath a
                           bar and a bar-free week keeps its old height. */}
-                      <div aria-hidden style={{ height: laneBlock + LANE_GAP }} />
+                      <div aria-hidden style={{ height: laneCount === 0 ? 0 : laneBlock + LANE_GAP }} />
 
                       {overflowByCol[di] > 0 && (
                         <div className="text-[10px] text-muted">+{overflowByCol[di]} more</div>

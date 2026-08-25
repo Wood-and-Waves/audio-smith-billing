@@ -375,7 +375,37 @@ Still open:
   online path unreliable.
 - The in-form picker in ExpenseLog stays for batches and emailed PDFs.
 
-## Calendar: one bar per show, not a chip per day (2026-08-22, Dan)
+## Calendar: one bar per show — SHIPPED 2026-08-25
+
+Dan's ask (2026-08-22): *"I would like the calendar to show one big bar for
+each show instead of a breakdown per day."* Built as `lib/showRuns.ts`
+(contiguous runs -> per-week segments -> greedy lanes, all pure and tested)
+plus a per-week bar overlay in `components/CalendarMonth.tsx`; design:
+docs/superpowers/specs/2026-08-25-calendar-show-bars-design.md. His four
+decisions: one uniform bar (no travel shading); bar click -> the show page
+while empty cell space still opens the day dialog; bars on phone too
+(show dots retired, flight dots stay); and the ICS feed follows with one
+event per run. His own correction to the mockup became the rule: a run's
+true start/finish is ROUNDED, a week-boundary continuation is SQUARE, and
+`continuesLeft`/`continuesRight` are the single home of that fact.
+Migration 0047 adds `show_id` to the feed RPC's day objects (a `create or
+replace` at the same signature, so 0033's grants carry over) because runs
+cannot be grouped without it. The feed's UIDs change from `showday-<dayId>`
+to `showrun-<showId>-<runStart>`, so subscribers see a ONE-TIME churn —
+Dan accepted that cost knowingly. DTEND is EXCLUSIVE per RFC 5545 (a run
+ending the 30th publishes the 31st), pinned by its own test.
+The page now fetches every day of every show TOUCHING the month rather than
+only the days inside it: a run reaching past the grid edge would otherwise
+render a rounded corner claiming it finishes there.
+Residuals: bars use the app's single accent, NOT the per-show colours the
+approved mockup happened to show (that palette was the mockup tool's;
+inventing a per-show colour assignment is real design surface nobody asked
+for) — revisit if two stacked bars ever read as one; `MAX_LANES = 3` with a
+"+N more" counter beyond it (his real books peak at 2 concurrent shows);
+the flights query is left inside a now-single-element `Promise.all`.
+
+### As originally filed
+
 
 Dan: *"I would like the calendar to show one big bar for each show instead of
 a breakdown per day."*
