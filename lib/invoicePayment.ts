@@ -33,7 +33,15 @@ export function settlementFor(
   link: SettlementLink | null,
 ): Settlement {
   if (link === null) {
-    return { paidCents: 0, deltaCents: -totalCents || 0, state: 'unpaid' }
+    // `totalCents === 0 ? 0 : …` rather than `-totalCents || 0`: unary
+    // negation of 0 yields -0, which node:assert/strict distinguishes from
+    // 0 (Object.is semantics), so the zero-total case needs SOME guard. The
+    // `|| 0` form would also swallow a NaN into a plausible-looking 0 and
+    // hide a corrupt total; this one fixes only the -0 it means to fix and
+    // lets anything genuinely broken stay visibly broken. The link path
+    // below needs no such guard — `paidCents - totalCents` yields +0 for
+    // equal operands and can only produce -0 from an already-poisoned one.
+    return { paidCents: 0, deltaCents: totalCents === 0 ? 0 : -totalCents, state: 'unpaid' }
   }
 
   // A COMBO — one deposit covering several invoices — is only ever created
