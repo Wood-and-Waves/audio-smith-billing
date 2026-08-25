@@ -619,7 +619,10 @@ export default async function MoneyPage({
   const linkedInvoiceIds = new Set(invoiceLinkRows.map((l) => l.invoice_id))
   const linkedExpenseIds = new Set(expenseLinkRows.map((l) => l.expense_id))
 
-  const matchRows: BankRow[] = allTxns.map((t) => ({
+  // Entered rows only — the matcher's other call site (/money/matches)
+  // filters pending at the fetch; this badge must never disagree with the
+  // page it links to (the register's own badge/list rule).
+  const matchRows: BankRow[] = allTxns.filter((t) => t.entered_at !== null).map((t) => ({
     id: t.id, date: t.date, amount_cents: t.amount_cents, payee: t.payee, kind: t.kind,
     linked: linkedTxnIds.has(t.id),
   }))

@@ -174,7 +174,7 @@ reconcile action instead. CPA export path: legs.
 CLAUDE.md: splits doctrine (legs sum trigger, one explosion helper, payee
 memory skips splits, pending axis + balance semantics, reconcile refusal).
 BACKLOG: Wave C shipped; the $400 variance entry updated to "fixable in-app
-— split the 3/5 row"; residuals. Commit.
+— DO NOT split the 3/5 row (already hand-split; see spec)"; residuals. Commit.
 
 ## Task 7: Final review + ship (controller)
 
@@ -186,7 +186,9 @@ BACKLOG: Wave C shipped; the $400 variance entry updated to "fixable in-app
 - [ ] Fix wave if needed → re-review to READY.
 - [ ] Controller walkthrough + parity.
 - [ ] **Ship (pre-authorized):** 0042+0043+0044 to PROD first → merge → push → smoke
-  → `npm run parity` → report to Dan, including how to split the 3/5 row.
+  → `npm run parity` → report to Dan (splits are for FUTURE multi-category
+  bank rows — the 3/5 hand-split stays exactly as-is; see the spec's
+  corrected day-one section).
 
 ## Verification
 Gates per commit; trigger proven by violation; parity before AND after
