@@ -737,7 +737,7 @@ export default function MoneyRegister({
 
     // Kind is no longer picked — it's derived from the category and which
     // box the amount landed in (Wave B Task 5). A refusal (an income
-    // category on an outflow, an Owner Transactions category on an inflow)
+    // category on an outflow — the one shape that cannot be booked)
     // surfaces here, inline, before addLedgerTransaction is ever called.
     const direction: LedgerDirection = outflowTyped ? 'outflow' : 'inflow'
     const derived = deriveKind(categoryForKind(categoryId), direction)
@@ -1804,7 +1804,7 @@ export default function MoneyRegister({
               own doc comment on its matching copy, and the bottom node's own
               comment, for the full aria-hidden-to-avoid-double-announcement
               reasoning shared by all three copies. */}
-          {error && <p role="alert" className="text-xs text-danger mt-2 sm:pl-9">{error}</p>}
+          {error && editingId === null && <p role="alert" className="text-xs text-danger mt-2 sm:pl-9">{error}</p>}
         </div>
 
         {/* Phone: the same 2-col stacked idiom as before (Date+Payee,
@@ -1859,7 +1859,7 @@ export default function MoneyRegister({
               tree at once (Tailwind's hidden/sm:hidden is display:none, same
               guarantee the rest of this add row already relies on), so
               having both never double-announces. */}
-          {error && <p role="alert" className="text-xs text-danger mt-2">{error}</p>}
+          {error && editingId === null && <p role="alert" className="text-xs text-danger mt-2">{error}</p>}
         </div>
       </div>
 
@@ -1976,7 +1976,7 @@ export default function MoneyRegister({
           error source that has no other copy at all) keeps it visually
           present without a screen reader announcing the same message a
           second or third time. */}
-      {error && <p role="alert" aria-hidden className="text-xs text-danger mt-3">{error}</p>}
+      {error && <p aria-hidden className="text-xs text-danger mt-3">{error}</p>}
     </section>
   )
 }

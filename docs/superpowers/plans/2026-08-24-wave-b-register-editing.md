@@ -201,15 +201,16 @@ The derivation, exact — a pure `deriveKind(category, direction)` in
 |---|---|---|
 | **Payment/Transfer** (picker's special row) | `transfer`, category null | `transfer`, category null |
 | income-role (`budget_role === 'income'`) | `income` | **refuse** — "Income categories take inflows." |
-| group `Owner Transactions` | **refuse** — "Money in from you is a transfer — use Payment/Transfer." (matches the data model: owner money in has always been a transfer) | `owner_pay` |
-| any other spending category | `income` (a refund, category carried — today's own behaviour) | `expense` |
+| the one **Owner Pay** category (`OWNER_PAY_CATEGORY_NAME`) | `income` (money in from Dan — a rare shape; bookable) | `owner_pay` |
+| any other spending category — **including the other four Owner-Transactions categories** (Temporary Transfer, Loan to Wood and Waves, Charitable Giving, Money Due Wood and Waves) | `income` (a refund/repayment, category carried) | `expense` |
 | none | `income`, uncategorized | `expense`, uncategorized |
 
-- The Owner-Transactions inference keys on the group name. That is a
-  **documented exception** to the never-infer-from-group doctrine: comment it
-  at the helper, naming the failure (renaming the group downgrades draws to
-  `expense` — visible immediately in the P&L, loud not silent) and the fix if
-  it ever bites (an explicit column, one migration).
+- (Corrected at the final review, 2026-08-24: the table originally keyed
+  owner_pay on the GROUP name, but the group holds five categories and only
+  one is owner pay — Charitable Giving outflows would have vanished from the
+  P&L's expense side. The inference keys on `OWNER_PAY_CATEGORY_NAME`; the
+  failure mode is a rename of that one category, loud in the P&L; the escape
+  hatch stays an explicit column, one migration.)
 - **Payment/Transfer** joins `CategoryPicker` as a pinned row (Dan's YNAB
   screenshot). Selecting it = category null + kind `transfer` — which also
   gives the register its FIRST way to create transfer rows from the form,
