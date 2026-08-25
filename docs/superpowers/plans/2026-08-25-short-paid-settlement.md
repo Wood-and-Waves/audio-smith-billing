@@ -16,6 +16,7 @@
 - Pure libs (`lib/*.ts`): relative `.ts` imports, no `@/`, no JSX, no clock reads.
 - **Unknown must never resolve to a guess** (the invoice page's own doctrine, stated in its link-query comment): when the data needed to classify a settlement cannot be read, render NOTHING rather than a figure that might be wrong.
 - Do not touch `MarkPaidButton`, `setInvoiceStatus`, `unlinkTransaction`, or the Matches queue. Unlinking already restores an invoice to `sent`; that is the way back out and needs no changes.
+- The new reads rely on RLS for owner scoping, exactly as every other read on this page already does (the page holds no `user` object and adds no `getUser` call for them). The writes are `acceptIncomeMatch`'s, which already walks ownership itself.
 - Gates before every commit: `npm test` (912 currently), cold tsc (`rm -f tsconfig.tsbuildinfo .next/cache/.tsbuildinfo && npx tsc --noEmit`), `npm run build`. Never `npm run dev` — the preview tool only.
 
 ## Model tiering
