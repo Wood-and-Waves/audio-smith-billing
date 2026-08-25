@@ -174,17 +174,24 @@ new branch, since it never cared about either input's sign, only the sign of
 their difference. See `lib/budgetMoves.ts`'s own `assignmentDiff` doc comment
 for the full reasoning.
 
+**Auto-assign — SHIPPED 2026-08-25** (was deliberately left out of phase
+two; design: docs/superpowers/specs/2026-08-25-auto-assign-design.md;
+migration 0046). Dan's three decisions: Underfunded only; fund fully even
+when RTA goes negative; one tap undoes the whole batch. One button in the
+summary panel writes one move per underfunded category (single multi-row
+insert, shared batch_id, note 'Auto-assign'); undo/redo flip a whole batch
+by batch_id; the plan reads `neededCents` off buildBudget's own rows via
+the shared assembleBudget (app/money/budget/data.ts) — month is the only
+client input, hidden-but-targeted categories fund. Useless until Dan
+enters his targets (the button hides at $0 underfunded).
+Residuals (final review 2026-08-25, all cosmetic): the 'Auto-assign' note
+is durable in the DB but not rendered — Recent Moves shows a batch as N
+anonymous "Ready to Assign → X" rows, and only the Undo tooltip names the
+batch while it is head (rendering the note as a small marker is the
+nicety); a big batch's rows sort by uuid within their shared created_at
+and can fill the 15-row window.
+
 Deliberately left out of phase two (ready for future work):
-- **Auto-assign — SHIPPED 2026-08-25** (design:
-  docs/superpowers/specs/2026-08-25-auto-assign-design.md; migration 0046).
-  Dan's three decisions: Underfunded only; fund fully even when RTA goes
-  negative; one tap undoes the whole batch. One button in the summary
-  panel writes one move per underfunded category (single multi-row insert,
-  shared batch_id, note 'Auto-assign'); undo/redo flip a whole batch by
-  batch_id; the plan reads `neededCents` off buildBudget's own rows via
-  the shared assembleBudget (app/money/budget/data.ts) — month is the only
-  client input, hidden-but-targeted categories fund. Useless until Dan
-  enters his targets (the button hides at $0 underfunded).
 - **Per-entry undo in Recent Moves** — stack-head only (whole undo model), not per-entry affordances.
 - **Undo/redo TOCTOU (final review, 2026-08-24: accepted, with comment).**
   `undoLastMove`/`redoLastMove` (`app/money/budget/actions.ts`) each read a
@@ -203,6 +210,12 @@ Deliberately left out of phase two (ready for future work):
   that makes Postgres serialise the read-then-write instead of doing it in
   two round-trips from application code. See both functions' own doc
   comments in `app/money/budget/actions.ts` for the full writeup.
+  2026-08-25 amendment (auto-assign final review): the same accepted gap
+  now spans batches — a stale-view undo can flip a whole batch where the
+  tooltip promised a single move (or vice versa), and a same-frame
+  double-tap of Auto-assign can land two full batches (month double-
+  funded; two Undos recover). Same acceptance rationale, same hardening
+  path if a second writer ever appears.
 
 **Also deferred, with reasons:**
 - **Target history.** YNAB does not export targets and this stores only their

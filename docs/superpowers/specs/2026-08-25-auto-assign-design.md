@@ -36,7 +36,10 @@ trusts it.
   appear (targets are only settable on assignable categories).
 - All moves land in ONE multi-row insert (single statement — atomic, no
   RPC needed), sharing a freshly minted `batch_id` and `note:
-  'Auto-assign'` so Recent Moves reads honestly.
+  'Auto-assign'`. (Shipped correction, final review 2026-08-25: the note
+  is durable in the DATABASE; the Recent Moves list does not render it —
+  batch rows show as ordinary moves there, and the batch is named by the
+  Undo tooltip while it is head. Rendering the note is a BACKLOG nicety.)
 - Empty plan (nothing underfunded by the server's own count — a stale
   button) returns `{ ok: true, wrote: false }`, the WriteResult idiom.
 
