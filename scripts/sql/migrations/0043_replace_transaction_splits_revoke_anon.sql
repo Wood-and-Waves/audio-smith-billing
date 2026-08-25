@@ -1,0 +1,20 @@
+-- 0043 — least-privilege fix for replace_transaction_splits (0042)
+--
+-- Same class of gap as 0024/public_invoice_backup: `create function` grants
+-- EXECUTE to PUBLIC by default, and Supabase's own default privileges
+-- separately hand EXECUTE to anon on top of that — `revoke all ... from
+-- public` alone does not touch anon's grant. 0002/allocate_invoice_number
+-- revokes from `public, anon` in one statement for exactly this reason;
+-- 0042 missed it, revoking from public only, and information_schema
+-- confirmed anon still held EXECUTE on the live function after 0042 ran.
+--
+-- No API-reachable role gains anything from the miss: replace_transaction_
+-- splits' first act is `select owner_id ... where owner_id = auth.uid()`,
+-- and an anon call carries no `sub` claim, so the lookup can never match
+-- and the function always refuses. This is a convention fix, not a security
+-- fix — but the convention (name callers explicitly, least privilege) is
+-- the whole point, so it gets its own migration rather than staying as a
+-- known gap. 0042 is already applied and checksummed and cannot be edited
+-- in place; this is the "write the next migration" remedy the tooling
+-- itself prescribes.
+revoke execute on function public.replace_transaction_splits(uuid, jsonb) from anon;

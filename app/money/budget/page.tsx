@@ -7,6 +7,7 @@ import {
   buildBudget, FIRST_BUDGET_MONTH, OPENING_MONTH, MAX_MONTHS_AHEAD,
   type BudgetCategory, type BudgetMove, type BudgetTxn, type CategoryTarget,
 } from '@/lib/budget'
+import { explodeForCategories, type TxnForExplode } from '@/lib/ledgerSplits'
 import AppShell from '@/components/AppShell'
 import BudgetTable, { parseBudgetFilter, type BudgetFilter } from '@/components/BudgetTable'
 import BudgetSummary from '@/components/BudgetSummary'
@@ -155,7 +156,19 @@ async function fetchAllBudgetMoves(
   return { rows, error: null }
 }
 
-type RawTxnRow = { date: string; category_id: string | null; amount_cents: number }
+// `id` and `entered_at` are Task 5's own addition (Wave C): `id` is what
+// the split-legs map below is keyed by, and `entered_at` is what
+// explodeForCategories reads to drop a pending row from activity entirely
+// (migration 0042 — null means pending). Neither existed on this page's
+// txn assembly before this wave; buildBudget's own arithmetic (lib/budget.ts)
+// is untouched, only what feeds it changes.
+type RawTxnRow = {
+  id: string
+  date: string
+  category_id: string | null
+  amount_cents: number
+  entered_at: string | null
+}
 
 // Same single-account model as the register (see accountRow's own query
 // below): scoped to THIS account, same as fetchAllTransactionsForBalance
@@ -176,7 +189,7 @@ async function fetchAllBudgetTxns(
   for (;;) {
     const { data, error } = await supabase
       .from('ledger_transactions')
-      .select('date, category_id, amount_cents')
+      .select('id, date, category_id, amount_cents, entered_at')
       .eq('account_id', accountId)
       .gte('date', `${FIRST_BUDGET_MONTH}-01`)
       .order('created_at', { ascending: true })
@@ -184,6 +197,35 @@ async function fetchAllBudgetTxns(
       .range(from, from + PAGE_SIZE - 1)
     if (error) return { rows: [], error: error.message }
     rows.push(...((data ?? []) as RawTxnRow[]))
+    if (!data || data.length < PAGE_SIZE) break
+    from += PAGE_SIZE
+  }
+  return { rows, error: null }
+}
+
+type RawSplitLegRow = { transaction_id: string; category_id: string | null; amount_cents: number }
+
+/** Every split leg, owner-wide (Wave C Task 5) — the budget's own txn
+ *  assembly needs only category_id/amount_cents per leg (buildBudget's
+ *  activity(c,m) is kind-blind, see lib/budget.ts's own doc comment), so
+ *  this fetches a narrower column set than app/money/page.tsx's own
+ *  fetchAllSplitLegs (which also needs a leg's category name for display).
+ *  Bucketed by transaction_id below, same "one paged fetch, group by
+ *  foreign key" shape as fetchAllBudgetMoves. */
+async function fetchAllBudgetSplitLegs(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<{ rows: RawSplitLegRow[]; error: string | null }> {
+  const rows: RawSplitLegRow[] = []
+  let from = 0
+  for (;;) {
+    const { data, error } = await supabase
+      .from('ledger_transaction_splits')
+      .select('transaction_id, category_id, amount_cents')
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + PAGE_SIZE - 1)
+    if (error) return { rows: [], error: error.message }
+    rows.push(...((data ?? []) as RawSplitLegRow[]))
     if (!data || data.length < PAGE_SIZE) break
     from += PAGE_SIZE
   }
@@ -301,6 +343,19 @@ export default async function MoneyBudgetPage({
 
   const { rows: rawTxns, error: txnError } = await fetchAllBudgetTxns(supabase, accountRow.id)
   if (txnError) return <LoadError message={txnError} />
+
+  // Split legs (Wave C Task 5) — owner-wide, bucketed by transaction_id, fed
+  // into explodeForCategories below alongside entered_at so a split parent's
+  // legs (not its own suppressed line) and no pending row ever reach
+  // buildBudget. A transaction absent from this map is simply unsplit.
+  const { rows: splitLegRows, error: splitLegError } = await fetchAllBudgetSplitLegs(supabase)
+  if (splitLegError) return <LoadError message={splitLegError} />
+  const legsByTxnId = new Map<string, { categoryId: string | null; amountCents: number }[]>()
+  for (const l of splitLegRows) {
+    const list = legsByTxnId.get(l.transaction_id) ?? []
+    list.push({ categoryId: l.category_id, amountCents: l.amount_cents })
+    legsByTxnId.set(l.transaction_id, list)
+  }
 
   const { rows: targetRows, error: targetError } = await fetchAllCategoryTargets(supabase)
   if (targetError) return <LoadError message={targetError} />
@@ -439,17 +494,30 @@ export default async function MoneyBudgetPage({
     openingMonth < OPENING_MONTH ? OPENING_MONTH :
     openingMonth > last ? last :
     openingMonth
+  // Wave C Task 5: rawTxns goes through explodeForCategories (lib/
+  // ledgerSplits.ts) — the ONE helper every category-reading consumer
+  // calls — before buildBudget ever sees it. A split parent's own line is
+  // suppressed in favor of its legs (the $400 case: an owner_pay leg plus a
+  // Temporary Transfer expense leg, each landing in its own category's
+  // activity); a pending row (entered_at null, migration 0042's OFX import
+  // axis) yields nothing at all, matching Dan's own semantics — pending
+  // counts in the register's balances but nothing category-shaped until
+  // entered. The opening-balance line is NOT a transaction (see its own
+  // comment above) and is injected after explosion, unchanged.
+  const explodableTxns: TxnForExplode[] = rawTxns.map((t) => ({
+    month: t.date.slice(0, 7),
+    categoryId: t.category_id,
+    amountCents: t.amount_cents,
+    enteredAt: t.entered_at,
+    legs: legsByTxnId.get(t.id),
+  }))
   const txns: BudgetTxn[] = [
     {
       month: seedMonth,
       categoryId: null,
       amountCents: accountRow.opening_balance_cents,
     },
-    ...rawTxns.map((t) => ({
-      month: t.date.slice(0, 7),
-      categoryId: t.category_id,
-      amountCents: t.amount_cents,
-    })),
+    ...explodeForCategories(explodableTxns),
   ]
 
   const targets: CategoryTarget[] = targetRows.map((t) => ({

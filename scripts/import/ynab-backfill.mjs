@@ -329,11 +329,13 @@ async function main() {
       const values = slice.map((t) => {
         const base = params.length
         params.push(t.date, t.amountCents, t.kind, t.category_id, t.payee, t.memo, t.cleared)
-        return `($1,$2,$${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},'manual',null)`
+        // entered_at now(): backfilled history is entered by definition — set
+        // explicitly per the house rule, not left to 0044's column default.
+        return `($1,$2,$${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},'manual',null,now())`
       })
       await client.query(
         `insert into ledger_transactions
-           (owner_id, account_id, date, amount_cents, kind, category_id, payee, memo, cleared, source, import_id)
+           (owner_id, account_id, date, amount_cents, kind, category_id, payee, memo, cleared, source, import_id, entered_at)
          values ${values.join(',')}`,
         params,
       )

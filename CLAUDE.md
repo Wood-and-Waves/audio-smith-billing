@@ -275,6 +275,40 @@ status.
   arithmetic. First hit ZERO 2026-08-24 (25/25 categories; RTA off by
   exactly the known $1.01 Novo remainder). This is September's arbiter.
 
+## Splits & pending (Wave C) — rules that must not drift
+
+- **A split is legs under ONE bank row** (`ledger_transaction_splits`): the
+  parent keeps date/payee/amount/cleared/import identity; legs carry
+  category + amount + their OWN kind (per-leg `deriveKind` — the $400 case
+  is one owner_pay leg + one expense leg). Postgres enforces the whole
+  contract: a deferred trigger (≥2 legs, signs match the parent, sum exact),
+  an ownership trigger (leg's owner = txn's owner, category's owner too),
+  and an amount-edit refusal while legs exist. Leg replacement is the
+  `replace_transaction_splits` RPC — atomic, ownership-checked inside.
+- **One explosion helper** (`lib/ledgerSplits.ts`): category-reading
+  consumers call `explodeForCategories` (budget) or `explodeForReports`
+  (kind-aware — P&L); balance-reading consumers NEVER explode and NEVER
+  filter pending. A THIRD kind exists and must be named when adding one:
+  LINK-shaped readers (the invoice matcher, bridge links) match on
+  amount/date/payee — the matcher excludes pending rows (an unaccepted
+  import cannot pay an invoice) and never needs legs. Adding a consumer?
+  Decide which of the three it is, in a comment, before the query.
+- **Pending = `entered_at IS NULL`** — only the OFX importer inserts it;
+  the column defaults to now() so a forgotten path is safe-by-construction
+  (0044's lesson: reconcile's adjustment predated the column). Pending
+  counts in working AND cleared balances (Dan's chosen semantics), and in
+  nothing category-shaped. Reject = tombstone FIRST
+  (`ledger_import_rejections`, consulted by the import's dedupe), delete
+  second. Reconcile refuses while pending rows sit at or before the
+  statement date.
+- Split parents refuse category and amount edits everywhere
+  (`This is a split — edit its legs.`); payee memory skips them entirely;
+  the Pending section's queue is its OWN unfiltered prop — the page's
+  display filter must never narrow it. Reconciled rows refuse splits
+  server-side (no carve-out yet — a deliberate open decision, BACKLOG);
+  the 3/5 $400 hand-split stays as two bank rows — collapsing it is an
+  optional both-books cleanup, never required.
+
 ## Current state (2026-08-24) & where things are written
 
 - LIVE in prod: billing + full Money module; receipt corner

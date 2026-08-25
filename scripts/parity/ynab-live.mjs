@@ -18,6 +18,7 @@
 
 import pg from 'pg'
 import { buildBudget, OPENING_MONTH } from '../../lib/budget.ts'
+import { explodeForCategories } from '../../lib/ledgerSplits.ts'
 pg.types.setTypeParser(20, (v) => Number(v))
 
 const dev = process.argv.includes('--dev')
@@ -43,20 +44,45 @@ const c = new pg.Client({ connectionString: url })
 await c.connect()
 const cats = (await c.query('select id, name, grp, sort, hidden, budget_role from ledger_categories')).rows
 const mv = (await c.query("select to_char(month,'YYYY-MM') m, from_category_id, to_category_id, amount_cents, undone_at from ledger_budget_moves")).rows
-const tx = (await c.query("select to_char(date,'YYYY-MM') m, category_id, amount_cents from ledger_transactions")).rows
+// id + entered_at (Wave C Task 5): entered_at is migration 0042's pending
+// axis (null = pending) and id is what the split-legs query below joins
+// against — both go through explodeForCategories the same as every other
+// category-reading consumer, never a second, ad hoc filter here.
+const tx = (await c.query("select id, to_char(date,'YYYY-MM') m, category_id, amount_cents, entered_at from ledger_transactions")).rows
+// Every split leg, owner-wide — this parity check has no per-owner scoping
+// of its own (same as every other query on this connection: the service
+// role sees everything, RLS is not in play from a direct pg connection),
+// same shape app/money/budget/page.tsx's own fetchAllBudgetSplitLegs reads.
+const legs = (await c.query('select transaction_id, category_id, amount_cents from ledger_transaction_splits')).rows
 const acct = (await c.query("select opening_balance_cents, to_char(opening_date,'YYYY-MM') m from ledger_accounts where closed = false order by created_at limit 1")).rows[0]
 await c.end()
+
+const legsByTxnId = new Map()
+for (const l of legs) {
+  const list = legsByTxnId.get(l.transaction_id) ?? []
+  list.push({ categoryId: l.category_id, amountCents: l.amount_cents })
+  legsByTxnId.set(l.transaction_id, list)
+}
 
 const now = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/Chicago', year: 'numeric', month: '2-digit',
 }).format(new Date()).slice(0, 7)
 
+// explodeForCategories (lib/ledgerSplits.ts) — the SAME single helper every
+// category-reading consumer calls, never a re-derived rule here: a pending
+// row (entered_at null) drops out, and a split parent's own line is
+// suppressed in favor of its legs. On today's data (no legs, no pending
+// rows exist in prod yet) this is a no-op pass-through — the regression
+// proof `npm run parity` re-runs before AND after this wave to confirm.
 const budget = buildBudget({
   categories: cats.map((r) => ({ id: r.id, name: r.name, grp: r.grp, sort: r.sort, hidden: r.hidden, budgetRole: r.budget_role })),
   moves: mv.map((r) => ({ month: r.m, fromCategoryId: r.from_category_id, toCategoryId: r.to_category_id, amountCents: r.amount_cents, undoneAt: r.undone_at })),
   txns: [
     { month: acct.m, categoryId: null, amountCents: acct.opening_balance_cents },
-    ...tx.map((r) => ({ month: r.m, categoryId: r.category_id, amountCents: r.amount_cents })),
+    ...explodeForCategories(tx.map((r) => ({
+      month: r.m, categoryId: r.category_id, amountCents: r.amount_cents,
+      enteredAt: r.entered_at, legs: legsByTxnId.get(r.id),
+    }))),
   ],
   targets: [], fromMonth: OPENING_MONTH, toMonth: now,
 })

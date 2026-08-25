@@ -6,6 +6,7 @@ import {
   filterYear, plSummary, spendByCategory, monthlyTotals,
   type ReportTxn, type ReportCategory, type CategorySpend,
 } from '@/lib/ledgerReports'
+import { explodeForReports, type ReportTxnForExplode } from '@/lib/ledgerSplits'
 import AppShell from '@/components/AppShell'
 
 export const dynamic = 'force-dynamic'
@@ -20,22 +21,67 @@ export const dynamic = 'force-dynamic'
 // either existing copy (no category/show names — reports never renders one).
 const LEDGER_TXN_PAGE_SIZE = 1000
 
+// `id` and `entered_at` are Task 5's own addition (Wave C) — `id` is the
+// split-legs map's key below, `entered_at` is what explodeForReports reads
+// to drop a pending row (migration 0042: null = pending) before it ever
+// reaches plSummary/spendByCategory/monthlyTotals. This raw shape is
+// deliberately NOT `ReportTxn` (lib/ledgerReports.ts's own pure-lib input,
+// unchanged by this wave) — it's the row this page fetches, one step before
+// the explosion below produces `ReportTxn`s.
+type RawReportTxnRow = {
+  id: string
+  date: string
+  amount_cents: number
+  kind: string
+  category_id: string | null
+  entered_at: string | null
+}
+
 async function fetchAllReportTxns(
   supabase: Awaited<ReturnType<typeof createClient>>,
   accountId: string,
-): Promise<{ rows: ReportTxn[]; error: string | null }> {
-  const rows: ReportTxn[] = []
+): Promise<{ rows: RawReportTxnRow[]; error: string | null }> {
+  const rows: RawReportTxnRow[] = []
   let from = 0
   for (;;) {
     const { data, error } = await supabase
       .from('ledger_transactions')
-      .select('date, amount_cents, kind, category_id')
+      .select('id, date, amount_cents, kind, category_id, entered_at')
       .eq('account_id', accountId)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
       .range(from, from + LEDGER_TXN_PAGE_SIZE - 1)
     if (error) return { rows: [], error: error.message }
-    rows.push(...((data ?? []) as ReportTxn[]))
+    rows.push(...((data ?? []) as RawReportTxnRow[]))
+    if (!data || data.length < LEDGER_TXN_PAGE_SIZE) break
+    from += LEDGER_TXN_PAGE_SIZE
+  }
+  return { rows, error: null }
+}
+
+type RawReportSplitLegRow = { transaction_id: string; category_id: string | null; amount_cents: number; kind: string }
+
+/** Every split leg, owner-wide (Wave C Task 5) — this reader needs `kind`
+ *  per leg (explodeForReports' own reason for existing: P&L/spend-by-
+ *  category/monthly branch on kind, and a leg's kind can differ from its
+ *  parent's — the $400 case), unlike app/money/budget/page.tsx's narrower
+ *  fetchAllBudgetSplitLegs, which feeds the kind-blind explodeForCategories
+ *  instead. Bucketed by transaction_id below, same shape every other paged
+ *  split-legs fetch in this app uses. */
+async function fetchAllReportSplitLegs(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<{ rows: RawReportSplitLegRow[]; error: string | null }> {
+  const rows: RawReportSplitLegRow[] = []
+  let from = 0
+  for (;;) {
+    const { data, error } = await supabase
+      .from('ledger_transaction_splits')
+      .select('transaction_id, category_id, amount_cents, kind')
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + LEDGER_TXN_PAGE_SIZE - 1)
+    if (error) return { rows: [], error: error.message }
+    rows.push(...((data ?? []) as RawReportSplitLegRow[]))
     if (!data || data.length < LEDGER_TXN_PAGE_SIZE) break
     from += LEDGER_TXN_PAGE_SIZE
   }
@@ -148,22 +194,63 @@ export default async function MoneyReportsPage({
   if (categoryError) return <LoadError message={categoryError.message} />
   const categories: ReportCategory[] = categoryRows ?? []
 
-  const { rows: allTxns, error: txnError } = await fetchAllReportTxns(supabase, accountRow.id)
+  const { rows: rawTxns, error: txnError } = await fetchAllReportTxns(supabase, accountRow.id)
   if (txnError) return <LoadError message={txnError} />
 
+  // Split legs (Wave C Task 5) — owner-wide, bucketed by transaction_id;
+  // feeds explodeForReports below (kind per leg) AND the uncategorizedCount
+  // fix just past it (a split parent's own category_id is forced null too,
+  // same as an ordinary uncategorized row — this map is what tells the two
+  // apart, same reasoning as app/money/page.tsx's own legsByTxnId).
+  const { rows: splitLegRows, error: splitLegError } = await fetchAllReportSplitLegs(supabase)
+  if (splitLegError) return <LoadError message={splitLegError} />
+  const legsByTxnId = new Map<string, { categoryId: string | null; amountCents: number; kind: string }[]>()
+  for (const l of splitLegRows) {
+    const list = legsByTxnId.get(l.transaction_id) ?? []
+    list.push({ categoryId: l.category_id, amountCents: l.amount_cents, kind: l.kind })
+    legsByTxnId.set(l.transaction_id, list)
+  }
+
+  // Seam choice (Wave C Task 5, stated per the plan's own instruction):
+  // explode ONCE, here, before any row reaches lib/ledgerReports.ts's pure
+  // functions — that lib stays untouched, same "only the assembly changes"
+  // rule the plan's Global Constraints hold lib/budget.ts to. explodeForReports
+  // (lib/ledgerSplits.ts) is the kind-aware sibling of explodeForCategories:
+  // a pending row (entered_at null) yields nothing, and a split parent's own
+  // line is suppressed in favor of its legs, each carrying ITS OWN kind —
+  // never the parent's (the $400 case: an owner_pay parent's Temporary
+  // Transfer leg must show as an EXPENSE in the P&L below, which only a
+  // leg-level kind read can produce).
+  const explodableTxns: ReportTxnForExplode[] = rawTxns.map((t) => ({
+    date: t.date,
+    amountCents: t.amount_cents,
+    kind: t.kind,
+    categoryId: t.category_id,
+    enteredAt: t.entered_at,
+    legs: legsByTxnId.get(t.id),
+  }))
+  const allTxns: ReportTxn[] = explodeForReports(explodableTxns).map((line) => ({
+    date: line.date, amount_cents: line.amountCents, kind: line.kind, category_id: line.categoryId,
+  }))
+
   // Account-wide, not year-scoped — matches app/money/page.tsx's own
-  // uncategorizedCount exactly (same kind filter), so this banner's number
-  // and the register's badge never disagree. Transfer never carries a
-  // category (lt_nocat_for_transfer, migration 0038) and owner_pay is
-  // categorized through the edit form rather than this queue (same reasoning
-  // as app/money/page.tsx's own uncategorizedCount) — both are excluded here
-  // for the same reason the register excludes them. Either way, lib/
-  // ledgerReports.ts's own P&L math (plSummary, spendByCategory) is
-  // unaffected by whether an owner_pay row carries a category: both filter
-  // by kind, never by category presence, so owner pay never leaks into
-  // expense/deductible/spend-by-category regardless.
-  const uncategorizedCount = allTxns.filter(
-    (t) => t.category_id === null && (t.kind === 'income' || t.kind === 'expense'),
+  // uncategorizedCount exactly (same kind filter, plus the same split-parent
+  // exclusion via legsByTxnId — Wave C Task 5's own fix: a split parent's
+  // category_id is forced null too, but it's categorized through its legs,
+  // not this queue), so this banner's number and the register's badge never
+  // disagree. Transfer never carries a category (lt_nocat_for_transfer,
+  // migration 0038) and owner_pay is categorized through the edit form
+  // rather than this queue (same reasoning as app/money/page.tsx's own
+  // uncategorizedCount) — both are excluded here for the same reason the
+  // register excludes them. Computed over `rawTxns` (pre-explosion, by
+  // design — a review-queue count is about which ROWS still need a pick,
+  // not which category LINES the P&L below sees) rather than `allTxns`.
+  // Either way, lib/ledgerReports.ts's own P&L math (plSummary,
+  // spendByCategory) is unaffected by whether an owner_pay row carries a
+  // category: both filter by kind, never by category presence, so owner pay
+  // never leaks into expense/deductible/spend-by-category regardless.
+  const uncategorizedCount = rawTxns.filter(
+    (t) => t.category_id === null && !legsByTxnId.has(t.id) && (t.kind === 'income' || t.kind === 'expense'),
   ).length
 
   const yearTxns = filterYear(allTxns, year)

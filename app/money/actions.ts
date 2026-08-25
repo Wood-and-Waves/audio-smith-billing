@@ -13,6 +13,7 @@ import {
   validateTxnShape, isSaneLedgerDate, deriveKind, type LedgerKind, type CategoryForKind, type LedgerDirection,
 } from '@/lib/ledgerRules'
 import { decideIncomeRoleChange } from '@/lib/incomeRoleGuard'
+import { validateLegs, pendingBlocksReconcile, type SplitLegInput } from '@/lib/ledgerSplits'
 
 type Fail = { error: string }
 
@@ -118,13 +119,22 @@ export async function ensureDefaultCategories(): Promise<Fail | { ok: true; seed
  * so a malformed id is refused here rather than trusted to fail safely once
  * it reaches Postgres.
  *
- * All four reads (current role, moves, targets, transactions) run even when
- * the category turns out to already be 'income' — decideIncomeRoleChange
- * short-circuits on that case, but fetching unconditionally keeps this
- * function simple and the query cost is one row each, nowhere near hot.
- * `error` on the current-role read is checked and returned on before
- * touching `current` at all, same fail-closed rule decideIncomeRoleChange
- * itself applies to the other three reads.
+ * All five reads (current role, moves, targets, transactions, splits) run
+ * even when the category turns out to already be 'income' —
+ * decideIncomeRoleChange short-circuits on that case, but fetching
+ * unconditionally keeps this function simple and the query cost is one row
+ * each, nowhere near hot. `error` on the current-role read is checked and
+ * returned on before touching `current` at all, same fail-closed rule
+ * decideIncomeRoleChange itself applies to the other four reads.
+ *
+ * `splits` (I3, Wave C final review) is the same `.limit(1)` EXISTS-shaped
+ * read isSplitParent uses elsewhere in this file, scoped to category_id
+ * instead of transaction_id: a category named only by a split leg — never
+ * by a plain transaction's own category_id, which a split parent has
+ * forced to null (migration 0042) — is invisible to the `transactions` read
+ * above, so without this the guard would wave through a category whose leg
+ * activity would silently start counting as Ready to Assign the instant the
+ * role flips.
  */
 async function incomeRoleChangeAllowed(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -137,6 +147,7 @@ async function incomeRoleChangeAllowed(
     moves,
     targets,
     transactions,
+    splits,
   ] = await Promise.all([
     supabase.from('ledger_categories').select('budget_role').eq('id', categoryId).maybeSingle(),
     supabase
@@ -147,11 +158,12 @@ async function incomeRoleChangeAllowed(
       .limit(1),
     supabase.from('ledger_category_targets').select('id').eq('category_id', categoryId).limit(1),
     supabase.from('ledger_transactions').select('id').eq('category_id', categoryId).limit(1),
+    supabase.from('ledger_transaction_splits').select('id').eq('category_id', categoryId).limit(1),
   ])
   if (currentError) return { error: currentError.message }
   const currentRole = (current?.budget_role === 'income' ? 'income' : 'spending') as 'spending' | 'income'
 
-  return decideIncomeRoleChange(currentRole, moves, targets, transactions)
+  return decideIncomeRoleChange(currentRole, moves, targets, transactions, splits)
 }
 
 /**
@@ -256,6 +268,31 @@ async function belongsToCaller(
   return data !== null
 }
 
+/**
+ * Does this transaction currently have any split legs? A single EXISTS-
+ * shaped read (limit 1), fail-closed the same direction every other guard
+ * read in this file fails: an ERROR must not be read as "no legs" — that
+ * would let setTransactionCategory, its same-payee sweep, or
+ * updateLedgerTransaction's amount edit silently treat a genuine split
+ * parent as an ordinary row and write straight over what its legs already
+ * say, rather than surfacing the refusal Task 3 asks for at the point of
+ * the mistake (migration 0042's own deferred trigger would eventually catch
+ * a bad amount edit at commit, but the friendly message here is meant to
+ * beat that — see lib/ledgerSplits.ts's validateLegs doc comment for the
+ * same "the app's own voice, before a doomed write" reasoning).
+ */
+async function isSplitParent(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  transactionId: string,
+): Promise<Fail | { isSplit: boolean }> {
+  const { data, error } = await supabase
+    .from('ledger_transaction_splits').select('id').eq('transaction_id', transactionId).limit(1)
+  if (error) return { error: error.message }
+  return { isSplit: !!data && data.length > 0 }
+}
+
+const SPLIT_PARENT_ERROR = 'This is a split — edit its legs.'
+
 type LedgerTxnRow = {
   id: string
   date: string
@@ -274,6 +311,13 @@ type LedgerTxnRow = {
   payee: string
   category_id: string | null
   kind: LedgerKind
+  // Wave C (migration 0042): null = pending. Rides along on every caller of
+  // this loader for the same "cheap column on an already-open row" reason as
+  // payee/category_id/kind above — reconcileAccount's own pending-block
+  // check (below) is the one caller that actually needs it; every other
+  // caller's cast just ignores it, same as they already ignore payee/
+  // category_id/kind when they don't need those either.
+  entered_at: string | null
 }
 
 const LEDGER_TXN_PAGE_SIZE = 1000
@@ -298,7 +342,7 @@ async function fetchAllLedgerTransactions(
   for (;;) {
     const { data, error } = await supabase
       .from('ledger_transactions')
-      .select('id, date, amount_cents, cleared, import_id, source, payee, category_id, kind')
+      .select('id, date, amount_cents, cleared, import_id, source, payee, category_id, kind, entered_at')
       .eq('account_id', accountId)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
@@ -353,6 +397,13 @@ export async function addLedgerTransaction(input: {
       show_id: input.showId,
       payee: input.payee.trim(),
       memo: input.memo.trim() || null,
+      // Wave C (migration 0042): entered_at null means pending, and the ONE
+      // path allowed to insert null is the OFX importer (importOfx below).
+      // A hand-entered row is entered by definition — the design doc's own
+      // out-of-scope list — so this is set explicitly here, not left to the
+      // column's default, the same discipline importOfx's own null is
+      // explicit rather than an omission.
+      entered_at: new Date().toISOString(),
     })
     .select('id')
     .single()
@@ -385,9 +436,27 @@ export async function updateLedgerTransaction(input: {
   if (!user) return { error: 'Not signed in.' }
 
   const { data: existing } = await supabase
-    .from('ledger_transactions').select('cleared').eq('id', input.id).maybeSingle()
+    .from('ledger_transactions').select('cleared, amount_cents, category_id').eq('id', input.id).maybeSingle()
   if (!existing) return { error: 'That transaction no longer exists.' }
   if (existing.cleared === 'reconciled') return { error: 'Reconciled transactions are locked.' }
+
+  // Split-parent refusal (Task 3, Global Constraints): mirrors migration
+  // 0042's own `ledger_transactions_refuse_amount_edit_with_legs` trigger —
+  // same WHEN condition (only an actual amount change pays for the legs
+  // lookup), same refusal, but caught here in the app's own friendly voice
+  // ahead of the DB trigger's raw exception text. Payee/memo/date edits on
+  // a split parent stay allowed; amount AND category changes are refused.
+  // …and the same gate for a CATEGORY change (review catch): a stale edit
+  // row opened before the row was split still holds its old category — a
+  // save from that tab would silently un-null a split parent's category_id,
+  // contradicting its legs AND letting payeeMemory (which skips splits only
+  // via `category_id === null`) learn a category the row doesn't hold.
+  // Payee/memo/date-only edits stay allowed either way.
+  if (input.amountCents !== existing.amount_cents || input.categoryId !== existing.category_id) {
+    const splitCheck = await isSplitParent(supabase, input.id)
+    if ('error' in splitCheck) return splitCheck
+    if (splitCheck.isSplit) return { error: SPLIT_PARENT_ERROR }
+  }
 
   if (!isPlainDate(input.date)) return { error: 'Pick a date.' }
   if (!isSaneLedgerDate(input.date)) return { error: SANE_DATE_ERROR }
@@ -1245,6 +1314,15 @@ export async function setTransactionCategory(
     return { error: 'Transfers do not use a category.' }
   }
 
+  // Split-parent refusal (Task 3, Global Constraints): a split parent's
+  // category is its legs, not this column (the RPC forces category_id to
+  // null while legs exist) — picking a category here would write a value
+  // the row's own legs immediately contradict. Checked before the category
+  // walk below so a bad pick on a split parent never even gets that far.
+  const splitCheck = await isSplitParent(supabase, id)
+  if ('error' in splitCheck) return splitCheck
+  if (splitCheck.isSplit) return { error: SPLIT_PARENT_ERROR }
+
   // Replaces the old bare belongsToCaller ownership check: name and
   // budget_role are exactly what deriveKind needs, and RLS still refuses a
   // category id that isn't the caller's own the same way belongsToCaller's
@@ -1310,9 +1388,26 @@ export async function setTransactionCategory(
     if (candidatesError) return { error: candidatesError }
 
     const targetKey = normalizePayee(existing.payee)
-    const ids = candidates
+    let ids = candidates
       .filter((c) => normalizePayee(c.payee) === targetKey)
       .map((c) => c.id)
+
+    // Split parents are excluded from the sweep (Task 3, Global
+    // Constraints — payee memory, and this sweep is its "applying" half,
+    // skips split parents entirely). fetchUncategorizedSamePayeeCandidates'
+    // own `category_id IS NULL` filter can't tell a real uncategorized row
+    // from a split parent — the RPC forces a split parent's category_id to
+    // null too — so a split parent sharing this payee would otherwise slip
+    // through and have its (nonexistent) category silently overwritten out
+    // from under its legs. Fail-closed: an ERROR here refuses the whole
+    // sweep rather than risk applying over an unchecked split parent.
+    if (ids.length > 0) {
+      const { data: splitRows, error: splitRowsError } = await supabase
+        .from('ledger_transaction_splits').select('transaction_id').in('transaction_id', ids)
+      if (splitRowsError) return { error: splitRowsError.message }
+      const splitIds = new Set((splitRows ?? []).map((r) => r.transaction_id as string))
+      ids = ids.filter((candidateId) => !splitIds.has(candidateId))
+    }
 
     if (ids.length > 0) {
       // derived.kind, not existing.kind — see this function's own doc
@@ -1331,10 +1426,320 @@ export async function setTransactionCategory(
   return { ok: true, applied }
 }
 
+// ---------------------------------------------------------------------------
+// Splits (Wave C Task 3) — replace_transaction_splits (migration 0042) is
+// the ONE place legs are ever written; this pair of actions is a thin
+// wrapper: ownership walks, validateLegs (lib/ledgerSplits.ts, Task 2) for
+// the friendly refusal ahead of the DB trigger's, deriveKind
+// (lib/ledgerRules.ts) per leg, then the RPC. The RPC itself re-checks
+// ownership and does the balance/sign/count validation again at commit
+// (the deferred trigger) — this action's own checks exist so a bad request
+// refuses in the app's voice, not Postgres's raw exception text, same
+// reasoning as every other guard read in this file.
+// ---------------------------------------------------------------------------
+
+/**
+ * Replaces a transaction's split legs wholesale (delete-then-insert, inside
+ * replace_transaction_splits). An empty `legs` array unsplits — the RPC's
+ * own contract, see its doc comment in scripts/sql/migrations/
+ * 0042_splits_and_pending.sql — so `unsplitTransaction` below is a one-line
+ * wrapper around this same function rather than a second write path.
+ *
+ * Ownership is the transaction ROW's own owner_id (walked via a fail-closed
+ * read of the row itself, not the account's — RLS already scopes the read
+ * to the caller's own rows, so a miss here means "not found or not yours",
+ * same as every other guard read in this file). A transfer is refused
+ * outright: it moves money between Dan's own accounts and carries no
+ * category to split across, the same rule setTransactionCategory already
+ * enforces on the very same kind.
+ *
+ * Each leg's category is walked back to its own owner in ONE batched
+ * `.in()` read (RLS-scoped, same "fewer round trips than legs" shape
+ * acceptIncomeMatch's own invoice walk uses) — a leg naming a category id
+ * that isn't the caller's own, or doesn't exist, refuses the whole replace
+ * before any leg's kind is even derived, let alone the RPC called.
+ *
+ * Kind is derived per leg through deriveKind(category, direction) — the
+ * SAME rule the register's edit row and setTransactionCategory both use,
+ * no second derivation path — with `direction` read from the PARENT
+ * transaction's own amount sign, not the leg's. validateLegs above already
+ * requires every leg's sign to match the parent's, so this is not a second,
+ * independent fact; it is the one fact every leg already agrees to, applied
+ * once rather than re-derived per leg. An income-role category on a leg is
+ * refused by deriveKind itself the same way the register refuses one on an
+ * outflow row — there is no separate "assignable" check here: deriveKind's
+ * own refusal IS the leg's refusal, so a leg is never held to a stricter or
+ * looser rule than the row it would have been if it were never split.
+ */
+export async function replaceSplits(
+  transactionId: string,
+  legs: SplitLegInput[],
+): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const { data: existing, error: existingError } = await supabase
+    .from('ledger_transactions')
+    .select('amount_cents, kind, cleared')
+    .eq('id', transactionId)
+    .maybeSingle()
+  if (existingError) return { error: existingError.message }
+  if (!existing) return { error: 'That transaction no longer exists.' }
+  // Same reconciled lock as updateLedgerTransaction/deleteLedgerTransaction
+  // above (Wave C final review, S2): this action had NO server-side refusal
+  // at all before this — SplitEditor simply never offered the "Split…" pin
+  // on a reconciled row's edit form, which is a client habit, not a
+  // boundary; a direct call (or a stale tab) reached the RPC unguarded. A
+  // reconciled row has already been matched against a bank statement, so
+  // rewriting its legs out from under that reconciliation is the same
+  // hazard updateLedgerTransaction's own comment names for an amount edit —
+  // refused here, before the RPC, in the app's own voice.
+  //
+  // NOT extended into a reconciled-splits carve-out even though "splitting
+  // moves no money" is true (the parent's own amount_cents never changes
+  // by this action): that's a deliberate future decision the controller is
+  // backlogging, not something this fix also resolves. Refuse first;
+  // loosen later only on purpose.
+  if (existing.cleared === 'reconciled') return { error: 'Reconciled transactions are locked.' }
+  // A transfer moves money between Dan's own accounts and never carries a
+  // category (lt_nocat_for_transfer, migration 0038) — the same rule
+  // setTransactionCategory enforces on this exact kind, applied here before
+  // a transfer is ever handed a leg to disagree with.
+  if (existing.kind === 'transfer') {
+    return { error: 'Transfers do not use a category.' }
+  }
+
+  const shapeError = validateLegs(existing.amount_cents, legs)
+  if (shapeError) return { error: shapeError }
+
+  const categoryIds = [...new Set(
+    legs.map((leg) => leg.categoryId).filter((id): id is string => id !== null),
+  )]
+  const categoriesById = new Map<string, { name: string; budgetRole: 'spending' | 'income' }>()
+  if (categoryIds.length > 0) {
+    const { data: cats, error: catsError } = await supabase
+      .from('ledger_categories')
+      .select('id, name, budget_role')
+      .in('id', categoryIds)
+    if (catsError) return { error: catsError.message }
+    // RLS already scopes this select to the caller's own categories, same
+    // as acceptIncomeMatch's own invoice-count check — a length mismatch
+    // means at least one leg named a category that isn't the caller's own
+    // (or no longer exists), and the fail-closed rule this file applies
+    // everywhere else means that refuses the WHOLE replace, not just that
+    // one leg.
+    if (!cats || cats.length !== categoryIds.length) {
+      return { error: 'One of those categories does not belong to you.' }
+    }
+    for (const cat of cats) {
+      categoriesById.set(cat.id, { name: cat.name, budgetRole: cat.budget_role === 'income' ? 'income' : 'spending' })
+    }
+  }
+
+  const direction: LedgerDirection = existing.amount_cents > 0 ? 'inflow' : 'outflow'
+  const preparedLegs: { category_id: string | null; amount_cents: number; kind: LedgerKind; note: string | null }[] = []
+  for (const leg of legs) {
+    const category: CategoryForKind = leg.categoryId === null ? null : categoriesById.get(leg.categoryId) ?? null
+    const derived = deriveKind(category, direction)
+    if ('error' in derived) return { error: derived.error }
+    preparedLegs.push({
+      category_id: leg.categoryId,
+      amount_cents: leg.amountCents,
+      kind: derived.kind,
+      note: leg.note?.trim() || null,
+    })
+  }
+
+  const { error: rpcError } = await supabase.rpc('replace_transaction_splits', {
+    p_transaction_id: transactionId,
+    p_legs: preparedLegs,
+  })
+  if (rpcError) return { error: rpcError.message }
+
+  revalidatePath('/money')
+  return { ok: true }
+}
+
+/** Un-splits a transaction — a thin call to replaceSplits with zero legs,
+ *  the RPC's own "empty array means unsplit" contract (see its doc comment,
+ *  scripts/sql/migrations/0042_splits_and_pending.sql). Not a second write
+ *  path: the ownership walk, transfer refusal, and revalidate all come from
+ *  replaceSplits itself. */
+export async function unsplitTransaction(transactionId: string): Promise<Fail | { ok: true }> {
+  return replaceSplits(transactionId, [])
+}
+
+// ---------------------------------------------------------------------------
+// Pending (Wave C Task 3) — entered_at null means pending (migration 0042).
+// Enter Now/Enter All share one action below; Reject is its own, since a
+// reject both tombstones and deletes rather than merely flipping a column.
+// ---------------------------------------------------------------------------
+
+/**
+ * Enters one or more pending transactions — Enter Now passes a single id,
+ * Enter All passes the whole pending queue; both are this same action, no
+ * separate code path per the design doc's own naming. Ownership-scoped on
+ * the update itself (`owner_id` in the WHERE, not just RLS) since this
+ * writes straight from a caller-supplied id array with no prior per-row
+ * read to walk ownership through first, unlike most other actions in this
+ * file. `entered_at is null` in the same WHERE means an id that was already
+ * entered (a race with another tab, or a stale queue on screen) is silently
+ * skipped rather than refusing the whole batch or overwriting a real
+ * entered_at with a later one.
+ *
+ * `wrote` reports how many rows actually changed — the same honesty
+ * app/money/budget/actions.ts's WriteResult idiom uses ("a move actually
+ * landed" vs. "correctly did nothing") — rather than collapsing "entered 3
+ * of 5" and "entered 0 of 5, all already entered" into the same bare
+ * `{ ok: true }`. An empty `ids` array is a no-op success, not a validation
+ * error: Enter All on an empty pending queue is a normal state, not a
+ * mistake.
+ */
+export async function enterTransactions(ids: string[]): Promise<Fail | { ok: true; wrote: number }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const uniqueIds = [...new Set(ids)]
+  if (uniqueIds.length === 0) return { ok: true, wrote: 0 }
+
+  const { data, error } = await supabase
+    .from('ledger_transactions')
+    .update({ entered_at: new Date().toISOString() })
+    .in('id', uniqueIds)
+    .eq('owner_id', user.id)
+    .is('entered_at', null)
+    .select('id')
+  if (error) return { error: error.message }
+
+  revalidatePath('/money')
+  return { ok: true, wrote: data?.length ?? 0 }
+}
+
+/**
+ * Rejects a pending imported row — permanently: the transaction is deleted
+ * and a tombstone is written to ledger_import_rejections so the same bank
+ * row does not resurrect the next time this statement, or an overlapping
+ * later one, is re-imported (importOfx below feeds every tombstoned
+ * import_id into planImport's existing set for exactly this reason). Only a
+ * PENDING, IMPORT-sourced row carrying an import_id can be rejected — a
+ * hand-entered row has no import_id to tombstone against (and is entered by
+ * definition, the design doc's own out-of-scope line), and an already-
+ * entered row has already been approved: Enter Now is the way past pending,
+ * not this.
+ *
+ * The tombstone INSERT happens BEFORE the transaction DELETE, not after —
+ * deliberately the opposite order of "delete, then log it". A crash between
+ * the two writes must leave the ledger_import_rejections row standing with
+ * the transaction still present: the next import then treats that id as
+ * already-existing and skips it (a stale pending row sitting in the
+ * register a little too long — annoying, and correctable by hand), rather
+ * than the transaction gone with no tombstone (the far worse failure: the
+ * next import silently resurrects the very row Dan just rejected, with no
+ * sign anything went wrong). A duplicate tombstone (Postgres 23505) means
+ * this import_id was already rejected once before — not a failure, so the
+ * delete below still proceeds, making a repeated reject call idempotent.
+ *
+ * Same link-guard and receipt cleanup as deleteLedgerTransaction above — a
+ * reject IS a delete, and a rejected-but-linked row would strand a paid
+ * invoice or a matched expense exactly the way an ordinary delete would;
+ * see that function's own comments for the full reasoning, unchanged here.
+ */
+export async function rejectTransaction(
+  id: string,
+): Promise<Fail | { ok: true; warning?: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const { data: existing, error: existingError } = await supabase
+    .from('ledger_transactions')
+    .select('account_id, entered_at, source, import_id, receipt_path, receipt_original')
+    .eq('id', id)
+    .maybeSingle()
+  if (existingError) return { error: existingError.message }
+  if (!existing) return { error: 'That transaction no longer exists.' }
+  if (existing.entered_at !== null) return { error: 'Only a pending transaction can be rejected.' }
+  if (existing.source !== 'import' || !existing.import_id) {
+    return { error: 'Only an imported transaction can be rejected.' }
+  }
+
+  const { data: invoiceLinks, error: invoiceLinksErr } = await supabase
+    .from('ledger_transaction_invoices').select('id').eq('transaction_id', id).limit(1)
+  if (invoiceLinksErr) return { error: invoiceLinksErr.message }
+  const { data: expenseLinks, error: expenseLinksErr } = await supabase
+    .from('ledger_transaction_expenses').select('id').eq('transaction_id', id).limit(1)
+  if (expenseLinksErr) return { error: expenseLinksErr.message }
+  if ((invoiceLinks && invoiceLinks.length > 0) || (expenseLinks && expenseLinks.length > 0)) {
+    return { error: 'This row is linked. Unlink it first.' }
+  }
+
+  const { error: tombstoneError } = await supabase.from('ledger_import_rejections').insert({
+    owner_id: user.id,
+    account_id: existing.account_id,
+    import_id: existing.import_id,
+  })
+  if (tombstoneError && tombstoneError.code !== '23505') {
+    return { error: tombstoneError.message }
+  }
+
+  const { error: deleteError } = await supabase
+    .from('ledger_transactions').delete().eq('id', id).eq('owner_id', user.id)
+  if (deleteError) return { error: deleteError.message }
+
+  const paths = [existing.receipt_path, existing.receipt_original].filter(Boolean) as string[]
+  let warning: string | undefined
+  if (paths.length) {
+    const { error: storageError } = await supabase.storage.from('receipts').remove(paths)
+    if (storageError) {
+      warning = `The transaction was rejected, but its receipt file${paths.length === 1 ? '' : 's'} ` +
+        `could not be removed from storage: ${storageError.message}`
+    }
+  }
+
+  revalidatePath('/money')
+  return warning ? { ok: true, warning } : { ok: true }
+}
+
 // A real statement is a few hundred KB at most; this is a fat-finger/DoS
 // guard on the string a browser hands the server action body, not a limit
 // anyone should ever brush up against.
 const MAX_OFX_TEXT_LENGTH = 2 * 1024 * 1024
+
+const REJECTIONS_PAGE_SIZE = 1000
+
+/**
+ * Every tombstoned import_id for this account (ledger_import_rejections,
+ * written by rejectTransaction above) — paged the same way
+ * fetchAllLedgerTransactions pages ledger_transactions itself, for the same
+ * reason: a plain unranged select silently truncates at PostgREST's 1000-row
+ * cap, which here would mean a heavy rejecter's OLDEST rejections quietly
+ * stop being consulted and start resurrecting. Fail-closed: an error aborts
+ * the whole import rather than proceeding without consulting the tombstones,
+ * the same rule fetchAllLedgerTransactions's own error already applies to
+ * importOfx below.
+ */
+async function fetchTombstonedImportIds(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  accountId: string,
+): Promise<{ ids: string[]; error: string | null }> {
+  const ids: string[] = []
+  let from = 0
+  for (;;) {
+    const { data, error } = await supabase
+      .from('ledger_import_rejections')
+      .select('import_id')
+      .eq('account_id', accountId)
+      .order('created_at', { ascending: true })
+      .range(from, from + REJECTIONS_PAGE_SIZE - 1)
+    if (error) return { ids: [], error: error.message }
+    ids.push(...((data ?? []).map((r) => r.import_id as string)))
+    if (!data || data.length < REJECTIONS_PAGE_SIZE) break
+    from += REJECTIONS_PAGE_SIZE
+  }
+  return { ids, error: null }
+}
 
 /**
  * Imports a downloaded bank statement into one account, via the pure
@@ -1394,7 +1799,31 @@ export async function importOfx(
   const { rows: existingRows, error: existingError } = await fetchAllLedgerTransactions(supabase, accountId)
   if (existingError) return { error: existingError }
 
-  const plan = planImport(parsed.transactions, existingRows as ExistingTxn[])
+  const { ids: tombstonedIds, error: tombstonedError } = await fetchTombstonedImportIds(supabase, accountId)
+  if (tombstonedError) return { error: tombstonedError }
+
+  // Tombstoned ids (Wave C, rejectTransaction above) feed planImport's own
+  // dedupe as synthetic already-imported stubs — only import_id matters:
+  // planImport's existingImportIds set and its GEN occurrence counter both
+  // read import_id alone, and findMatch can never treat a stub as a match
+  // candidate (it requires source === 'manual' with import_id === null, and
+  // a stub has neither). This array is passed to planImport ONLY — it's a
+  // parallel, wider list, not a replacement for existingRows below, which
+  // still drives match-application, payee memory, and everything else that
+  // needs a REAL row's real columns.
+  const existingForPlan: ExistingTxn[] = [
+    ...(existingRows as ExistingTxn[]),
+    ...tombstonedIds.map((import_id) => ({
+      id: `tombstone:${import_id}`,
+      date: '1970-01-01',
+      amount_cents: 0,
+      import_id,
+      source: 'import' as const,
+      cleared: 'cleared' as const,
+    })),
+  ]
+
+  const plan = planImport(parsed.transactions, existingForPlan)
 
   // Payee memory (lib/payeeMemory): the existing rows this same fetch just
   // loaded already carry payee/category_id/kind, so the newest categorized
@@ -1464,6 +1893,13 @@ export async function importOfx(
       cleared: 'cleared',
       import_id: ins.importId,
       source: 'import',
+      // Wave C (migration 0042): the OFX importer is the ONE path allowed
+      // to insert entered_at null — every inserted row lands PENDING, a
+      // reviewable queue instead of instantly moving the budget (the design
+      // doc's own framing). Explicit null, not an omission, the same
+      // discipline addLedgerTransaction's own explicit timestamp uses on
+      // the opposite side of this one rule.
+      entered_at: null,
     })
     if (error) {
       if (error.code === '23505') { duplicates += 1; continue }
@@ -1541,6 +1977,26 @@ export async function reconcileAccount(input: {
   // compare is safe since `date` is always YYYY-MM-DD (isPlainDate, checked
   // above), which sorts identically to a real date compare.
   const rows = allRows.filter((r) => r.date <= input.reconciledOn)
+
+  // Reconcile refuses while any pending row is dated on or before the
+  // statement date (Task 3, Global Constraints; the predicate itself is
+  // lib/ledgerSplits.ts's pendingBlocksReconcile, Task 2 — this action just
+  // supplies the pending rows and the date, never re-derives the rule).
+  // `rows` above is already narrowed to date <= reconciledOn, so this is
+  // the exact pool the design doc means by "pending rows exist at or before
+  // the statement date": they already count toward `cleared` below (Dan's
+  // own balance semantics — pending counts in both balances) but haven't
+  // been approved, so locking them into 'reconciled' would be dishonest and
+  // excluding them from the statement math would break it. The message
+  // names what to do, the design doc's own resolution.
+  const pendingAtOrBeforeStatement = rows.filter((r) => r.entered_at === null)
+  if (pendingBlocksReconcile(pendingAtOrBeforeStatement, input.reconciledOn)) {
+    const n = pendingAtOrBeforeStatement.length
+    return {
+      error: `${n} pending transaction${n === 1 ? '' : 's'} dated on or before the statement date ` +
+        `${input.reconciledOn} — enter or reject ${n === 1 ? 'it' : 'them'} first, then reconcile.`,
+    }
+  }
 
   const cleared = clearedBalance(account.opening_balance_cents, rows as BalanceLike[])
   const diff = input.statementBalanceCents - cleared
