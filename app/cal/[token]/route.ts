@@ -18,6 +18,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 type FeedRow = {
   days: {
     id: string
+    show_id: string
     date: string
     show_name: string
     venue: string | null
@@ -62,6 +63,7 @@ export async function GET(
   const row = data as FeedRow
   const days: FeedDay[] = row.days.map((d) => ({
     id: d.id,
+    showId: d.show_id,
     date: d.date,
     showName: d.show_name,
     venue: d.venue,

@@ -23,9 +23,15 @@
 //
 // Pure: no database, no @/ imports, no JSX. Exercised by node --test.
 
+import { addDays } from './dates.ts'
+import { contiguousRuns, type RunDay, type ShowRun } from './showRuns.ts'
+
 /** Schedule facts for one show day. No money field exists on this type. */
 export type FeedDay = {
   id: string
+  /** Which show this day belongs to — the grouping key for runs (0047).
+   *  Grouping by name instead would merge two shows that share one. */
+  showId: string
   date: string // YYYY-MM-DD
   showName: string
   venue: string | null
@@ -111,19 +117,36 @@ function toDateBasic(iso: string): string {
   return iso.replace(/-/g, '')
 }
 
-function showDayEvent(day: FeedDay, stamp: string): string[] {
+/**
+ * One VEVENT per contiguous RUN of a show's days (Dan's decision,
+ * 2026-08-25) rather than one per day, so a 9-day booking reads as a
+ * single block in a subscriber's calendar. `meta` carries the show-level
+ * fields, taken from any day of the run — they are identical across it.
+ *
+ * The UID is run-scoped and stable: an unchanged run keeps its identity
+ * across refreshes, and a show with a gap publishes one event per run,
+ * matching what the month grid draws. This DOES change every UID the feed
+ * previously published (`showday-<dayId>`), so subscribers drop the old
+ * per-day events and pick up these on the next refresh — the one-time
+ * churn Dan accepted when he chose this.
+ */
+function showRunEvent(run: ShowRun, meta: FeedDay, stamp: string): string[] {
   const lines = [
     'BEGIN:VEVENT',
-    `UID:showday-${day.id}@theaudiosmith.com`,
+    `UID:showrun-${run.showId}-${run.start}@theaudiosmith.com`,
     `DTSTAMP:${stamp}`,
-    `DTSTART;VALUE=DATE:${toDateBasic(day.date)}`,
-    `SUMMARY:${escapeText(day.showName)}`,
+    `DTSTART;VALUE=DATE:${toDateBasic(run.start)}`,
+    // DTEND is EXCLUSIVE for an all-day event (RFC 5545 3.6.1): a run
+    // ending on the 30th must publish the 31st, or every subscriber sees
+    // the show one day short. Pinned by its own test.
+    `DTEND;VALUE=DATE:${toDateBasic(addDays(run.end, 1))}`,
+    `SUMMARY:${escapeText(run.showName)}`,
   ]
 
-  const location = [day.venue, day.location].filter((v): v is string => v !== null).join(' · ')
+  const location = [meta.venue, meta.location].filter((v): v is string => v !== null).join(' · ')
   if (location) lines.push(`LOCATION:${escapeText(location)}`)
 
-  lines.push(`DESCRIPTION:${escapeText(day.client)}`)
+  lines.push(`DESCRIPTION:${escapeText(meta.client)}`)
   lines.push('END:VEVENT')
   return lines
 }
@@ -178,7 +201,20 @@ export function buildCalendarFeed(input: {
     'CALSCALE:GREGORIAN',
   ]
 
-  for (const day of input.days) lines.push(...showDayEvent(day, stamp))
+  // Runs come from the SAME helper the month grid uses (lib/showRuns.ts) —
+  // one contiguity rule for both surfaces, so the feed can never disagree
+  // with what he sees on screen.
+  const runDays: RunDay[] = input.days.map((d) => ({
+    showId: d.showId, showName: d.showName, date: d.date,
+  }))
+  const metaByShow = new Map<string, FeedDay>()
+  for (const d of input.days) if (!metaByShow.has(d.showId)) metaByShow.set(d.showId, d)
+
+  for (const run of contiguousRuns(runDays)) {
+    const meta = metaByShow.get(run.showId)
+    if (!meta) continue
+    lines.push(...showRunEvent(run, meta, stamp))
+  }
   for (const flight of input.flights) lines.push(...flightEvent(flight, stamp))
 
   lines.push('END:VCALENDAR')
