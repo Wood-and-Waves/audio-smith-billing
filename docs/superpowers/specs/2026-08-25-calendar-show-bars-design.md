@@ -106,6 +106,22 @@ Exposing a show uuid in a UID is the same class of exposure as today's
 show-day uuid; no money or rate field goes near this path, per the feed's
 schedule-facts-only rule.
 
+### Shapes and small details
+
+```ts
+type RunDay   = { showId: string; showName: string; date: string }  // YYYY-MM-DD
+type ShowRun  = { showId: string; showName: string; start: string; end: string }
+type BarSegment = { startCol: number; span: number; continuesLeft: boolean; continuesRight: boolean }
+type PlacedBar  = BarSegment & { lane: number; showId: string; showName: string }
+```
+
+- The bar layer starts BELOW the date number, so a bar never covers the date.
+  A week with no runs reserves no lane height and keeps today's cell height.
+- `MAX_VISIBLE` (the current per-cell chip cap) now governs flights only,
+  since shows have left the cell entirely.
+- Bars are keyed by `showId + startCol + weekIndex`, which is unique per
+  segment even when one show contributes several segments to a month.
+
 ## Testing
 
 Pure-lib tests (`node --test`) are where the logic is proven:
