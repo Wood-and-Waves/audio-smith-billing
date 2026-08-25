@@ -10,6 +10,7 @@ import {
 import {
   buildBudget, OPENING_MONTH, FIRST_BUDGET_MONTH, type BudgetCategory, type BudgetMove, type BudgetTxn,
 } from '@/lib/budget'
+import { explodeForCategories, type TxnForExplode } from '@/lib/ledgerSplits'
 import AppShell from '@/components/AppShell'
 import MoneyRegister, {
   type CategoryOption, type LedgerAccountSummary, type LedgerTxnRow, type ShowOption, type SplitLegRow,
@@ -531,15 +532,25 @@ export default async function MoneyPage({
       openingMonth < OPENING_MONTH ? OPENING_MONTH :
       openingMonth > currentMonth ? currentMonth :
       openingMonth
+    // Wave C Task 5: explodeForCategories (lib/ledgerSplits.ts) — the SAME
+    // single helper app/money/budget/page.tsx's own txn assembly calls —
+    // runs over this SAME paged `allTxns` before it feeds buildBudget, so a
+    // split parent's line is suppressed in favor of its legs and a pending
+    // row (entered_at null) drops out entirely. `legsByTxnId` is already
+    // built above (Task 4, for the register's own Split (N) display) — Task
+    // 5's own instruction is to reuse it here rather than double-fetch.
+    const explodableTxns: TxnForExplode[] = allTxns
+      .filter((t) => t.date >= `${FIRST_BUDGET_MONTH}-01`)
+      .map((t) => ({
+        month: t.date.slice(0, 7),
+        categoryId: t.category_id,
+        amountCents: t.amount_cents,
+        enteredAt: t.entered_at,
+        legs: legsByTxnId.get(t.id),
+      }))
     const budgetTxns: BudgetTxn[] = [
       { month: budgetSeedMonth, categoryId: null, amountCents: accountRow.opening_balance_cents },
-      // Same `.gte(FIRST_BUDGET_MONTH)` filter app/money/budget/page.tsx's
-      // own fetchAllBudgetTxns applies at the DB level — applied here in JS
-      // instead, over the SAME paged `allTxns` this page already fetched
-      // above, rather than a second query for rows this page already holds.
-      ...allTxns
-        .filter((t) => t.date >= `${FIRST_BUDGET_MONTH}-01`)
-        .map((t) => ({ month: t.date.slice(0, 7), categoryId: t.category_id, amountCents: t.amount_cents })),
+      ...explodeForCategories(explodableTxns),
     ]
 
     const budget = buildBudget({

@@ -7,12 +7,23 @@
 //
 // explodeForCategories is the load-bearing export: the design doc
 // (docs/superpowers/specs/2026-08-24-splits-and-pending-design.md) names it
-// as the ONE place every category-reading consumer explodes legs and drops
-// pending — the budget's txn assembly, P&L, spend-by-category, monthly
-// reports, the CPA export, the forecast's ledger reads, and
+// as the ONE place every KIND-BLIND category-reading consumer explodes legs
+// and drops pending — the budget's txn assembly (app/money/budget/page.tsx,
+// app/money/page.tsx's own CategoryPicker balance map) and
 // scripts/parity/ynab-live.mjs all call THIS, never re-derive the rule.
 // lib/budget.ts's own arithmetic stays untouched by this wave (per the
 // plan's Global Constraints) — only what feeds it changes.
+//
+// explodeForReports (below) is its kind-aware sibling for the readers that
+// branch on kind — P&L, spend-by-category, monthly reports, and the CPA
+// export (all one read path: lib/ledgerReports.ts, fed by
+// app/money/reports/page.tsx) — plus the forecast's overhead-average read
+// (app/money/forecast/page.tsx's computeOverheadCents call), which sums by
+// kind the same way P&L does. Two exports, same pending/split contract,
+// because a split leg's own kind can differ from its parent's (the $400
+// case) and CategoryLine was never meant to carry kind — see
+// explodeForReports' own doc comment for why that's a second function
+// rather than an optional field.
 //
 // No '@/' imports, no JSX, relative '.ts' imports, no clock reads —
 // `statementDate` (like `todayYm` elsewhere) is always a parameter.
@@ -156,6 +167,78 @@ export function explodeForCategories(txns: TxnForExplode[]): CategoryLine[] {
     }
 
     lines.push({ month: txn.month, categoryId: txn.categoryId, amountCents: txn.amountCents })
+  }
+
+  return lines
+}
+
+/** One kind-shaped line of activity: what lib/ledgerReports.ts's P&L,
+ *  spend-by-category, and monthly readers actually consume (they branch on
+ *  `kind`, which explodeForCategories' CategoryLine doesn't carry — that
+ *  helper's only caller, buildBudget's txn assembly, is kind-blind by
+ *  design, see lib/budget.ts's own `activity(c,m)` comment). `date` (not
+ *  `month`) matches ReportTxn's own field (lib/ledgerReports.ts) — that lib
+ *  slices its own month out of a full date, unlike buildBudget which wants
+ *  the month pre-sliced. */
+export type ReportLine = {
+  date: string
+  amountCents: number
+  kind: string
+  categoryId: string | null
+}
+
+/**
+ * explodeForCategories' kind-aware sibling, not a rewrite of it: same
+ * pending/split contract (pending yields nothing; a split parent's legs
+ * replace its own line; everything else passes through byte-identical) but
+ * every emitted line carries `kind` — and for a split parent's legs, THAT
+ * LEG's own kind (`ledger_transaction_splits.kind`, written per leg through
+ * deriveKind at split time — see replace_transaction_splits' doc comment,
+ * scripts/sql/migrations/0042_splits_and_pending.sql), never the parent's.
+ * That distinction is the whole reason this is a separate function rather
+ * than bolting an optional `kind` onto CategoryLine: the $400 acceptance
+ * case (design doc, plan Task 5) splits an owner_pay parent into an
+ * owner_pay leg and an expense leg — plSummary (lib/ledgerReports.ts) must
+ * see the Temporary Transfer leg as an EXPENSE, which is only true reading
+ * kind off the leg. explodeForCategories itself stays kind-blind on
+ * purpose: buildBudget's own activity(c,m) sums every transaction carrying
+ * a category "regardless of kind" (lib/budget.ts's own doc comment) — a
+ * kind field would be dead weight on that read path, not a convenience.
+ *
+ * Seam choice (stated per the plan's own instruction): callers explode
+ * ONCE, in the page, before handing rows to lib/ledgerReports.ts's pure
+ * functions (plSummary/spendByCategory/monthlyTotals) — mirroring the
+ * "lib/budget.ts stays untouched, only its txn assembly changes" rule from
+ * the plan's Global Constraints. lib/ledgerReports.ts's own ReportTxn type
+ * (snake_case, straight off a Supabase row) is intentionally NOT this
+ * function's input or output shape — the page owns the one conversion
+ * step between "row this app fetched" and "line a pure lib consumes",
+ * same division of labor lib/budget.ts's callers already use.
+ */
+export type ReportTxnForExplode = {
+  date: string
+  amountCents: number
+  kind: string
+  categoryId: string | null
+  /** null = pending (migration 0042's `entered_at`). */
+  enteredAt: string | null
+  legs?: { categoryId: string | null; amountCents: number; kind: string }[]
+}
+
+export function explodeForReports(txns: ReportTxnForExplode[]): ReportLine[] {
+  const lines: ReportLine[] = []
+
+  for (const txn of txns) {
+    if (txn.enteredAt === null) continue // pending: yields nothing, legs included
+
+    if (txn.legs && txn.legs.length > 0) {
+      for (const leg of txn.legs) {
+        lines.push({ date: txn.date, categoryId: leg.categoryId, amountCents: leg.amountCents, kind: leg.kind })
+      }
+      continue // the parent's own line is suppressed
+    }
+
+    lines.push({ date: txn.date, categoryId: txn.categoryId, amountCents: txn.amountCents, kind: txn.kind })
   }
 
   return lines

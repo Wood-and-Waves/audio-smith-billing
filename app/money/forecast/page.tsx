@@ -8,6 +8,7 @@ import {
   buildForecast, computeOverheadCents,
   type ForecastShow, type ForecastInvoice, type ForecastClient, type ShowProjection,
 } from '@/lib/forecast'
+import { explodeForReports, type ReportTxnForExplode } from '@/lib/ledgerSplits'
 import AppShell from '@/components/AppShell'
 import ForecastTable from '@/components/ForecastTable'
 
@@ -23,7 +24,30 @@ export const dynamic = 'force-dynamic'
 // (app/money/actions.ts) may only export actions.
 const PAGE_SIZE = 1000
 
-type RawTxnRow = { id: string; date: string; amount_cents: number; kind: string }
+// `entered_at` and `category_id` are Task 5's own addition (Wave C) — this
+// same fetch feeds TWO different reads below, one balance-shaped and one
+// kind-shaped, and they disagree on purpose about pending and legs:
+//   - workingBalance (lib/ledgerBalance.ts) is balance-shaped — Dan's own
+//     option 1 semantics, pending counts in the working balance and a split
+//     parent's total is still real money either way, so `txnRows` is
+//     handed to it completely UNFILTERED, exactly as before this wave.
+//   - computeOverheadCents (lib/forecast.ts) sums by KIND the same way
+//     lib/ledgerReports.ts's plSummary does (expense only, excluding
+//     owner_pay/transfer/income) — that makes it kind-shaped, not balance-
+//     shaped, so it goes through explodeForReports below before ever
+//     reaching computeOverheadCents: a pending row must not skew the
+//     3-month average before Dan has reviewed it, and a split parent's own
+//     kind (unchanged by splitting — only category_id is forced null, see
+//     replace_transaction_splits' own doc comment) must not stand in for
+//     its legs' real, possibly-different kinds (the $400 case).
+type RawTxnRow = {
+  id: string
+  date: string
+  amount_cents: number
+  kind: string
+  category_id: string | null
+  entered_at: string | null
+}
 
 async function fetchAllForecastTxns(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -34,13 +58,40 @@ async function fetchAllForecastTxns(
   for (;;) {
     const { data, error } = await supabase
       .from('ledger_transactions')
-      .select('id, date, amount_cents, kind')
+      .select('id, date, amount_cents, kind, category_id, entered_at')
       .eq('account_id', accountId)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
       .range(from, from + PAGE_SIZE - 1)
     if (error) return { rows: [], error: error.message }
     rows.push(...((data ?? []) as RawTxnRow[]))
+    if (!data || data.length < PAGE_SIZE) break
+    from += PAGE_SIZE
+  }
+  return { rows, error: null }
+}
+
+type RawSplitLegRow = { transaction_id: string; category_id: string | null; amount_cents: number; kind: string }
+
+/** Every split leg, owner-wide (Wave C Task 5) — feeds explodeForReports
+ *  below for computeOverheadCents' own kind-shaped read; workingBalance
+ *  (the OTHER consumer of txnRows on this page) never looks at legs at
+ *  all, same as it never looked at pending — see RawTxnRow's own comment
+ *  for why the two reads deliberately disagree. */
+async function fetchAllForecastSplitLegs(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<{ rows: RawSplitLegRow[]; error: string | null }> {
+  const rows: RawSplitLegRow[] = []
+  let from = 0
+  for (;;) {
+    const { data, error } = await supabase
+      .from('ledger_transaction_splits')
+      .select('transaction_id, category_id, amount_cents, kind')
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + PAGE_SIZE - 1)
+    if (error) return { rows: [], error: error.message }
+    rows.push(...((data ?? []) as RawSplitLegRow[]))
     if (!data || data.length < PAGE_SIZE) break
     from += PAGE_SIZE
   }
@@ -370,6 +421,18 @@ export default async function MoneyForecastPage() {
   const { rows: txnRows, error: txnError } = await fetchAllForecastTxns(supabase, accountRow.id)
   if (txnError) return <LoadError message={txnError} />
 
+  // Split legs (Wave C Task 5) — feeds computeOverheadCents' own kind-shaped
+  // read below; workingBalance never consults this map (see RawTxnRow's own
+  // comment for why the two reads on this page deliberately disagree).
+  const { rows: splitLegRows, error: splitLegError } = await fetchAllForecastSplitLegs(supabase)
+  if (splitLegError) return <LoadError message={splitLegError} />
+  const legsByTxnId = new Map<string, { categoryId: string | null; amountCents: number; kind: string }[]>()
+  for (const l of splitLegRows) {
+    const list = legsByTxnId.get(l.transaction_id) ?? []
+    list.push({ categoryId: l.category_id, amountCents: l.amount_cents, kind: l.kind })
+    legsByTxnId.set(l.transaction_id, list)
+  }
+
   const { rows: moveRows, error: moveError } = await fetchAllForecastMoves(supabase)
   if (moveError) return <LoadError message={moveError} />
 
@@ -460,7 +523,28 @@ export default async function MoneyForecastPage() {
 
   const takeHomeCents = settingsRow?.monthly_take_home_cents ?? 0
   const overheadOverrideCents = settingsRow?.monthly_overhead_cents ?? null
-  const computedOverheadCents = computeOverheadCents(txnRows, today)
+  // Wave C Task 5: computeOverheadCents sums by kind (expense only,
+  // lib/forecast.ts's own doc comment) — the same shape lib/ledgerReports.ts's
+  // plSummary reads — so it goes through explodeForReports (lib/ledgerSplits.ts)
+  // rather than the raw `txnRows` workingBalance uses above. A pending row
+  // (entered_at null) drops out entirely; a split parent's own line is
+  // suppressed in favor of its legs, each carrying its OWN kind (a split
+  // parent's `kind` column is left unchanged by splitting — only
+  // category_id is forced null, see replace_transaction_splits' own doc
+  // comment — so reading the parent's kind here would misclassify a leg
+  // whose real kind differs, the same $400 case P&L must get right).
+  const overheadExplodable: ReportTxnForExplode[] = txnRows.map((t) => ({
+    date: t.date,
+    amountCents: t.amount_cents,
+    kind: t.kind,
+    categoryId: t.category_id,
+    enteredAt: t.entered_at,
+    legs: legsByTxnId.get(t.id),
+  }))
+  const overheadTxns = explodeForReports(overheadExplodable).map((line) => ({
+    date: line.date, amount_cents: line.amountCents, kind: line.kind,
+  }))
+  const computedOverheadCents = computeOverheadCents(overheadTxns, today)
   const overheadCents = overheadOverrideCents ?? computedOverheadCents
   const taxRateBp = settingsRow?.tax_setaside_bp ?? 0
   const billingLagDays = settingsRow?.billing_lag_days ?? 7

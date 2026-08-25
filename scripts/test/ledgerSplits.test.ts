@@ -12,8 +12,10 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { validateLegs, explodeForCategories, pendingBlocksReconcile } from '../../lib/ledgerSplits.ts'
-import type { TxnForExplode } from '../../lib/ledgerSplits.ts'
+import {
+  validateLegs, explodeForCategories, explodeForReports, pendingBlocksReconcile,
+} from '../../lib/ledgerSplits.ts'
+import type { TxnForExplode, ReportTxnForExplode } from '../../lib/ledgerSplits.ts'
 
 // ---------------------------------------------------------------------------
 // validateLegs — mirrors the trigger: >=2 legs whenever any exist, integer
@@ -265,6 +267,101 @@ test('conservation law: output sums to the total of ENTERED rows only, pending e
   // zero amounts — a stray null-amount line would pass the sum check above
   // while still being a real (wrong) leak.
   assert.equal(output.length, 5) // cat-1, RTA-150000, owner-pay, temp-transfer, cat-5
+})
+
+// ---------------------------------------------------------------------------
+// explodeForReports — the kind-aware sibling explodeForCategories' own
+// CategoryLine can't serve: the reports/P&L reader (lib/ledgerReports.ts's
+// plSummary) branches on KIND (income/expense/owner_pay), and a leg's own
+// kind can differ from its parent's (the $400 case: an owner_pay parent
+// exploding into an owner_pay leg AND an expense leg). Same pending/split
+// contract as explodeForCategories — this is the read-shape variant, not a
+// different rule.
+
+test('an entered, unsplit row passes through byte-identical, kind included', () => {
+  const txns: ReportTxnForExplode[] = [
+    { date: '2026-03-05', categoryId: 'cat-1', amountCents: -5_000, kind: 'expense', enteredAt: '2026-03-05T00:00:00Z' },
+  ]
+  assert.deepEqual(explodeForReports(txns), [
+    { date: '2026-03-05', categoryId: 'cat-1', amountCents: -5_000, kind: 'expense' },
+  ])
+})
+
+test('a pending row is dropped entirely, regardless of kind', () => {
+  const txns: ReportTxnForExplode[] = [
+    { date: '2026-03-05', categoryId: 'cat-1', amountCents: -5_000, kind: 'expense', enteredAt: null },
+  ]
+  assert.deepEqual(explodeForReports(txns), [])
+})
+
+test('the $400 case: a split parent yields its legs, each with its OWN kind — not the parent\'s', () => {
+  // The defining acceptance test (design doc + plan Task 5): the 3/5
+  // Online Realtime Transfer, split into a $6,000 owner_pay leg and a
+  // $4,000 expense leg (Temporary Transfer). The parent's own kind
+  // (whatever it was pre-split) must never leak into either line — P&L
+  // has to see the Temporary Transfer leg as an EXPENSE and the rest as
+  // owner pay, which is only possible if the explosion reads kind off
+  // each leg, not off the parent it suppresses.
+  const txns: ReportTxnForExplode[] = [
+    {
+      date: '2026-03-05', categoryId: null, amountCents: -10_000, kind: 'owner_pay',
+      enteredAt: '2026-03-05T00:00:00Z',
+      legs: [
+        { categoryId: 'owner-pay-cat', amountCents: -6_000, kind: 'owner_pay' },
+        { categoryId: 'temp-transfer-cat', amountCents: -4_000, kind: 'expense' },
+      ],
+    },
+  ]
+  assert.deepEqual(explodeForReports(txns), [
+    { date: '2026-03-05', categoryId: 'owner-pay-cat', amountCents: -6_000, kind: 'owner_pay' },
+    { date: '2026-03-05', categoryId: 'temp-transfer-cat', amountCents: -4_000, kind: 'expense' },
+  ])
+})
+
+test('a split parent that is ALSO pending: legs suppressed too — pending wins', () => {
+  const txns: ReportTxnForExplode[] = [
+    {
+      date: '2026-03-05', categoryId: null, amountCents: -10_000, kind: 'owner_pay',
+      enteredAt: null,
+      legs: [
+        { categoryId: 'owner-pay-cat', amountCents: -6_000, kind: 'owner_pay' },
+        { categoryId: 'temp-transfer-cat', amountCents: -4_000, kind: 'expense' },
+      ],
+    },
+  ]
+  assert.deepEqual(explodeForReports(txns), [])
+})
+
+test('an entered row with an empty legs array passes through with the parent\'s own kind', () => {
+  const txns: ReportTxnForExplode[] = [
+    {
+      date: '2026-03-05', categoryId: null, amountCents: 200_000, kind: 'income',
+      enteredAt: '2026-03-01T00:00:00Z', legs: [],
+    },
+  ]
+  assert.deepEqual(explodeForReports(txns), [
+    { date: '2026-03-05', categoryId: null, amountCents: 200_000, kind: 'income' },
+  ])
+})
+
+test('conservation law holds for explodeForReports too: entered-only total, pending vanishes', () => {
+  const txns: ReportTxnForExplode[] = [
+    { date: '2026-01-05', categoryId: 'cat-1', amountCents: -4_321, kind: 'expense', enteredAt: '2026-01-05T00:00:00Z' },
+    { date: '2026-01-09', categoryId: 'cat-2', amountCents: -9_999, kind: 'expense', enteredAt: null }, // pending
+    {
+      date: '2026-01-10', categoryId: null, amountCents: -10_000, kind: 'owner_pay',
+      enteredAt: '2026-01-10T00:00:00Z',
+      legs: [
+        { categoryId: 'owner-pay', amountCents: -6_000, kind: 'owner_pay' },
+        { categoryId: 'temp-transfer', amountCents: -4_000, kind: 'expense' },
+      ],
+    },
+  ]
+  const enteredTotal = txns.filter((t) => t.enteredAt !== null).reduce((sum, t) => sum + t.amountCents, 0)
+  const output = explodeForReports(txns)
+  const outputTotal = output.reduce((sum, line) => sum + line.amountCents, 0)
+  assert.equal(outputTotal, enteredTotal)
+  assert.equal(output.length, 3) // cat-1, owner-pay leg, temp-transfer leg
 })
 
 // ---------------------------------------------------------------------------
