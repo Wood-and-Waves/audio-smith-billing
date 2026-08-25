@@ -272,11 +272,19 @@ test("the builder's types carry no money — realistic-looking data leaves no do
   const feed = buildCalendarFeed({
     days: [
       day({ id: 'd1', showName: 'Streamline Corporate Product Launch', client: 'Streamline, Inc.' }),
-      day({ id: 'd2', showName: 'Clinique Rate Card Event', venue: 'Premium Ballroom', client: 'Clinique' }),
+      // A DISTINCT showId and date (task-2 review catch): once the feed
+      // groups days into runs, two fixtures sharing the factory's default
+      // showId collapse into ONE event and the second show's venue/client
+      // never reach the output — quietly gutting this guard, which exists
+      // to prove a feed built from SEVERAL shows' worth of real data leaks
+      // no money. The event-count assertion below keeps that honest.
+      day({ id: 'd2', showId: 's2', date: '2026-08-12', showName: 'Clinique Rate Card Event', venue: 'Premium Ballroom', client: 'Clinique' }),
     ],
     flights: [flight(), flight({ id: 'f2', flightNo: 'DL456' })],
     nowIso: NOW,
   })
+  assert.equal(feed.match(/BEGIN:VEVENT/g)?.length, 4, 'two shows plus two flights must be four events')
+  assert.ok(feed.includes('Clinique'), "the second show's own data must actually reach the feed")
   assert.ok(!feed.includes('$'), 'no dollar sign should ever appear in a schedule-only feed')
   assert.ok(!feed.toLowerCase().includes('cents'), 'no "cents" text should ever appear in a schedule-only feed')
 })
