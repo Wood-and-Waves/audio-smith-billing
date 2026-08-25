@@ -176,6 +176,7 @@ export default function SplitEditor({
   function legRow(leg: DraftLeg) {
     const categoryPicker = (
       <CategoryPicker
+              pinnedOptions={[{ id: '', label: 'Uncategorized' }]}
         size="sm"
         ariaLabel="Split category"
         value={leg.categoryId}

@@ -450,6 +450,7 @@ export default async function MoneyPage({
           categoryBalanceCents={{}}
           shows={shows}
           transactions={[]}
+          pendingRows={[]}
           workingBalanceCents={0}
           clearedBalanceCents={0}
           uncategorizedCount={0}
@@ -696,7 +697,12 @@ export default async function MoneyPage({
     ? sorted.filter((t) => t.category_id === null && !legsByTxnId.has(t.id) && (t.kind === 'income' || t.kind === 'expense'))
     : sorted
   const totalCount = filtered.length
-  const transactions: LedgerTxnRow[] = filtered.map((t) => ({
+  // One mapper for both lists below — the DISPLAY list obeys the page
+  // filter, but the Pending queue must never: a pending row that is already
+  // categorized (allowed and expected) would otherwise vanish from the
+  // Pending section — and from Enter All's reach — the moment the
+  // Uncategorized filter is on. The queue is the whole queue, always.
+  const toRow = (t: (typeof sorted)[number]): LedgerTxnRow => ({
     id: t.id,
     date: t.date,
     amount_cents: t.amount_cents,
@@ -723,7 +729,9 @@ export default async function MoneyPage({
     invoiceNumbers: invoiceNumbersByTxnId.get(t.id) ?? [],
     expenseLinked: expenseLinkedTxnIds.has(t.id),
     linkedReceiptPath: linkedReceiptPathByTxnId.get(t.id) ?? null,
-  }))
+  })
+  const transactions: LedgerTxnRow[] = filtered.map(toRow)
+  const pendingRows: LedgerTxnRow[] = sorted.filter((t) => t.entered_at === null).map(toRow)
 
   const account: LedgerAccountSummary = {
     id: accountRow.id,
@@ -739,6 +747,7 @@ export default async function MoneyPage({
         categoryBalanceCents={categoryBalanceCents}
         shows={shows}
         transactions={transactions}
+        pendingRows={pendingRows}
         workingBalanceCents={workingBalanceCents}
         clearedBalanceCents={clearedBalanceCents}
         uncategorizedCount={uncategorizedCount}

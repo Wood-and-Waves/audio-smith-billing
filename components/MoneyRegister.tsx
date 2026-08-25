@@ -413,7 +413,7 @@ function CreateAccountCard() {
 }
 
 export default function MoneyRegister({
-  account: accountProp, categories, categoryBalanceCents, shows, transactions, workingBalanceCents,
+  account: accountProp, categories, categoryBalanceCents, shows, transactions, pendingRows, workingBalanceCents,
   clearedBalanceCents, uncategorizedCount, totalCount, uncategorizedOnly, headerActions,
 }: {
   /** Null in first-run mode — every other prop is meaningless then. */
@@ -437,6 +437,9 @@ export default function MoneyRegister({
    * regardless of what subset is being rendered.
    */
   transactions: LedgerTxnRow[]
+  /** The FULL pending queue, unfiltered — the page's display filter must
+   *  never narrow what the Pending section shows or Enter All reaches. */
+  pendingRows: LedgerTxnRow[]
   workingBalanceCents: number
   clearedBalanceCents: number
   uncategorizedCount: number
@@ -1059,7 +1062,7 @@ export default function MoneyRegister({
       if ('error' in result) { setError(result.error); return }
       if (row.entered_at === null) {
         const entered = await enterTransactions([row.id])
-        if ('error' in entered) { setError(entered.error); return }
+        if ('error' in entered) { setError(`Split saved — approving failed: ${entered.error}`); return }
       }
       setSplitEditorOpen(false)
       setPendingSplitSeed(null)
@@ -1083,7 +1086,7 @@ export default function MoneyRegister({
 
   function enterAll() {
     setError(null)
-    const ids = transactions.filter((t) => t.entered_at === null).map((t) => t.id)
+    const ids = pendingRows.map((t) => t.id)
     if (ids.length === 0) return
     start(async () => {
       const result = await enterTransactions(ids)
@@ -1992,7 +1995,10 @@ export default function MoneyRegister({
   // computed per-row in app/money/page.tsx over the FULL account regardless
   // of which section a row ends up rendered in (Dan's option 1 — pending
   // counts in working/cleared balances).
-  const pendingQueue = transactions.filter((t) => t.entered_at === null)
+  // The queue is its own unfiltered prop — the review caught the filtered
+  // version silently shrinking the section and Enter All's reach whenever
+  // ?filter=uncategorized was on.
+  const pendingQueue = pendingRows
   const nonPending = transactions.filter((t) => t.entered_at !== null)
 
   // Phone grouping, over the same (newest-first) NON-PENDING rows the
