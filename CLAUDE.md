@@ -114,6 +114,17 @@ status.
   import_id null; adoption preserves 'reconciled') | insert. **Backfilled rows
   are deliberately manual/null-import_id so future OFX adopts them.** Payee
   memory is kind-aware (`memoryKey(kind, payee)`).
+- **An invoice's real settlement is DERIVED, never stored**
+  (`lib/invoicePayment.ts`): `settlementFor` reads how much actually
+  arrived off the deposit linked to it, so the link stays the single
+  source of truth. A COMBO link (one deposit, 2-3 invoices) reads EXACT by
+  construction — attributing the whole deposit to one of its invoices
+  would invent a phantom overpayment. `amountLinkRefusal` owns the one
+  rule about linking across a gap: a single invoice may be settled short
+  or over when the caller opts in (`settleMismatch`, only the invoice
+  page's Link-a-payment panel does), a combo never may, and the Matches
+  queue never opts in. Cash basis: money that never arrived was never
+  income, so none of this reaches a report or a total.
 - **Reconcile** is date-scoped (rows ≤ statement date) and atomic via the
   `reconcile_ledger_account` RPC (0029); its adjustment stays merely 'cleared'
   so mistakes remain correctable; reconciled rows are locked server-side

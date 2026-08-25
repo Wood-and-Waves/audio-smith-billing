@@ -110,11 +110,28 @@ Picking one reveals the comparison and a single confirm:
 - over  → `$10.00 over $600.00. Settle #385 anyway?`
 
 Confirm calls the EXISTING `acceptIncomeMatch({ transactionId, invoiceIds:
-[invoiceId] })` — no new server action. That action already validates the
-row is a real deposit, refuses a double link, requires the invoice be sent
-or paid, writes the link, and sets `status: 'paid'` with `paid_at` = the
-deposit's own date. It deliberately never compared amounts, which is
-precisely what makes this work.
+[invoiceId], settleMismatch: true })` — no new server action. That action
+already validates the row is a real deposit, refuses a double link,
+requires the invoice be sent or paid, writes the link, and sets
+`status: 'paid'` with `paid_at` = the deposit's own date.
+
+**Correction (build review, 2026-08-25).** This design originally asserted
+that `acceptIncomeMatch` "deliberately never compared amounts." That was
+FALSE — it carried an unconditional `sumCents !== txn.amount_cents` refusal,
+so the feature as first built showed the gap and then refused to settle it,
+failing on the very invoice that prompted the work. The rule now lives in
+`lib/invoicePayment.ts` as `amountLinkRefusal({ sumCents, txnAmountCents,
+invoiceCount, settleMismatch })`, extracted so it is testable (a server
+action is not), and the action consults it:
+
+- amounts equal → always allowed, as before;
+- ONE invoice + `settleMismatch: true` → allowed; this is Dan's deliberate
+  act and the only thing this feature adds;
+- a COMBO (2-3 invoices) that does not add up → refused, and NO flag
+  relaxes it. There is no honest way to attribute a mismatch across several
+  invoices, and the matcher only ever proposes combos that sum exactly.
+
+The Matches queue never passes the flag, so auto-matching stays strict.
 
 ### Getting back out
 

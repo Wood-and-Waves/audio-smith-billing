@@ -11,7 +11,8 @@
 ## Global Constraints
 
 - Design doc: `docs/superpowers/specs/2026-08-25-short-paid-settlement-design.md`. Dan's four decisions bind: entry point is the INVOICE page; any gap is shown plainly with ONE confirm (no thresholds); overpayment works the same way; the invoice is the ONLY place it appears (no report, no yearly total, no CPA-export line).
-- **NO migration and NO new server action.** The shortfall is derived from `ledger_transaction_invoices`; `acceptIncomeMatch` (`app/money/actions.ts`) already does the write. If a task feels like it needs either, stop and escalate.
+- **NO migration and NO new server action.** The shortfall is derived from `ledger_transaction_invoices`; `acceptIncomeMatch` (`app/money/actions.ts`) does the write. If a task feels like it needs either, stop and escalate.
+- **CORRECTED MID-BUILD (Task 3 review):** this plan originally claimed `acceptIncomeMatch` "never compared amounts". It did — an unconditional `sumCents !== txn.amount_cents` refusal — so the panel showed the gap and then refused to settle it. Fixed in `e58fb5c`: the rule moved to `lib/invoicePayment.ts`'s `amountLinkRefusal` (pure, tested) and the action takes an opt-in `settleMismatch?: boolean`. A mismatched COMBO is still refused with no way to relax it; only a single invoice can be settled across a gap, and only when the caller says so on purpose.
 - Dan is on **cash basis** (his own confirmation, 2026-08-25): the money that never arrived was never income, so nothing here may touch reports, totals, or the ledger's own figures.
 - Pure libs (`lib/*.ts`): relative `.ts` imports, no `@/`, no JSX, no clock reads.
 - **Unknown must never resolve to a guess** (the invoice page's own doctrine, stated in its link-query comment): when the data needed to classify a settlement cannot be read, render NOTHING rather than a figure that might be wrong.

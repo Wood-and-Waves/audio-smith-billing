@@ -508,10 +508,39 @@ Still open from that design, deliberately deferred:
   Deliberately deferred from that wave, still open here:
   - **Tax set-aside on income** — waits for the CPA's rate AND for per-show
     profit as the base (a deposit is gross, not profit).
-  - **Partial payments** — a link means paid in full. The pre-existing,
-    still-unused `payments` table (0001) was deliberately left untouched;
-    it is the natural home if partial payments ever land (its `paid_cents`
-    plumbing in `lib/status.ts` is dead today).
+  - **Partial payments** — a link still means SETTLED IN FULL. The
+    pre-existing, still-unused `payments` table (0001) was deliberately
+    left untouched; it is the natural home if partial payments ever land
+    (its `paid_cents` plumbing in `lib/status.ts` is dead today).
+    Deliberately distinct from short-paid settlement below: "they paid
+    less and more is coming" is NOT "they paid less and we are done."
+
+- **Settling a short- or over-paid invoice — SHIPPED 2026-08-25** (design:
+  docs/superpowers/specs/2026-08-25-short-paid-settlement-design.md; no
+  migration). Dan: *"Invoice #385 was paid. But they messed up the amount
+  when they entered it in and the check is $10 short. I am not going to
+  worry about getting the $10, but I need a way to correct for this."* His
+  four decisions: the entry point is the INVOICE page; any gap is stated
+  plainly with one confirm (no thresholds); overpayment works the same
+  way; the invoice is the ONLY place it appears. He confirmed CASH BASIS,
+  so the money that never arrived was never income — the books needed no
+  correction at all and nothing here touches reports or totals.
+  A "Link a payment" panel lists recent unlinked deposits (fail-closed: a
+  read error offers nothing rather than a deposit already spoken for);
+  picking one shows "$10.00 short of $600.00. Settle #385 anyway?"; the
+  invoice then reads Paid on the DEPOSIT'S own date with "Paid $590.00 ·
+  $10.00 short" beneath it. Nothing is stored — the figure derives from
+  the linked deposit via `lib/invoicePayment.ts`.
+  **The build corrected its own design:** the spec claimed
+  `acceptIncomeMatch` never compared amounts; it did, so the first cut
+  showed the gap then refused to settle it. `amountLinkRefusal` (pure,
+  tested) now owns that rule and the action takes an opt-in
+  `settleMismatch`. A mismatched COMBO stays refused with no escape hatch;
+  the Matches queue never passes the flag and stays strict.
+  Residual: `app/invoices/actions.ts`'s refuse-to-edit-a-linked-total
+  guard still cites "acceptIncomeMatch's own sum-equality check" as its
+  rationale — the guard is correct and now MORE necessary, but its stated
+  reason is weaker than it was.
   - **N expenses ← one bank line** (the mirror of the Uber case) — the
     matcher groups bank rows per expense, not expenses per bank row.
 - **One chart of accounts, three places** (2026-08-21, Dan: "I would like
