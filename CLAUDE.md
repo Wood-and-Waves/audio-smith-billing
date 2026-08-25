@@ -230,6 +230,14 @@ status.
     past month is judged against today's target. Assigned/Activity/Available
     stay exact; only the status wording on closed months can read oddly.
   - **Phase two SHIPPED 2026-08-24**: hand writes are immutable moves into `ledger_budget_moves`, undo marks `undone_at`, the import now requires `--replace` when moves exist.
+  - **Auto-assign SHIPPED 2026-08-25** (0046): writes one move per
+    underfunded category as a single multi-row insert sharing a
+    `batch_id`; undo/redo flip a WHOLE batch by that id (hand moves stay
+    single-flip). The plan only ever READS `neededCents` off buildBudget's
+    rows — never re-derives — via the one shared assembly
+    (`app/money/budget/data.ts` `assembleBudget`, page + action both).
+    Month is the only client input; RTA may legitimately go negative
+    (Dan's chosen YNAB behavior); hidden-but-targeted categories fund.
 
 ## Process that has worked
 

@@ -175,10 +175,16 @@ their difference. See `lib/budgetMoves.ts`'s own `assignmentDiff` doc comment
 for the full reasoning.
 
 Deliberately left out of phase two (ready for future work):
-- **Auto-assign.** Dan uses it in YNAB but did not pick it for phase one.
-  `underfundedCents` is already computed per month and the button path is
-  ready, so the number the button needs exists — only the write path is
-  missing.
+- **Auto-assign — SHIPPED 2026-08-25** (design:
+  docs/superpowers/specs/2026-08-25-auto-assign-design.md; migration 0046).
+  Dan's three decisions: Underfunded only; fund fully even when RTA goes
+  negative; one tap undoes the whole batch. One button in the summary
+  panel writes one move per underfunded category (single multi-row insert,
+  shared batch_id, note 'Auto-assign'); undo/redo flip a whole batch by
+  batch_id; the plan reads `neededCents` off buildBudget's own rows via
+  the shared assembleBudget (app/money/budget/data.ts) — month is the only
+  client input, hidden-but-targeted categories fund. Useless until Dan
+  enters his targets (the button hides at $0 underfunded).
 - **Per-entry undo in Recent Moves** — stack-head only (whole undo model), not per-entry affordances.
 - **Undo/redo TOCTOU (final review, 2026-08-24: accepted, with comment).**
   `undoLastMove`/`redoLastMove` (`app/money/budget/actions.ts`) each read a
