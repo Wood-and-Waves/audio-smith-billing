@@ -292,7 +292,15 @@ export default function SplitEditor({
         </button>
       </div>
       {hint && (
-        <p className={`text-xs text-muted mt-2 ${desktop ? 'sm:pl-9' : ''}`}>{hint}</p>
+        // role="alert" (M7, Wave C final review): `hint` is WHY Save is
+        // disabled (saveDisabled above is gated on `hint !== null`, not
+        // merely decorative help text), but text-muted styling carried no
+        // live region — a screen reader user tabbing to the disabled Save
+        // button heard nothing explaining the refusal. An alert region
+        // announces its own text on mount/change without needing focus, the
+        // same reasoning LoadError's own role="alert" (app/money/
+        // matches/page.tsx) already applies to a load failure.
+        <p role="alert" className={`text-xs text-muted mt-2 ${desktop ? 'sm:pl-9' : ''}`}>{hint}</p>
       )}
     </div>
   )
