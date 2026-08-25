@@ -247,7 +247,35 @@ status.
 - Reviews of money code are adversarial and worth it. Fix waves are ONE
   subagent with the complete findings list; tiny fixes are controller-direct.
 
-## Current state (2026-08-21) & where things are written
+## Register editing (Wave B, SHIPPED 2026-08-24) — rules that must not drift
+
+- **Kind is DERIVED, not picked** — `deriveKind(category, direction)` in
+  `lib/ledgerRules.ts`. The dropdown is gone. `owner_pay` keys on the ONE
+  category (`OWNER_PAY_CATEGORY_NAME`), **never the group** — the Owner
+  Transactions group holds five categories and only one is owner pay; the
+  group-keyed version silently unbooked Charitable Giving from the P&L's
+  expense side (final-review catch). Renaming that one category is the
+  failure mode (loud in the P&L); the escape hatch is an explicit column.
+- `setTransactionCategory` re-derives kind server-side through the SAME
+  deriveKind — the inline picker and the edit form can never disagree, and
+  no path can mint a row the edit form refuses to save.
+- Transfers: the picker's pinned **Payment/Transfer** row (category null,
+  kind transfer) — the form's only transfer path; the sweep never offers it.
+- **`parseUSDMath`** (`lib/moneyMath.ts`) is the amount-field entry point
+  (register, AssignedCell, MovePopover, TargetEditor): expressions with
+  one rounding at the end, delegation to `parseUSD` for lone values —
+  lone `(5.75)` is accounting-negative, `(5.75)+1` is grouping. Total by
+  construction (length guard + catch); do not reimplement number parsing.
+- `CategoryPicker` shows each category's current-month budget Available —
+  computed by the SAME `buildBudget` assembly the budget page uses
+  (`app/money/page.tsx` mirrors it, opening-balance injection included).
+  If the two ever disagree, one of the assemblies drifted: fix that, never
+  the display.
+- **`npm run parity`** = live YNAB (API, budget id pinned) vs the app's own
+  arithmetic. First hit ZERO 2026-08-24 (25/25 categories; RTA off by
+  exactly the known $1.01 Novo remainder). This is September's arbiter.
+
+## Current state (2026-08-24) & where things are written
 
 - LIVE in prod: billing + full Money module; receipt corner
   detection/flattening (CornerAdjuster + loupe; PDFs skip corners); attach/

@@ -44,7 +44,7 @@ whole-branch review of every commit after `de2529e`.
 4. **Ledger headers don't stick.** Date/Payee/Category/etc. scroll away; the
    whole header row should pin while the register scrolls.
 
-### Wave B — BUILT 2026-08-24 (branch register-edit; Dan's gate pending)
+### Wave B — SHIPPED 2026-08-24 (merge 559e606)
 
 All five findings shipped (plan: 2026-08-24-wave-b-register-editing.md): the
 edit/add rows on the live register template with Outflow/Inflow boxes; the
@@ -54,7 +54,7 @@ money box (`parseUSDMath`); the kind dropdown retired (kind derives from
 category + box; Payment/Transfer pinned row = the form's first way to create
 transfers); the show tag off the row. Final review FIX FIRST -> five fixes
 (chief: owner_pay keys on the ONE category, not the group — the group holds
-five and only one is owner pay) -> re-review READY FOR THE GATE.
+five and only one is owner pay) -> re-review READY FOR THE GATE; Dan gated and it merged same day.
 Open residuals (backlog): applyToAll's double-write of the anchor row;
 MovePopover's Enter-commits-to-RTA default; LedgerReconcile still on
 parseUSD; the edit row's ~800px minimum between 640-800px; dead
