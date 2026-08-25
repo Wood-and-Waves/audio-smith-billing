@@ -58,3 +58,32 @@ export function settlementFor(
     state: deltaCents === 0 ? 'exact' : deltaCents < 0 ? 'short' : 'over',
   }
 }
+
+/**
+ * May a deposit be linked to these invoices, given the amounts?
+ *
+ * Returns null to allow, or the refusal message. Extracted from
+ * acceptIncomeMatch so the one rule that decides whether money may be
+ * linked across a mismatch is testable, which a server action is not.
+ *
+ * A COMBO — one deposit covering 2 or 3 invoices — must ALWAYS add up
+ * exactly. There is no honest way to attribute a mismatch across several
+ * invoices, so no flag relaxes that; the matcher only ever proposes a
+ * combo whose totals sum to the deposit anyway.
+ *
+ * A SINGLE invoice is different: a client can key the wrong amount, and
+ * Dan may decide to treat the invoice as settled regardless (his #385 came
+ * in $10 short and he is not chasing it). That is a deliberate act, so it
+ * requires the caller to say so explicitly via `settleMismatch` — the
+ * Matches queue never passes it and keeps its strict behaviour unchanged.
+ */
+export function amountLinkRefusal(input: {
+  sumCents: number
+  txnAmountCents: number
+  invoiceCount: number
+  settleMismatch: boolean
+}): string | null {
+  if (input.sumCents === input.txnAmountCents) return null
+  if (input.settleMismatch && input.invoiceCount === 1) return null
+  return 'Those amounts do not add up.'
+}

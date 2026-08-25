@@ -32,8 +32,10 @@ export type PaymentCandidate = {
  *
  * The write is the EXISTING `acceptIncomeMatch`: it validates the row is a
  * real deposit, refuses a double link, requires the invoice be sent or
- * paid, and marks it paid on the DEPOSIT'S own date. It deliberately never
- * compared amounts, which is exactly what makes settling short possible.
+ * paid, and marks it paid on the DEPOSIT'S own date. It DOES compare
+ * amounts, and refuses a mismatch unless the caller says otherwise — which
+ * is what `settleMismatch: true` below is for, and the only reason settling
+ * short is possible from here. The Matches queue omits it and stays strict.
  * Getting back out needs nothing new either — unlinking the transaction in
  * the register restores the invoice to sent.
  */
@@ -60,7 +62,7 @@ export default function LinkPaymentPanel({
     if (!picked) return
     setError(null)
     start(async () => {
-      const result = await acceptIncomeMatch({ transactionId: picked.id, invoiceIds: [invoiceId] })
+      const result = await acceptIncomeMatch({ transactionId: picked.id, invoiceIds: [invoiceId], settleMismatch: true })
       if ('error' in result) { setError(result.error); return }
       setPicked(null)
       router.refresh()

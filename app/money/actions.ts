@@ -13,6 +13,7 @@ import {
   validateTxnShape, isSaneLedgerDate, deriveKind, type LedgerKind, type CategoryForKind, type LedgerDirection,
 } from '@/lib/ledgerRules'
 import { decideIncomeRoleChange } from '@/lib/incomeRoleGuard'
+import { amountLinkRefusal } from '@/lib/invoicePayment'
 import { validateLegs, pendingBlocksReconcile, type SplitLegInput, type SplitParentPatch } from '@/lib/ledgerSplits'
 
 type Fail = { error: string }
@@ -735,13 +736,19 @@ type BridgeInvoiceRow = {
  * Every check here re-verifies something lib/ledgerMatch.ts's proposal
  * already believed: the transaction is still an unlinked deposit, the
  * invoices still exist, are still billable, still belong to one client, and
- * still sum to the deposit exactly. None of that is guaranteed to still be
- * true by the time the accept button is clicked — another tab, another
- * import, or a hand edit could have moved any of it in between.
+ * still sum to the deposit. None of that is guaranteed to still be true by
+ * the time the accept button is clicked — another tab, another import, or a
+ * hand edit could have moved any of it in between.
+ *
+ * `settleMismatch` is the ONE relaxation, and only ever for a single
+ * invoice: the caller is saying Dan looked at the gap and chose to settle
+ * anyway (LinkPaymentPanel states the gap and asks). The Matches queue
+ * never passes it, so an auto-proposed match still has to tie out exactly.
  */
 export async function acceptIncomeMatch(input: {
   transactionId: string
   invoiceIds: string[]
+  settleMismatch?: boolean
 }): Promise<Fail | { ok: true }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -813,8 +820,19 @@ export async function acceptIncomeMatch(input: {
     return { error: 'Those invoices belong to different clients.' }
   }
 
+  // The rule itself lives in lib/invoicePayment.ts so it can be tested. It
+  // lets a SINGLE invoice be settled across a gap when the caller asked for
+  // that deliberately, and never a combo: a mismatch spread over 2 or 3
+  // invoices cannot be attributed to any one of them honestly, so no flag
+  // relaxes it.
   const sumCents = invoices.reduce((t, inv) => t + inv.total_cents, 0)
-  if (sumCents !== txn.amount_cents) return { error: 'Those amounts do not add up.' }
+  const refusal = amountLinkRefusal({
+    sumCents,
+    txnAmountCents: txn.amount_cents,
+    invoiceCount: invoiceIds.length,
+    settleMismatch: input.settleMismatch === true,
+  })
+  if (refusal) return { error: refusal }
 
   const { error: insertError } = await supabase.from('ledger_transaction_invoices').insert(
     invoiceIds.map((invoice_id) => ({ owner_id: user.id, transaction_id: txn.id, invoice_id })),

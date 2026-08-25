@@ -9,7 +9,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { settlementFor } from '../../lib/invoicePayment.ts'
+import { amountLinkRefusal, settlementFor } from '../../lib/invoicePayment.ts'
 
 test('no link at all reads as unpaid, with the whole total outstanding', () => {
   assert.deepEqual(settlementFor(60000, null), {
@@ -62,4 +62,58 @@ test('a zero total needs no special case and gets none', () => {
   assert.deepEqual(settlementFor(0, { amountCents: 0, invoiceCount: 1 }), {
     paidCents: 0, deltaCents: 0, state: 'exact',
   })
+})
+
+// amountLinkRefusal — the rule acceptIncomeMatch consults before it lets a
+// deposit be linked at all. It lives here rather than in the action because
+// this is the single decision that can put money against the wrong invoice,
+// and a server action cannot be tested. The asymmetry it encodes: a SINGLE
+// invoice may be settled across a gap when Dan says so; a COMBO never may,
+// with or without his say-so, because a mismatch spread over 2 or 3
+// invoices cannot be attributed to any one of them honestly.
+
+test('an exact single link is allowed, no flag needed', () => {
+  assert.equal(amountLinkRefusal({
+    sumCents: 60000, txnAmountCents: 60000, invoiceCount: 1, settleMismatch: false,
+  }), null)
+})
+
+test('an exact combo is allowed, no flag needed', () => {
+  assert.equal(amountLinkRefusal({
+    sumCents: 180000, txnAmountCents: 180000, invoiceCount: 3, settleMismatch: false,
+  }), null)
+  assert.equal(amountLinkRefusal({
+    sumCents: 120000, txnAmountCents: 120000, invoiceCount: 2, settleMismatch: false,
+  }), null)
+})
+
+test('a mismatched single is REFUSED without the flag — the Matches queue stays strict', () => {
+  assert.equal(amountLinkRefusal({
+    sumCents: 60000, txnAmountCents: 59000, invoiceCount: 1, settleMismatch: false,
+  }), 'Those amounts do not add up.')
+})
+
+test("Dan's $10-short case: a mismatched single IS allowed when the caller asks for it", () => {
+  assert.equal(amountLinkRefusal({
+    sumCents: 60000, txnAmountCents: 59000, invoiceCount: 1, settleMismatch: true,
+  }), null)
+  // Over, not just short — the same deliberate act either direction.
+  assert.equal(amountLinkRefusal({
+    sumCents: 59000, txnAmountCents: 60000, invoiceCount: 1, settleMismatch: true,
+  }), null)
+})
+
+test('a mismatched COMBO is refused even WITH the flag — this guard never loosens', () => {
+  assert.equal(amountLinkRefusal({
+    sumCents: 120000, txnAmountCents: 119000, invoiceCount: 2, settleMismatch: true,
+  }), 'Those amounts do not add up.')
+  assert.equal(amountLinkRefusal({
+    sumCents: 180000, txnAmountCents: 179000, invoiceCount: 3, settleMismatch: true,
+  }), 'Those amounts do not add up.')
+})
+
+test('the refusal is the exact wording the UI already shows', () => {
+  assert.equal(amountLinkRefusal({
+    sumCents: 1, txnAmountCents: 2, invoiceCount: 1, settleMismatch: false,
+  }), 'Those amounts do not add up.')
 })
