@@ -1183,7 +1183,7 @@ export default function MoneyRegister({
         onChange={setEditCategoryId}
         options={categoryPickerOptions}
         extraOption={editExtraOption}
-        blankOption={{ label: 'Uncategorized' }}
+        pinnedOptions={[{ id: '', label: 'Uncategorized' }]}
       />
     )
 
@@ -1722,7 +1722,7 @@ export default function MoneyRegister({
               disabled={pending}
               onChange={setCategoryId}
               options={categoryPickerOptions}
-              blankOption={{ label: 'Uncategorized' }}
+              pinnedOptions={[{ id: '', label: 'Uncategorized' }]}
             />
             <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={memo} disabled={pending}
                    onChange={(e) => setMemo(e.target.value)} />
@@ -1788,7 +1788,7 @@ export default function MoneyRegister({
               disabled={pending}
               onChange={setCategoryId}
               options={categoryPickerOptions}
-              blankOption={{ label: 'Uncategorized' }}
+              pinnedOptions={[{ id: '', label: 'Uncategorized' }]}
             />
             <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={memo} disabled={pending}
                    onChange={(e) => setMemo(e.target.value)} />

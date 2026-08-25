@@ -127,14 +127,14 @@ type Placement = { top: number; left: number }
  *     confirmation only. Commits `moveBetweenCategories(chosen,
  *     thisCategory, month, |available|)`.
  *
- * **Ready to Assign, both directions:** CategoryPicker's own `blankOption`
- * prop already does exactly this — a pinned row above "+ New Category" that
- * sets the picker's value back to `''`, the same sentinel this app already
- * uses everywhere else for "no category" (see CategoryPicker's own doc
- * comment: "a future caller offering 'Ready to Assign' instead just passes a
- * different label" — Task 3 anticipated this exact call site). No prop
- * extension was needed; `blankOption={{ label: 'Ready to Assign' }}` is the
- * whole mechanism, on both the To and From pickers below.
+ * **Ready to Assign, both directions:** CategoryPicker's own `pinnedOptions`
+ * prop (generalized from Task 3's original single `blankOption` by this same
+ * review, so Task 5's still-undispatched Payment/Transfer row has somewhere
+ * to land as a second standing entry) already does exactly this — a pinned
+ * row above "+ New Category" that sets the picker's value back to `''`, the
+ * same sentinel this app already uses everywhere else for "no category".
+ * `pinnedOptions={[{ id: '', label: 'Ready to Assign' }]}` is the whole
+ * mechanism, on both the To and From pickers below.
  *
  * **Anchored, not modal.** `anchorRef` wraps the pill `<button>`, the same
  * span MonthPicker's own `relative` wrapper plays for its month grid — but
@@ -324,7 +324,7 @@ export default function MovePopover({
     )
   }
 
-  // Ready to Assign is offered through CategoryPicker's own `blankOption`
+  // Ready to Assign is offered through CategoryPicker's own `pinnedOptions`
   // (see this component's own doc comment above) rather than injected into
   // `options` — the red picker's own list is filtered to positive-Available
   // categories ONLY, never including a synthetic RTA row that would need
@@ -387,7 +387,7 @@ export default function MovePopover({
               options={isRed ? fromOptions : toOptions}
               ariaLabel={isRed ? 'Cover overspending from' : 'Move money to'}
               disabled={pending}
-              blankOption={{ label: 'Ready to Assign' }}
+              pinnedOptions={[{ id: '', label: 'Ready to Assign' }]}
             />
           </div>
 

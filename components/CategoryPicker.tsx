@@ -24,17 +24,22 @@ import { formatUSD } from '@/lib/money'
 // filter) simply carries no `availableCents`, which renders as no figure at
 // all rather than a fabricated "$0.00".
 //
-// `extraOption` and `blankOption` are both caller-supplied rather than baked
-// in here, on purpose: this same component is meant to become Task 3b's own
-// "To"/"From" picker inside the directional move popover, and Task 5's home
-// for a pinned Payment/Transfer row — neither built yet, both meant to land
-// as pure prop additions once they do, never a rework of this file.
-// `blankOption` is how MoneyRegister's three call sites keep today's
-// "clear back to —" behavior (labeled "Uncategorized" there) without this
-// component knowing that word; a future caller offering "Ready to Assign"
-// instead just passes a different label. `extraOption` is how the edit
-// row's since-hidden-category fallback rides through — see that call site's
-// own comment for why one is sometimes needed.
+// `extraOption` and `pinnedOptions` are both caller-supplied rather than
+// baked in here, on purpose: Task 3b's own "To"/"From" picker inside the
+// directional move popover (MovePopover, built) already reuses this same
+// component unchanged, and Task 5's still-undispatched Payment/Transfer row
+// is meant to land as one more entry in `pinnedOptions`, never a rework of
+// this file. `pinnedOptions` generalizes what this component originally
+// shipped as a single hardcoded `blankOption` (clear-to-`''` only — Task 3's
+// review found it couldn't host a second standing state) into an ordered
+// list of standing rows, each independently selectable by its own id —
+// MoneyRegister's call sites keep today's "clear back to —" behavior by
+// passing `[{ id: '', label: 'Uncategorized' }]`, MovePopover's by passing
+// `[{ id: '', label: 'Ready to Assign' }]`; `''` stays this app's one
+// existing "no category" sentinel regardless of which caller's label rides
+// on it. `extraOption` is how the edit row's since-hidden-category fallback
+// rides through — see that call site's own comment for why one is
+// sometimes needed.
 export type CategoryPickerOption = {
   id: string
   name: string
@@ -49,6 +54,11 @@ function balanceClass(cents: number | undefined): string {
   return ''
 }
 
+// A sentinel for "+ New Category"'s own slot in the virtual-focus list below
+// — never a real category id (those come from the database), so it can't
+// collide with one.
+const NEW_CATEGORY_ID = '__new-category__'
+
 export default function CategoryPicker({
   value,
   onChange,
@@ -58,7 +68,7 @@ export default function CategoryPicker({
   size = 'md',
   className,
   extraOption,
-  blankOption,
+  pinnedOptions,
 }: {
   value: string
   onChange: (id: string) => void
@@ -72,18 +82,40 @@ export default function CategoryPicker({
    *  so the picker never lies about there being nothing there. Only ever
    *  meaningful when `extraOption.id === value`. */
   extraOption?: { id: string; label: string } | null
-  /** A pinned row, above "+ New Category", that clears the selection back
-   *  to `''` — labeled by the caller. Omit entirely to not offer one. */
-  blankOption?: { label: string } | null
+  /** Standing rows pinned above "+ New Category", in order, each
+   *  independently selectable — picking one calls `onChange` with that
+   *  row's own `id`. `''` is this app's existing "no category" sentinel
+   *  (MoneyRegister's "Uncategorized", MovePopover's "Ready to Assign"), so
+   *  callers who only want today's clear-to-blank row pass
+   *  `[{ id: '', label: '…' }]`; Task 5's Payment/Transfer row is just a
+   *  second, non-`''` entry in this same array, once dispatched. Omit
+   *  entirely (or pass `[]`) to pin nothing. */
+  pinnedOptions?: { id: string; label: string }[]
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const newCategoryRef = useRef<HTMLAnchorElement>(null)
   const listboxId = useId()
 
+  const selectedFromOptions = options.find((o) => o.id === value)
+  const selected: CategoryPickerOption | undefined =
+    value === '' ? undefined :
+    selectedFromOptions ??
+    (extraOption && extraOption.id === value
+      ? { id: extraOption.id, name: extraOption.label, grp: '' }
+      : undefined)
+
   const q = query.trim().toLowerCase()
-  const filtered = q === '' ? options : options.filter((o) => o.name.toLowerCase().includes(q))
+  const rawFiltered = q === '' ? options : options.filter((o) => o.name.toLowerCase().includes(q))
+  // The selected category (when it came from `options`, not `extraOption`)
+  // is excluded from the grouped list and shown only once, under "Selected"
+  // below — otherwise reopening the picker on an already-categorized row
+  // rendered it twice, with duplicate DOM ids, both marked active/selected.
+  // YNAB's own picker keeps it under Selected only even once a typed query
+  // would otherwise match it too, so this exclusion holds regardless of `q`.
+  const filtered = selectedFromOptions ? rawFiltered.filter((o) => o.id !== value) : rawFiltered
 
   // Grouped in whatever order the groups first appear in `options` — the
   // caller (app/money/page.tsx) already sorts by grp/sort, so this only
@@ -99,33 +131,46 @@ export default function CategoryPicker({
     }
     groups[idx].items.push(o)
   }
-  // Arrow-key traversal walks only the real, filtered categories — the
-  // pinned rows around them (blankOption, "+ New Category", the Selected
-  // echo) are reachable by Tab or click, the same split Select.tsx draws
-  // between its trigger and its own options.
-  const flatIds = groups.flatMap((g) => g.items.map((o) => o.id))
+  // The full virtual-focus list the arrows/Home/End/Enter below walk, top to
+  // bottom in the SAME order the panel renders: `pinnedOptions`'s own rows,
+  // then "+ New Category" (its own sentinel id, since it navigates rather
+  // than selecting), then the "Selected" echo (if any), then the grouped,
+  // filtered categories. Pinned rows and "+ New Category" used to be
+  // real-focusable elements reachable only by Tab/click, sitting outside
+  // this list — but Tab also closes the panel (see onKeyDown's own `Tab`
+  // case), so they were mouse-only in practice. Folding them into this same
+  // activedescendant-driven list (APG's select-only combobox pattern, which
+  // the rest of this component already follows) makes them keyboard-
+  // reachable without a second, real-focus system to keep in sync.
+  const pinnedIds = (pinnedOptions ?? []).map((p) => p.id)
+  const flatIds = [
+    ...pinnedIds,
+    NEW_CATEGORY_ID,
+    ...(selected ? [selected.id] : []),
+    ...groups.flatMap((g) => g.items.map((o) => o.id)),
+  ]
 
-  const selectedFromOptions = options.find((o) => o.id === value)
-  const selected: CategoryPickerOption | undefined =
-    value === '' ? undefined :
-    selectedFromOptions ??
-    (extraOption && extraOption.id === value
-      ? { id: extraOption.id, name: extraOption.label, grp: '' }
-      : undefined)
-
-  // `value === ''` with a `blankOption` offered is a REAL selected state
-  // (MoveMoneyDialog's own Ready to Assign sentinel — now MovePopover's,
-  // Wave B Task 3b — and MoneyRegister's own "Uncategorized"), not merely
-  // "nothing chosen yet": the closed trigger showing the placeholder glyph
-  // instead of that state's own label would read as blank/unset when it
-  // isn't. `blankOption.label` only fills in here, on the CLOSED display —
-  // the open listbox's own blank-row button (below) already carries the
-  // accent-dot "selected" marker independent of this.
-  const displayLabel = selected?.name ?? (value === '' ? blankOption?.label ?? '' : '')
+  const selectedPinned = pinnedOptions?.find((p) => p.id === value)
+  // A `value` matching one of `pinnedOptions` (today always `''`,
+  // MoneyRegister's "Uncategorized" / MovePopover's "Ready to Assign"
+  // sentinel; Task 5's Payment/Transfer row will be a non-`''` id here once
+  // dispatched) is a REAL selected state, not merely "nothing chosen yet":
+  // the closed trigger showing the placeholder glyph instead of that row's
+  // own label would read as blank/unset when it isn't. The matched pinned
+  // row's `label` only fills in here, on the CLOSED display — the open
+  // listbox's own pinned-row button (below) already carries the accent-dot
+  // "selected" marker independent of this.
+  const displayLabel = selected?.name ?? selectedPinned?.label ?? ''
 
   function openMenu() {
     setQuery('')
-    const idx = options.findIndex((o) => o.id === value)
+    // `flatIds` always carries `value` at a fixed, query-independent
+    // position when there IS a selection to highlight — a pinned row, or
+    // the Selected echo (which covers both the ordinary `options` case and
+    // `extraOption`) — so this doesn't need to special-case extraOption:
+    // it's simply found via `selected.id` like any other selected row, never
+    // falling through to (incorrectly) highlighting the first real option.
+    const idx = flatIds.indexOf(value)
     setActive(idx >= 0 ? idx : 0)
     setOpen(true)
   }
@@ -180,10 +225,16 @@ export default function CategoryPicker({
         e.preventDefault()
         setActive(flatIds.length - 1)
         break
-      case 'Enter':
+      case 'Enter': {
         e.preventDefault()
-        if (flatIds[active]) pick(flatIds[active])
+        const id = flatIds[active]
+        // `id` can legitimately be `''` (a pinned clear/blank row) — check
+        // for `undefined` explicitly rather than truthiness, which used to
+        // silently swallow Enter on that row.
+        if (id === NEW_CATEGORY_ID) newCategoryRef.current?.click()
+        else if (id !== undefined) pick(id)
         break
+      }
       case 'Escape':
         e.preventDefault()
         // Select.tsx's own fixed idiom (2026-08-24): stop the key here so it
@@ -213,11 +264,14 @@ export default function CategoryPicker({
   useEffect(() => {
     if (!open) return
     const id = flatIds[active]
-    if (id) document.getElementById(`${listboxId}-${id}`)?.scrollIntoView({ block: 'nearest' })
-    // flatIds is rebuilt every render (it's cheap — one pass over `options`)
-    // and would otherwise retrigger this on every keystroke's filter change
-    // even when active/open/listboxId didn't move; those three are the only
-    // real dependencies of "which row needs scrolling into view."
+    // `id` can legitimately be `''` (a pinned clear/blank row) — check for
+    // `undefined` explicitly, not truthiness.
+    if (id !== undefined) document.getElementById(`${listboxId}-${id}`)?.scrollIntoView({ block: 'nearest' })
+    // flatIds is rebuilt every render (it's cheap — one pass over the
+    // picker's own option lists) and would otherwise retrigger this on every
+    // keystroke's filter change even when active/open/listboxId didn't move;
+    // those three are the only real dependencies of "which row needs
+    // scrolling into view."
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, active, listboxId])
 
@@ -259,7 +313,7 @@ export default function CategoryPicker({
         aria-expanded={open}
         aria-controls={listboxId}
         aria-autocomplete="list"
-        aria-activedescendant={open && flatIds[active] ? `${listboxId}-${flatIds[active]}` : undefined}
+        aria-activedescendant={open && flatIds[active] !== undefined ? `${listboxId}-${flatIds[active]}` : undefined}
         disabled={disabled}
         placeholder="—"
         value={open ? query : displayLabel}
@@ -290,23 +344,50 @@ export default function CategoryPicker({
           // Select.tsx's own idiom.
           onMouseDown={(e) => e.preventDefault()}
         >
-          {blankOption && (
-            <button
-              type="button"
-              onClick={() => pick('')}
-              className={cn(
-                'flex w-full items-center justify-between gap-2 border-b border-line px-3 py-2 text-left text-sm text-muted hover:bg-accent-wash hover:text-ink',
-                value === '' && 'font-semibold text-ink',
-              )}
-            >
-              <span>{blankOption.label}</span>
-              {value === '' && <span className="h-2 w-2 shrink-0 bg-accent" aria-hidden />}
-            </button>
-          )}
+          {/* Pinned rows and "+ New Category" are `role="option"` entries in
+              the SAME virtual-focus list as the real categories below
+              (`flatIds`, built above) — `tabIndex={-1}` keeps them out of
+              the browser's own real Tab order (Tab still closes the panel,
+              same as before) so the only way to focus them is the
+              activedescendant traversal the arrows already drive, matching
+              every other row here. */}
+          {pinnedOptions?.map((po) => {
+            const isActive = flatIds[active] === po.id
+            const isSelected = po.id === value
+            return (
+              <button
+                key={po.id}
+                type="button"
+                id={`${listboxId}-${po.id}`}
+                role="option"
+                aria-selected={isSelected}
+                tabIndex={-1}
+                onMouseEnter={() => setActive(flatIds.indexOf(po.id))}
+                onClick={() => pick(po.id)}
+                className={cn(
+                  'flex w-full items-center justify-between gap-2 border-b border-line px-3 py-2 text-left text-sm text-muted hover:bg-accent-wash hover:text-ink',
+                  isActive && 'bg-accent-wash',
+                  isSelected && 'font-semibold text-ink',
+                )}
+              >
+                <span>{po.label}</span>
+                {isSelected && <span className="h-2 w-2 shrink-0 bg-accent" aria-hidden />}
+              </button>
+            )
+          })}
           <Link
+            ref={newCategoryRef}
             href="/money/categories"
+            id={`${listboxId}-${NEW_CATEGORY_ID}`}
+            role="option"
+            aria-selected={false}
+            tabIndex={-1}
+            onMouseEnter={() => setActive(flatIds.indexOf(NEW_CATEGORY_ID))}
             onClick={() => setOpen(false)}
-            className="flex items-center gap-2 border-b border-line px-3 py-2 text-sm font-semibold text-accent hover:opacity-80"
+            className={cn(
+              'flex items-center gap-2 border-b border-line px-3 py-2 text-sm font-semibold text-accent hover:opacity-80',
+              flatIds[active] === NEW_CATEGORY_ID && 'bg-accent-wash',
+            )}
           >
             ＋ New Category
           </Link>
@@ -322,8 +403,8 @@ export default function CategoryPicker({
             )}
             {groups.length === 0 && <div className="px-3 py-2 text-sm text-muted">No matches</div>}
             {groups.map((g) => (
-              <div key={g.grp}>
-                <div className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-wider text-muted">
+              <div key={g.grp} role="group" aria-label={g.grp}>
+                <div aria-hidden className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-wider text-muted">
                   {g.grp}
                 </div>
                 {g.items.map((o) => <OptionRow key={o.id} option={o} />)}

@@ -61,6 +61,17 @@ const budget = buildBudget({
   targets: [], fromMonth: OPENING_MONTH, toMonth: now,
 })
 const monthOut = budget.get(now)
+// Matching against YNAB has to go by name — the YNAB API hands back names,
+// never this app's own category ids — so `appByName` can't be keyed by id
+// instead. Two app categories sharing a name would silently collide here
+// (the second overwrites the first, so one of them never gets compared);
+// that can't be fixed without an id to key by, so just warn instead of
+// letting it happen quietly.
+const nameCounts = new Map()
+for (const c of cats) nameCounts.set(c.name, (nameCounts.get(c.name) ?? 0) + 1)
+for (const [name, count] of nameCounts) {
+  if (count > 1) console.warn(`warning: ${count} app categories are named "${name}" — appByName can only keep one, so this parity check may miss or misattribute a diff for it`)
+}
 const appByName = new Map(monthOut.rows.map((r) => [cats.find((k) => k.id === r.categoryId)?.name, r]))
 
 const usd = (cents) => (cents / 100).toFixed(2)
