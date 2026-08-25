@@ -22,14 +22,14 @@ import CategoryPicker, { type CategoryPickerOption } from '@/components/Category
 // Approve button stays disabled until validateLegs returns null.
 //
 // One leg row = one CategoryPicker (the category column), one note input
-// (the memo column), and ONE amount box matching the PARENT's own
-// direction (outflow stays outflow, inflow stays inflow, for every leg —
-// validateLegs' own sign rule) — the opposite box is never rendered at all
-// here, not merely disabled, since there is nothing for it to hold. A live
-// "Amount remaining" row runs the same parent-|amount|-minus-legs math as
-// the gate itself, via parseUSDMath per box, same as every other amount
-// field in this register (add()/saveEdit()'s own onOutflowChange /
-// onEditOutflowChange pair).
+// (the memo column), and ONE amount box matching the `direction` prop —
+// the edit session's own direction, outflow stays outflow and inflow stays
+// inflow for every leg (validateLegs' own sign rule) — the opposite box is
+// never rendered at all here, not merely disabled, since there is nothing
+// for it to hold. A live "Amount remaining" row runs the same
+// parent-|amount|-minus-legs math as the gate itself, via parseUSDMath per
+// box, same as every other amount field in this register (parseAmountBoxes'
+// own evaluator).
 
 export type SplitEditorSeedLeg = {
   categoryId: string | null
@@ -78,6 +78,7 @@ function draftFromSeed(seed: SplitEditorSeedLeg[], nextKey: () => number): Draft
 
 export default function SplitEditor({
   parentAmountCents,
+  direction,
   seedLegs,
   categoryOptions,
   pending,
@@ -87,13 +88,21 @@ export default function SplitEditor({
   onSave,
   onCancel,
 }: {
-  /** The PARENT transaction's own signed amount_cents — read from the row,
-   *  never from whatever the outer edit row's own Outflow/Inflow boxes
-   *  currently hold (those can carry an unsaved edit; replace_transaction_
-   *  splits itself validates against the DB row's true amount, same as
-   *  this). Its sign is the ONE thing that decides which box every leg
-   *  here gets. */
-  parentAmountCents: number
+  /** The signed amount the edit session's own Outflow/Inflow boxes
+   *  currently hold (2026-08-25 — the opposite of this prop's original
+   *  contract, deliberately: Dan types the new total and splits it in the
+   *  SAME session, "that is how YNAB works", and MoneyRegister's saveSplit
+   *  now persists boxes + legs in one atomic call, so the boxes ARE the
+   *  total these legs must reconcile to). null while the boxes are blank
+   *  or invalid — Save disables with the boxes' own refusal message until
+   *  they hold exactly one positive amount. */
+  parentAmountCents: number | null
+  /** Which box every leg here gets — the edit boxes' own direction, falling
+   *  back to the row's saved sign while they're blank/invalid (so the leg
+   *  boxes never jump sides mid-keystroke). MoneyRegister computes it
+   *  beside parentAmountCents; separate props because direction stays
+   *  well-defined even while the amount is momentarily null. */
+  direction: 'outflow' | 'inflow'
   seedLegs: SplitEditorSeedLeg[]
   categoryOptions: readonly CategoryPickerOption[]
   pending: boolean
@@ -114,7 +123,6 @@ export default function SplitEditor({
   onSave: (legs: SplitLegInput[]) => void
   onCancel: () => void
 }) {
-  const direction: 'outflow' | 'inflow' = parentAmountCents < 0 ? 'outflow' : 'inflow'
   const keyRef = useRef(0)
   function nextKey(): number {
     keyRef.current += 1
@@ -138,8 +146,16 @@ export default function SplitEditor({
   // so a freshly-added, not-yet-typed leg contributes nothing to Remaining
   // rather than poisoning it to NaN.
   const parsedAmounts = legs.map((l) => parseUSDMath(l.amount))
-  const remainingCents = Math.abs(parentAmountCents)
-    - parsedAmounts.reduce((sum: number, v) => sum + (v ?? 0), 0)
+  // null while the edit boxes above hold no valid amount — there is no
+  // total to reconcile against yet, so the remaining line shows an em dash
+  // and the hint below carries the boxes' own message instead of a phantom
+  // dollar figure (the pre-2026-08-25 bug: a freshly-typed total the row
+  // hadn't saved yet made this read "−$400.00 remaining" against the stale
+  // saved amount).
+  const remainingCents = parentAmountCents === null
+    ? null
+    : Math.abs(parentAmountCents)
+      - parsedAmounts.reduce((sum: number, v) => sum + (v ?? 0), 0)
 
   // The exact leg set onSave would receive right now — signed to the
   // PARENT's direction (never the leg's own typed sign; there isn't one,
@@ -160,8 +176,13 @@ export default function SplitEditor({
 
   // validateLegs is total over the zero-leg case (its own doc comment) —
   // "removing all legs + Save = unsplit" falls straight out of that: an
-  // empty draft always validates clean, no special case needed here.
-  const hint = validateLegs(parentAmountCents, preparedLegs())
+  // empty draft always validates clean, no special case needed here. A
+  // null parent amount means the edit row's own boxes are the problem —
+  // their message (parseAmountBoxes' own) is the hint, and Save stays
+  // disabled until they hold exactly one positive amount.
+  const hint = parentAmountCents === null
+    ? 'Enter an amount in Outflow or Inflow.'
+    : validateLegs(parentAmountCents, preparedLegs())
   const saveDisabled = pending || hint !== null
 
   function handleSave() {
@@ -240,6 +261,7 @@ export default function SplitEditor({
     )
   }
 
+  const remainingLabel = remainingCents === null ? '—' : formatUSD(remainingCents)
   const remainingLine = desktop ? (
     <div className="grid items-center gap-x-3" style={{ gridTemplateColumns: gridTemplate }}>
       <span aria-hidden />
@@ -248,10 +270,10 @@ export default function SplitEditor({
       <span aria-hidden />
       <span className="text-xs text-muted text-right">Amount remaining</span>
       {direction === 'outflow'
-        ? <span className="tabular text-right text-xs font-semibold">{formatUSD(remainingCents)}</span>
+        ? <span className="tabular text-right text-xs font-semibold">{remainingLabel}</span>
         : <span aria-hidden />}
       {direction === 'inflow'
-        ? <span className="tabular text-right text-xs font-semibold">{formatUSD(remainingCents)}</span>
+        ? <span className="tabular text-right text-xs font-semibold">{remainingLabel}</span>
         : <span aria-hidden />}
       <span aria-hidden />
       <span aria-hidden />
@@ -259,7 +281,7 @@ export default function SplitEditor({
   ) : (
     <p className="flex items-center justify-between text-xs">
       <span className="text-muted">Amount remaining</span>
-      <span className="tabular font-semibold">{formatUSD(remainingCents)}</span>
+      <span className="tabular font-semibold">{remainingLabel}</span>
     </p>
   )
 

@@ -270,3 +270,29 @@ export function parseUSDMath(input: string | number | null | undefined): number 
 
   return finalize(result)
 }
+
+/**
+ * The register's Outflow/Inflow box pair, read as one signed amount — the
+ * brain of MoneyRegister's add()/saveEdit() amount validation, extracted so
+ * the split save (which persists the whole edit row in one RPC call) reads
+ * the boxes through the exact same rules and refusal messages instead of a
+ * second copy. Exactly one box may carry a value; parseUSDMath evaluates
+ * it (math welcome, same as typing in the box); the box decides the sign
+ * (outflow negative, inflow positive — 0027's own constraint). A zero or
+ * unparseable value refuses: a ledger row is never $0.00, and lone
+ * '(5.75)' is accounting-negative −5.75 (parseUSDMath's contract), which
+ * lands below zero and refuses the same way.
+ */
+export function parseAmountBoxes(
+  outflow: string,
+  inflow: string,
+): { amountCents: number; direction: 'outflow' | 'inflow' } | { error: string } {
+  const outflowTyped = outflow.trim() !== ''
+  const inflowTyped = inflow.trim() !== ''
+  if (outflowTyped === inflowTyped) return { error: 'Enter an amount in Outflow or Inflow.' }
+  const typed = parseUSDMath(outflowTyped ? outflow : inflow)
+  if (typed === null || typed <= 0) return { error: 'Enter an amount.' }
+  return outflowTyped
+    ? { amountCents: -typed, direction: 'outflow' }
+    : { amountCents: typed, direction: 'inflow' }
+}

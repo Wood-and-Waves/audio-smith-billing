@@ -13,7 +13,7 @@ import {
   validateTxnShape, isSaneLedgerDate, deriveKind, type LedgerKind, type CategoryForKind, type LedgerDirection,
 } from '@/lib/ledgerRules'
 import { decideIncomeRoleChange } from '@/lib/incomeRoleGuard'
-import { validateLegs, pendingBlocksReconcile, type SplitLegInput } from '@/lib/ledgerSplits'
+import { validateLegs, pendingBlocksReconcile, type SplitLegInput, type SplitParentPatch } from '@/lib/ledgerSplits'
 
 type Fail = { error: string }
 
@@ -1461,23 +1461,57 @@ export async function setTransactionCategory(
  *
  * Kind is derived per leg through deriveKind(category, direction) — the
  * SAME rule the register's edit row and setTransactionCategory both use,
- * no second derivation path — with `direction` read from the PARENT
- * transaction's own amount sign, not the leg's. validateLegs above already
- * requires every leg's sign to match the parent's, so this is not a second,
- * independent fact; it is the one fact every leg already agrees to, applied
- * once rather than re-derived per leg. An income-role category on a leg is
+ * no second derivation path — with `direction` read from the parent's
+ * EFFECTIVE amount sign (the patch's when one rides along, the row's own
+ * otherwise), not the leg's. validateLegs above already requires every
+ * leg's sign to match the parent's, so this is not a second, independent
+ * fact; it is the one fact every leg already agrees to, applied once
+ * rather than re-derived per leg. An income-role category on a leg is
  * refused by deriveKind itself the same way the register refuses one on an
  * outflow row — there is no separate "assignable" check here: deriveKind's
  * own refusal IS the leg's refusal, so a leg is never held to a stricter or
  * looser rule than the row it would have been if it were never split.
+ *
+ * `parent` (migration 0045, Dan's "edit all figures at one time — that is
+ * how YNAB works") carries the register edit row's own fields so the whole
+ * save — total, date, payee, memo, show, AND legs — lands as ONE atomic
+ * RPC call. It cannot be two writes from here: 0042's immediate trigger
+ * refuses an amount change while legs exist, and its deferred trigger
+ * refuses legs that don't sum to the parent at commit, so either ordering
+ * of separate writes loses. Field validation mirrors
+ * updateLedgerTransaction's own checks in the same voice. The PARENT's
+ * kind is re-derived as deriveKind(null, direction) — a split parent's
+ * category is null by construction (the RPC clears it), its true kinds
+ * live on the legs (explodeForReports), and deriving from the null
+ * category keeps 0027's kind/sign constraint satisfied even when the edit
+ * flips the row's direction. A patch with zero legs is refused: removing
+ * every leg is an unsplit, and MoneyRegister routes that through
+ * unsplitTransaction + updateLedgerTransaction so the ordinary edit path's
+ * own category/kind derivation applies (see saveSplit's comment there).
  */
 export async function replaceSplits(
   transactionId: string,
   legs: SplitLegInput[],
+  parent?: SplitParentPatch,
 ): Promise<Fail | { ok: true }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not signed in.' }
+
+  if (parent && legs.length === 0) {
+    return { error: 'Removing every leg is an unsplit — save the row itself instead.' }
+  }
+  if (parent) {
+    if (!isPlainDate(parent.date)) return { error: 'Pick a date.' }
+    if (!isSaneLedgerDate(parent.date)) return { error: SANE_DATE_ERROR }
+    if (!parent.payee.trim()) return { error: 'Say who this was to or from.' }
+    if (!Number.isInteger(parent.amountCents) || parent.amountCents === 0) {
+      return { error: 'Enter an amount.' }
+    }
+    if (parent.showId !== null && !(await belongsToCaller(supabase, 'shows', parent.showId))) {
+      return { error: 'That show does not belong to you.' }
+    }
+  }
 
   const { data: existing, error: existingError } = await supabase
     .from('ledger_transactions')
@@ -1510,7 +1544,12 @@ export async function replaceSplits(
     return { error: 'Transfers do not use a category.' }
   }
 
-  const shapeError = validateLegs(existing.amount_cents, legs)
+  // The effective amount is what the row will hold AFTER this save — the
+  // patch's when one rides along, the row's own otherwise. Legs balance
+  // against it (Dan's rule: save refuses only when the splits don't
+  // reconcile to $0 of THIS total), and direction below derives from it.
+  const effectiveAmountCents = parent ? parent.amountCents : existing.amount_cents
+  const shapeError = validateLegs(effectiveAmountCents, legs)
   if (shapeError) return { error: shapeError }
 
   const categoryIds = [...new Set(
@@ -1537,7 +1576,7 @@ export async function replaceSplits(
     }
   }
 
-  const direction: LedgerDirection = existing.amount_cents > 0 ? 'inflow' : 'outflow'
+  const direction: LedgerDirection = effectiveAmountCents > 0 ? 'inflow' : 'outflow'
   const preparedLegs: { category_id: string | null; amount_cents: number; kind: LedgerKind; note: string | null }[] = []
   for (const leg of legs) {
     const category: CategoryForKind = leg.categoryId === null ? null : categoriesById.get(leg.categoryId) ?? null
@@ -1551,9 +1590,33 @@ export async function replaceSplits(
     })
   }
 
+  // The parent's kind re-derives from the null category it will hold (the
+  // RPC clears it whenever legs exist) — 'expense'/'income' by direction.
+  // deriveKind(null, …) never refuses, so no error branch here; a split
+  // parent's own kind is vestigial (every category- and report-shaped
+  // consumer explodes to the legs' kinds instead), but 0027's kind/sign
+  // constraint still reads it, and this keeps it true through a direction
+  // flip.
+  // deriveKind(null, …) is the table's own fall-through case and never
+  // refuses today; the error branch below fails safe if that ever changes
+  // rather than casting the union away.
+  const parentKindResult = deriveKind(null, direction)
+  if ('error' in parentKindResult) return parentKindResult
+  const parentPatch = parent
+    ? {
+        date: parent.date,
+        payee: parent.payee.trim(),
+        memo: parent.memo?.trim() || null,
+        show_id: parent.showId,
+        amount_cents: parent.amountCents,
+        kind: parentKindResult.kind,
+      }
+    : null
+
   const { error: rpcError } = await supabase.rpc('replace_transaction_splits', {
     p_transaction_id: transactionId,
     p_legs: preparedLegs,
+    p_parent_patch: parentPatch,
   })
   if (rpcError) return { error: rpcError.message }
 

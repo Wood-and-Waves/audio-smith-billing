@@ -10,7 +10,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseUSDMath } from '../../lib/moneyMath.ts'
+import { parseAmountBoxes, parseUSDMath } from '../../lib/moneyMath.ts'
 import { parseUSD } from '../../lib/money.ts'
 
 test('Dan\'s own case: 24.36+45.72 -> 7008', () => {
@@ -153,4 +153,35 @@ test('scientific notation is rejected — a parseFloat-based tokenizer would sil
 test('a pasted blob of nested parens or signs returns null instead of blowing the stack', () => {
   assert.equal(parseUSDMath('('.repeat(5000) + '5' + ')'.repeat(5000)), null)
   assert.equal(parseUSDMath('-'.repeat(5000) + '5'), null)
+})
+
+// ---------------------------------------------------------------------------
+// parseAmountBoxes — the Outflow/Inflow pair read as one signed amount.
+// Extracted from MoneyRegister's add()/saveEdit() so the split save (which
+// persists the whole edit row in one RPC call) validates against the SAME
+// rules and messages; these tests pin the contract both save paths share.
+// ---------------------------------------------------------------------------
+
+test('parseAmountBoxes: exactly one box must carry a value — both blank and both typed refuse alike', () => {
+  assert.deepEqual(parseAmountBoxes('', ''), { error: 'Enter an amount in Outflow or Inflow.' })
+  assert.deepEqual(parseAmountBoxes('  ', ''), { error: 'Enter an amount in Outflow or Inflow.' })
+  assert.deepEqual(parseAmountBoxes('5', '5'), { error: 'Enter an amount in Outflow or Inflow.' })
+})
+
+test('parseAmountBoxes: the box decides the sign — outflow negative, inflow positive', () => {
+  assert.deepEqual(parseAmountBoxes('2912.60', ''), { amountCents: -291260, direction: 'outflow' })
+  assert.deepEqual(parseAmountBoxes('', '400'), { amountCents: 40000, direction: 'inflow' })
+})
+
+test('parseAmountBoxes: math in the box works, same evaluator as typing it directly', () => {
+  // Dan's own March 5 merge: the two hand-split rows recombined in the box.
+  assert.deepEqual(parseAmountBoxes('2512.60+400', ''), { amountCents: -291260, direction: 'outflow' })
+})
+
+test('parseAmountBoxes: zero, negative-evaluating, and unparseable values refuse — a ledger row is never $0.00', () => {
+  assert.deepEqual(parseAmountBoxes('0', ''), { error: 'Enter an amount.' })
+  // Lone (5.75) is accounting-negative −5.75 (parseUSDMath's contract) —
+  // below zero, so it refuses rather than silently flipping the box's sign.
+  assert.deepEqual(parseAmountBoxes('(5.75)', ''), { error: 'Enter an amount.' })
+  assert.deepEqual(parseAmountBoxes('', 'abc'), { error: 'Enter an amount.' })
 })

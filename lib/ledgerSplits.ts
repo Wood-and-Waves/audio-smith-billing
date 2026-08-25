@@ -37,6 +37,23 @@ export type SplitLegInput = {
 }
 
 /**
+ * The parent-row edit that rides along with a split save (migration 0045)
+ * — the register's own edit-row fields, so "change the total AND the legs"
+ * lands as ONE atomic RPC call instead of two writes the 0042 triggers
+ * refuse in either order. Always the FULL field set, never a sparse diff:
+ * the save persists what the edit row shows, same as saveEdit. category is
+ * deliberately absent — a split parent has no single category (0042), and
+ * the RPC only ever clears it.
+ */
+export type SplitParentPatch = {
+  date: string
+  payee: string
+  memo: string | null
+  showId: string | null
+  amountCents: number
+}
+
+/**
  * validateLegs MIRRORS migration 0042's deferred constraint trigger
  * (scripts/sql/migrations/0042_splits_and_pending.sql,
  * ledger_transaction_splits_check()) EXACTLY: whenever any legs exist there

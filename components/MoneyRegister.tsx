@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { formatAmount, formatUSD, parseUSD } from '@/lib/money'
-import { parseUSDMath } from '@/lib/moneyMath'
+import { parseAmountBoxes } from '@/lib/moneyMath'
 import { formatDateLong, formatDateShort, todayInChicago } from '@/lib/dates'
 import { normalizePayee } from '@/lib/payeeMemory'
 import { deriveKind, type CategoryForKind, type LedgerDirection, type LedgerKind } from '@/lib/ledgerRules'
@@ -797,31 +797,23 @@ export default function MoneyRegister({
   function add() {
     setError(null)
     if (!payee.trim()) { setError('Say who this was to or from.'); return }
-    const outflowTyped = outflowAmount.trim() !== ''
-    const inflowTyped = inflowAmount.trim() !== ''
-    if (outflowTyped === inflowTyped) { setError('Enter an amount in Outflow or Inflow.'); return }
-    const typed = parseUSDMath(outflowTyped ? outflowAmount : inflowAmount)
-    if (typed === null || typed <= 0) { setError('Enter an amount.'); return }
+    // parseAmountBoxes (lib/moneyMath.ts) is the extracted brain of the old
+    // inline pair-of-boxes logic — exactly one box, parseUSDMath, box
+    // decides the sign (the 0027 signed-cents rule; see its doc comment) —
+    // shared with saveEdit and the split save so all three refuse and sign
+    // identically.
+    const parsed = parseAmountBoxes(outflowAmount, inflowAmount)
+    if ('error' in parsed) { setError(parsed.error); return }
     if (!date) { setError('Pick a date.'); return }
 
     // Kind is no longer picked — it's derived from the category and which
     // box the amount landed in (Wave B Task 5). A refusal (an income
     // category on an outflow — the one shape that cannot be booked)
     // surfaces here, inline, before addLedgerTransaction is ever called.
-    const direction: LedgerDirection = outflowTyped ? 'outflow' : 'inflow'
-    const derived = deriveKind(categoryForKind(categoryId), direction)
+    const derived = deriveKind(categoryForKind(categoryId), parsed.direction)
     if ('error' in derived) { setError(derived.error); return }
     const kind: LedgerKind = derived.kind
-
-    // The user always types a positive number, in whichever box; the sign it
-    // posts to the ledger comes from which box, not from kind — Payment/
-    // Transfer (Wave B Task 5) can land in EITHER box, so kind alone can no
-    // longer decide this the way it could when income only ever came from
-    // Inflow and expense/owner_pay only ever came from Outflow. Mirrors the
-    // same signed-cents rule addLedgerTransaction itself enforces
-    // (lt_income_positive / lt_outflow_negative, migration 0027) rather than
-    // trusting a minus sign Dan might or might not have typed.
-    const amountCents = direction === 'inflow' ? typed : -typed
+    const amountCents = parsed.amountCents
 
     start(async () => {
       const result = await addLedgerTransaction({
@@ -994,50 +986,80 @@ export default function MoneyRegister({
     setEditOutflowAmount('')
   }
 
-  function saveEdit(row: LedgerTxnRow) {
-    setError(null)
-    if (!editPayee.trim()) { setError('Say who this was to or from.'); return }
-    const outflowTyped = editOutflowAmount.trim() !== ''
-    const inflowTyped = editInflowAmount.trim() !== ''
-    if (outflowTyped === inflowTyped) { setError('Enter an amount in Outflow or Inflow.'); return }
-    const typed = parseUSDMath(outflowTyped ? editOutflowAmount : editInflowAmount)
-    if (typed === null || typed <= 0) { setError('Enter an amount.'); return }
-    if (!editDate) { setError('Pick a date.'); return }
+  /**
+   * The edit row's payee/boxes/date, validated and parsed — the shared core
+   * of every save leaving that row (saveEdit, and both of saveSplit's
+   * branches), so all of them refuse with the same messages and sign the
+   * amount by the same box rule (parseAmountBoxes, lib/moneyMath.ts).
+   * Category/kind derivation deliberately stays OUT of this core: a split
+   * save discards the picker's category (a split parent has no single
+   * category), so deriving kind from it here would let a stale income-role
+   * pick refuse a perfectly good split.
+   */
+  function editRowCore():
+    | { date: string; payee: string; memo: string; showId: string | null; amountCents: number; direction: LedgerDirection }
+    | { error: string } {
+    if (!editPayee.trim()) return { error: 'Say who this was to or from.' }
+    const parsed = parseAmountBoxes(editOutflowAmount, editInflowAmount)
+    if ('error' in parsed) return parsed
+    if (!editDate) return { error: 'Pick a date.' }
+    return {
+      date: editDate,
+      payee: editPayee,
+      memo: editMemo,
+      showId: editShowId || null,
+      amountCents: parsed.amountCents,
+      direction: parsed.direction,
+    }
+  }
+
+  /** The full updateLedgerTransaction input for what the edit row shows —
+   *  editRowCore plus the category pick and its derived kind. Used by
+   *  saveEdit and by saveSplit's unsplit branch (which becomes an ordinary
+   *  row again and so takes the ordinary save's own derivation and
+   *  refusals). */
+  function editRowUpdateInput(row: LedgerTxnRow):
+    | Parameters<typeof updateLedgerTransaction>[0]
+    | { error: string } {
+    const core = editRowCore()
+    if ('error' in core) return core
 
     // Same re-derivation as add(), above — with the row's own denormalized
     // categoryName/categoryBudgetRole as categoryForKind's hidden-category
     // fallback: editCategoryId can only hold an off-list id when it's
     // exactly row.category_id (see editExtraOption's own comment,
     // renderEditRow), so this is the one case that needs it.
-    const direction: LedgerDirection = outflowTyped ? 'outflow' : 'inflow'
     const hiddenFallback = row.categoryName !== null && row.categoryBudgetRole !== null
       ? { name: row.categoryName, budgetRole: row.categoryBudgetRole }
       : null
-    const derived = deriveKind(categoryForKind(editCategoryId, hiddenFallback), direction)
-    if ('error' in derived) { setError(derived.error); return }
-    const kind: LedgerKind = derived.kind
+    const derived = deriveKind(categoryForKind(editCategoryId, hiddenFallback), core.direction)
+    if ('error' in derived) return derived
 
-    // Same box-decides-the-sign rule as add(), above.
-    const amountCents = direction === 'inflow' ? typed : -typed
+    return {
+      id: row.id,
+      date: core.date,
+      amountCents: core.amountCents,
+      kind: derived.kind,
+      // C1: this used to force categoryId: null whenever editKind was
+      // owner_pay, which nulled out a REAL, already-assigned category on
+      // every single edit of an owner_pay row — quietly undoing 0038/0040
+      // one save at a time. Owner pay carries a category like any other
+      // kind now; only the picker's own value goes here (nulled instead
+      // when it's the Payment/Transfer sentinel — same reasoning as
+      // add()'s own categoryId line, above).
+      categoryId: editCategoryId === TRANSFER_SENTINEL ? null : (editCategoryId || null),
+      showId: core.showId,
+      payee: core.payee,
+      memo: core.memo,
+    }
+  }
 
+  function saveEdit(row: LedgerTxnRow) {
+    setError(null)
+    const input = editRowUpdateInput(row)
+    if ('error' in input) { setError(input.error); return }
     start(async () => {
-      const result = await updateLedgerTransaction({
-        id: row.id,
-        date: editDate,
-        amountCents,
-        kind,
-        // C1: this used to force categoryId: null whenever editKind was
-        // owner_pay, which nulled out a REAL, already-assigned category on
-        // every single edit of an owner_pay row — quietly undoing 0038/0040
-        // one save at a time. Owner pay carries a category like any other
-        // kind now; only the picker's own value goes here (nulled instead
-        // when it's the Payment/Transfer sentinel — same reasoning as
-        // add()'s own categoryId line, above).
-        categoryId: editCategoryId === TRANSFER_SENTINEL ? null : (editCategoryId || null),
-        showId: editShowId || null,
-        payee: editPayee,
-        memo: editMemo,
-      })
+      const result = await updateLedgerTransaction(input)
       if ('error' in result) { setError(result.error); return }
       setEditingId(null)
       router.refresh()
@@ -1045,30 +1067,74 @@ export default function MoneyRegister({
   }
 
   /**
-   * SplitEditor's own onSave (Wave C Task 4) — a zero-leg save routes to
-   * unsplitTransaction, otherwise replaceSplits; either way, when the row
-   * is PENDING the Save button already read "Approve" (SplitEditor's own
-   * approveOnSave prop), and a successful split write is followed by the
-   * same enterTransactions call Enter Now uses — Dan's screenshot's own
-   * "one tap does both" behavior. The enter call only fires after the split
-   * write succeeds, and only actually changes anything if the row is still
-   * pending (enterTransactions' own `is('entered_at', null)` no-ops
-   * otherwise) — never a second, redundant enter on an already-entered row.
+   * SplitEditor's own onSave (Wave C Task 4; whole-row save 2026-08-25) —
+   * one Save persists everything the edit session shows, Dan's "edit all
+   * figures at one time — that is how YNAB works":
+   *
+   *   * legs present: ONE replaceSplits call carrying the legs AND the edit
+   *     row's own fields as the parent patch (migration 0045's atomic RPC —
+   *     the 0042 triggers refuse a total change and a leg change as two
+   *     separate writes in either order, so atomicity is the only shape
+   *     that can honor "save refuses only when the splits don't reconcile
+   *     to $0" while the total itself is being edited);
+   *   * zero legs: an unsplit, then the ordinary save of what the edit row
+   *     shows (unsplitTransaction, then updateLedgerTransaction — in that
+   *     order, since the plain update refuses amount/category changes while
+   *     legs still exist). Not atomic, deliberately: the gap state (unsplit
+   *     row, fields unsaved) is visible, ordinary, and retryable — the
+   *     error stays on screen and Save remains armed, and re-running the
+   *     unsplit on an already-unsplit row is the RPC's documented no-op.
+   *
+   * Either way, when the row is PENDING the Save button already read
+   * "Approve" (SplitEditor's own approveOnSave prop), and a successful
+   * write is followed by the same enterTransactions call Enter Now uses —
+   * Dan's screenshot's own "one tap does both" behavior. The enter call
+   * only fires after the write succeeds, and only actually changes anything
+   * if the row is still pending (enterTransactions' own
+   * `is('entered_at', null)` no-ops otherwise) — never a second, redundant
+   * enter on an already-entered row.
    */
   function saveSplit(row: LedgerTxnRow, legs: SplitLegInput[]) {
     setError(null)
+    if (legs.length === 0) {
+      const input = editRowUpdateInput(row)
+      if ('error' in input) { setError(input.error); return }
+      start(async () => {
+        const unsplit = await unsplitTransaction(row.id)
+        if ('error' in unsplit) { setError(unsplit.error); return }
+        const result = await updateLedgerTransaction(input)
+        if ('error' in result) { setError(result.error); return }
+        await finishSplitSave(row)
+      })
+      return
+    }
+    const core = editRowCore()
+    if ('error' in core) { setError(core.error); return }
     start(async () => {
-      const result = legs.length === 0 ? await unsplitTransaction(row.id) : await replaceSplits(row.id, legs)
+      const result = await replaceSplits(row.id, legs, {
+        date: core.date,
+        payee: core.payee,
+        memo: core.memo,
+        showId: core.showId,
+        amountCents: core.amountCents,
+      })
       if ('error' in result) { setError(result.error); return }
-      if (row.entered_at === null) {
-        const entered = await enterTransactions([row.id])
-        if ('error' in entered) { setError(`Split saved — approving failed: ${entered.error}`); return }
-      }
-      setSplitEditorOpen(false)
-      setPendingSplitSeed(null)
-      setEditingId(null)
-      router.refresh()
+      await finishSplitSave(row)
     })
+  }
+
+  /** The shared tail of both saveSplit branches: approve-if-pending, then
+   *  close the editor and refresh. Sets the error and leaves the editor
+   *  open when approving fails — the split itself is already saved. */
+  async function finishSplitSave(row: LedgerTxnRow) {
+    if (row.entered_at === null) {
+      const entered = await enterTransactions([row.id])
+      if ('error' in entered) { setError(`Split saved — approving failed: ${entered.error}`); return }
+    }
+    setSplitEditorOpen(false)
+    setPendingSplitSeed(null)
+    setEditingId(null)
+    router.refresh()
   }
 
   /** Enter Now (one id) and Enter All (the whole pending queue) share the
@@ -1399,6 +1465,22 @@ export default function MoneyRegister({
     // true for (see LedgerTxnRow's own `legs` doc comment).
     const isSplit = t.legs.length > 0
 
+    // The IN-PROGRESS amount the edit boxes hold, parsed through the same
+    // brain the saves use (2026-08-25 — Dan hit the old behavior live on
+    // the 3/5 merge: legs balanced against the total he'd just typed read
+    // as "−$400.00 remaining" because the editor validated against the
+    // SAVED amount instead; "the only time YNAB won't let me save is when
+    // the splits don't reconcile to $0"). null while the boxes are
+    // blank/invalid — SplitEditor then disables Save with the boxes' own
+    // message. direction falls back to the row's saved sign in that state
+    // so the legs' amount boxes don't jump sides mid-keystroke on a
+    // momentarily-empty box.
+    const editBoxes = parseAmountBoxes(editOutflowAmount, editInflowAmount)
+    const editAmountCents = 'error' in editBoxes ? null : editBoxes.amountCents
+    const editDirection: LedgerDirection = 'error' in editBoxes
+      ? (t.amount_cents < 0 ? 'outflow' : 'inflow')
+      : editBoxes.direction
+
     // The edit row's own CategoryPicker gains the pinned "Split…" row (Wave
     // C Task 4) — picking it never reaches setEditCategoryId at all: it
     // seeds a fresh 2-leg draft from whatever category was selected the
@@ -1415,9 +1497,13 @@ export default function MoneyRegister({
         disabled={pending}
         onChange={(v) => {
           if (v === SPLIT_SENTINEL) {
+            // Seed leg 1 at the amount the boxes CURRENTLY hold (falling
+            // back to the saved amount while they're blank/invalid) — Dan's
+            // own 3/5 flow types the merged total first and picks Split…
+            // second, and the seed should read what he just typed.
             setPendingSplitSeed(freshSplitSeed(
               editCategoryId === TRANSFER_SENTINEL ? null : (editCategoryId || null),
-              t.amount_cents,
+              editAmountCents ?? t.amount_cents,
             ))
             setSplitEditorOpen(true)
             return
@@ -1557,15 +1643,16 @@ export default function MoneyRegister({
     )
 
     // SplitEditor replaces the second line entirely while open — its own
-    // Save/Approve and Cancel own that job instead (see its own doc
-    // comment for why the two can't coexist: this row's own Save would
-    // otherwise silently discard whatever legs are mid-edit, or try to
-    // post an amount the DB trigger refuses while legs exist). Cancel here
-    // is SplitEditor's own — it collapses the editor only, never the whole
-    // edit row (cancelEdit, by contrast, closes both).
+    // Save/Approve and Cancel own that job instead, and that Save persists
+    // the WHOLE edit session (the row's fields via saveSplit's parent
+    // patch, plus the legs — one save, YNAB's own behavior), so nothing
+    // typed above it is ever discarded. Cancel here is SplitEditor's own —
+    // it collapses the editor only, never the whole edit row (cancelEdit,
+    // by contrast, closes both).
     const bottomBlock = splitEditorOpen ? (
       <SplitEditor
-        parentAmountCents={t.amount_cents}
+        parentAmountCents={editAmountCents}
+        direction={editDirection}
         seedLegs={t.legs.length > 0
           ? t.legs.map((l) => ({ categoryId: l.categoryId, amountCents: l.amountCents, note: l.note }))
           : (pendingSplitSeed ?? [])}
