@@ -2355,7 +2355,18 @@ export default function MoneyRegister({
         </div>
       )}
 
-      {transactions.length === 0 ? (
+      {nonPending.length === 0 ? (
+        // Gated on `nonPending`, not `transactions` (M4, Wave C final
+        // review): the body below renders `nonPending`
+        // (desktop/uncleared/dateGroups all derive from it), not the raw
+        // `transactions` prop — a register where every row is still pending
+        // has `transactions.length > 0` but nothing in the set this branch
+        // actually draws from, so the old check showed the column headers
+        // over an empty table instead of this message. The Pending section
+        // above (pendingQueue) renders unconditionally either way, so a
+        // fully-pending register still shows its queue, just with this
+        // empty-state message below it instead of a header with nothing
+        // under it.
         <p className="text-muted border-l-2 border-line pl-4 py-1">
           {uncategorizedOnly ? 'Nothing uncategorized.' : 'No transactions yet.'}
         </p>
