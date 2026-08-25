@@ -25,7 +25,12 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   const supabase = await createClient()
   const today = todayInChicago()
 
-  const [{ data: invoice, error }, { data: settings }, { data: linkedShows }, { data: depositTxns }] = await Promise.all([
+  const [
+    { data: invoice, error },
+    { data: settings },
+    { data: linkedShows },
+    { data: depositTxns, error: depositLinkError },
+  ] = await Promise.all([
     supabase
       .from('invoices')
       .select(
@@ -153,34 +158,81 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
       : null
 
   // Candidates for "Link a payment": recent deposits not already spoken for.
-  // PostgREST has no clean NOT IN subquery, so this reads the newest deposits
-  // plus both link tables' transaction ids and filters in memory — the same
-  // fetch-then-filter idiom the rest of /money uses. Fail CLOSED: if any of
-  // the three reads errors, the taken-set would be incomplete and the panel
-  // would offer a deposit that is already linked, so offer nothing instead.
-  const canLinkPayment = !deposit && (inv.status === 'sent' || inv.status === 'paid')
+  //
+  // Pending rows are excluded. A PENDING row (entered_at null, migration
+  // 0042) is an imported bank line he has not accepted into his books yet —
+  // it counts in no category, no report, no budget and no forecast, all of
+  // which drop entered_at === null. Settling an invoice against one would
+  // mark it paid off money that is not in the books, and rejectTransaction
+  // would then refuse to reject the row because it is "linked". Every other
+  // consumer filters these out; acceptIncomeMatch refuses them too.
+  //
+  // PostgREST has no clean NOT IN subquery, so this reads the newest
+  // qualifying deposits and THEN asks both link tables which of THOSE ids
+  // are already spoken for — the same fetch-then-filter idiom the rest of
+  // /money uses, sequenced so the link reads can be scoped by .in() to the
+  // candidate ids. Scoping is both cheaper and exact: a plain unranged
+  // select is capped at 1000 rows by PostgREST with no error, so a
+  // whole-table link read could silently truncate and leave an already
+  // linked deposit on offer.
+  //
+  // The window is 200 rows and the 40-row display slice is taken AFTER the
+  // linked ones are removed: the deposit this panel exists to reach is by
+  // definition one that never auto-matched, so a run of already-linked
+  // deposits must not be able to push it out of reach. date+id ordering
+  // (the analogue of the (created_at, id) ordering used elsewhere) keeps
+  // that window's boundary deterministic.
+  //
+  // Fail CLOSED: if any read errors the taken-set would be incomplete and
+  // the panel would offer a deposit that is already linked, so offer
+  // nothing instead.
+  const canLinkPayment =
+    !depositLinkError && !deposit && (inv.status === 'sent' || inv.status === 'paid')
   let paymentCandidates: PaymentCandidate[] = []
   if (canLinkPayment) {
-    const [recentRes, invLinkRes, expLinkRes] = await Promise.all([
-      supabase
-        .from('ledger_transactions')
-        .select('id, date, payee, amount_cents')
-        .eq('kind', 'income')
-        .gt('amount_cents', 0)
-        .order('date', { ascending: false })
-        .limit(40),
-      supabase.from('ledger_transaction_invoices').select('transaction_id'),
-      supabase.from('ledger_transaction_expenses').select('transaction_id'),
-    ])
-    if (!recentRes.error && !invLinkRes.error && !expLinkRes.error) {
-      const taken = new Set<string>([
-        ...((invLinkRes.data ?? []) as { transaction_id: string }[]).map((r) => r.transaction_id),
-        ...((expLinkRes.data ?? []) as { transaction_id: string }[]).map((r) => r.transaction_id),
+    const recentRes = await supabase
+      .from('ledger_transactions')
+      .select('id, date, payee, amount_cents')
+      .eq('kind', 'income')
+      .gt('amount_cents', 0)
+      .not('entered_at', 'is', null)
+      .order('date', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(200)
+    const recent = (recentRes.data ?? []) as {
+      id: string; date: string; payee: string; amount_cents: number
+    }[]
+    const candidateIds = recent.map((t) => t.id)
+
+    // null means "could not find out" — see the fail-closed note above.
+    let taken: Set<string> | null = new Set<string>()
+    if (candidateIds.length > 0) {
+      const [invLinkRes, expLinkRes] = await Promise.all([
+        supabase
+          .from('ledger_transaction_invoices')
+          .select('transaction_id')
+          .in('transaction_id', candidateIds),
+        supabase
+          .from('ledger_transaction_expenses')
+          .select('transaction_id')
+          .in('transaction_id', candidateIds),
       ])
-      paymentCandidates = ((recentRes.data ?? []) as {
-        id: string; date: string; payee: string; amount_cents: number
-      }[])
-        .filter((t) => !taken.has(t.id))
+      taken =
+        invLinkRes.error || expLinkRes.error
+          ? null
+          : new Set<string>([
+              ...((invLinkRes.data ?? []) as { transaction_id: string }[]).map((r) => r.transaction_id),
+              ...((expLinkRes.data ?? []) as { transaction_id: string }[]).map((r) => r.transaction_id),
+            ])
+    }
+
+    if (!recentRes.error && taken) {
+      // Aliased because `taken` is a let: TypeScript's narrowing to non-null
+      // does not survive into the callback below.
+      const takenSet = taken
+      paymentCandidates = recent
+        .filter((t) => !takenSet.has(t.id))
+        .slice(0, 40)
         .map((t) => ({ id: t.id, date: t.date, payee: t.payee, amountCents: t.amount_cents }))
     }
   }

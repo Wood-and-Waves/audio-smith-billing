@@ -75,7 +75,7 @@ export default function LinkPaymentPanel({
 
       {candidates.length === 0 ? (
         <p className="text-sm text-muted">
-          No unlinked deposits to choose from. Import or add the deposit on the ledger first.
+          No unlinked deposits in your recent bank rows.
         </p>
       ) : (
         <ul className="space-y-1">

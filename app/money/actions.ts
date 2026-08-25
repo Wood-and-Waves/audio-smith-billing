@@ -764,7 +764,7 @@ export async function acceptIncomeMatch(input: {
 
   const { data: txn } = await supabase
     .from('ledger_transactions')
-    .select('id, date, amount_cents, kind, payee, show_id')
+    .select('id, date, amount_cents, kind, payee, show_id, entered_at')
     .eq('id', input.transactionId)
     .maybeSingle()
   if (!txn) return { error: 'That transaction no longer exists.' }
@@ -773,6 +773,16 @@ export async function acceptIncomeMatch(input: {
   // ever pay off.
   if (txn.kind !== 'income' || txn.amount_cents <= 0) {
     return { error: 'Only a deposit can be matched to an invoice.' }
+  }
+  // A PENDING row (entered_at null, migration 0042) is an imported bank line
+  // he has not accepted into his books yet: it counts in no category, no
+  // report and no budget. Settling an invoice against one would mark it paid
+  // off money that is not in the books — and rejectTransaction would then
+  // refuse to reject the row because it is "linked". The Matches queue
+  // already filters these out; this is the boundary that makes it true for
+  // every caller.
+  if (txn.entered_at === null) {
+    return { error: 'That deposit is still pending — enter it on the ledger first.' }
   }
 
   // Neither link table may already name this transaction — a bank row is
