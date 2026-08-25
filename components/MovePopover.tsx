@@ -301,7 +301,9 @@ export default function MovePopover({
       window.removeEventListener('resize', place)
       window.removeEventListener('scroll', place, true)
     }
-  }, [open, isRed, chosenId])
+    // `error` too: a validation line grows the panel a row, and a grown
+    // panel near a viewport edge needs re-clamping just like an opened one.
+  }, [open, isRed, chosenId, error])
 
   useEffect(() => {
     if (!open) return

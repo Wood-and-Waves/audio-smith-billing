@@ -344,55 +344,56 @@ export default function CategoryPicker({
           // Select.tsx's own idiom.
           onMouseDown={(e) => e.preventDefault()}
         >
-          {/* Pinned rows and "+ New Category" are `role="option"` entries in
-              the SAME virtual-focus list as the real categories below
-              (`flatIds`, built above) — `tabIndex={-1}` keeps them out of
-              the browser's own real Tab order (Tab still closes the panel,
-              same as before) so the only way to focus them is the
-              activedescendant traversal the arrows already drive, matching
-              every other row here. */}
-          {pinnedOptions?.map((po) => {
-            const isActive = flatIds[active] === po.id
-            const isSelected = po.id === value
-            return (
-              <button
-                key={po.id}
-                type="button"
-                id={`${listboxId}-${po.id}`}
-                role="option"
-                aria-selected={isSelected}
-                tabIndex={-1}
-                onMouseEnter={() => setActive(flatIds.indexOf(po.id))}
-                onClick={() => pick(po.id)}
-                className={cn(
-                  'flex w-full items-center justify-between gap-2 border-b border-line px-3 py-2 text-left text-sm text-muted hover:bg-accent-wash hover:text-ink',
-                  isActive && 'bg-accent-wash',
-                  isSelected && 'font-semibold text-ink',
-                )}
-              >
-                <span>{po.label}</span>
-                {isSelected && <span className="h-2 w-2 shrink-0 bg-accent" aria-hidden />}
-              </button>
-            )
-          })}
-          <Link
-            ref={newCategoryRef}
-            href="/money/categories"
-            id={`${listboxId}-${NEW_CATEGORY_ID}`}
-            role="option"
-            aria-selected={false}
-            tabIndex={-1}
-            onMouseEnter={() => setActive(flatIds.indexOf(NEW_CATEGORY_ID))}
-            onClick={() => setOpen(false)}
-            className={cn(
-              'flex items-center gap-2 border-b border-line px-3 py-2 text-sm font-semibold text-accent hover:opacity-80',
-              flatIds[active] === NEW_CATEGORY_ID && 'bg-accent-wash',
-            )}
-          >
-            ＋ New Category
-          </Link>
+
 
           <div id={listboxId} role="listbox" aria-label={ariaLabel}>
+            {/* Pinned rows and "+ New Category" are `role="option"` entries in
+                the SAME virtual-focus list as the real categories below
+                (`flatIds`, built above) — `tabIndex={-1}` keeps them out of
+                the browser's own real Tab order (Tab still closes the panel,
+                same as before) so the only way to focus them is the
+                activedescendant traversal the arrows already drive, matching
+                every other row here. */}
+            {pinnedOptions?.map((po) => {
+              const isActive = flatIds[active] === po.id
+              const isSelected = po.id === value
+              return (
+                <button
+                  key={po.id}
+                  type="button"
+                  id={`${listboxId}-${po.id}`}
+                  role="option"
+                  aria-selected={isSelected}
+                  tabIndex={-1}
+                  onMouseEnter={() => setActive(flatIds.indexOf(po.id))}
+                  onClick={() => pick(po.id)}
+                  className={cn(
+                    'flex w-full items-center justify-between gap-2 border-b border-line px-3 py-2 text-left text-sm text-muted hover:bg-accent-wash hover:text-ink',
+                    isActive && 'bg-accent-wash',
+                    isSelected && 'font-semibold text-ink',
+                  )}
+                >
+                  <span>{po.label}</span>
+                  {isSelected && <span className="h-2 w-2 shrink-0 bg-accent" aria-hidden />}
+                </button>
+              )
+            })}
+            <Link
+              ref={newCategoryRef}
+              href="/money/categories"
+              id={`${listboxId}-${NEW_CATEGORY_ID}`}
+              role="option"
+              aria-selected={false}
+              tabIndex={-1}
+              onMouseEnter={() => setActive(flatIds.indexOf(NEW_CATEGORY_ID))}
+              onClick={() => setOpen(false)}
+              className={cn(
+                'flex items-center gap-2 border-b border-line px-3 py-2 text-sm font-semibold text-accent hover:opacity-80',
+                flatIds[active] === NEW_CATEGORY_ID && 'bg-accent-wash',
+              )}
+            >
+              ＋ New Category
+            </Link>
             {selected && (
               <div>
                 <div className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-wider text-muted">
