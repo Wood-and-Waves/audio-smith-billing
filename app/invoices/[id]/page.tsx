@@ -12,6 +12,7 @@ import SendReminderButton from '@/components/SendReminderButton'
 import MarkPaidButton from '@/components/MarkPaidButton'
 import DeleteDraftInvoiceButton from '@/components/DeleteDraftInvoiceButton'
 import InvoiceHoursToggle from '@/components/InvoiceHoursToggle'
+import LinkPaymentPanel, { type PaymentCandidate } from '@/components/LinkPaymentPanel'
 import { signedReceiptUrls } from '@/app/expenses/actions'
 import type { ExpenseCategory } from '@/lib/expenses'
 import type { BackupSnapshot } from '@/lib/backupSnapshot'
@@ -150,6 +151,39 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           invoiceCount: linkInvoiceCount,
         })
       : null
+
+  // Candidates for "Link a payment": recent deposits not already spoken for.
+  // PostgREST has no clean NOT IN subquery, so this reads the newest deposits
+  // plus both link tables' transaction ids and filters in memory — the same
+  // fetch-then-filter idiom the rest of /money uses. Fail CLOSED: if any of
+  // the three reads errors, the taken-set would be incomplete and the panel
+  // would offer a deposit that is already linked, so offer nothing instead.
+  const canLinkPayment = !deposit && (inv.status === 'sent' || inv.status === 'paid')
+  let paymentCandidates: PaymentCandidate[] = []
+  if (canLinkPayment) {
+    const [recentRes, invLinkRes, expLinkRes] = await Promise.all([
+      supabase
+        .from('ledger_transactions')
+        .select('id, date, payee, amount_cents')
+        .eq('kind', 'income')
+        .gt('amount_cents', 0)
+        .order('date', { ascending: false })
+        .limit(40),
+      supabase.from('ledger_transaction_invoices').select('transaction_id'),
+      supabase.from('ledger_transaction_expenses').select('transaction_id'),
+    ])
+    if (!recentRes.error && !invLinkRes.error && !expLinkRes.error) {
+      const taken = new Set<string>([
+        ...((invLinkRes.data ?? []) as { transaction_id: string }[]).map((r) => r.transaction_id),
+        ...((expLinkRes.data ?? []) as { transaction_id: string }[]).map((r) => r.transaction_id),
+      ])
+      paymentCandidates = ((recentRes.data ?? []) as {
+        id: string; date: string; payee: string; amount_cents: number
+      }[])
+        .filter((t) => !taken.has(t.id))
+        .map((t) => ({ id: t.id, date: t.date, payee: t.payee, amountCents: t.amount_cents }))
+    }
+  }
 
   // Fetched here, not by the PDF renderer: letting it pull a dozen remote URLs
   // would serialise a dozen round trips inside a function with a timeout — the
@@ -293,6 +327,15 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           </Link>
         </div>
       </div>
+
+      {canLinkPayment && (
+        <LinkPaymentPanel
+          invoiceId={inv.id}
+          invoiceNumber={inv.number}
+          totalCents={inv.total_cents}
+          candidates={paymentCandidates}
+        />
+      )}
 
       {/* The email panel lives on its OWN full-width row, not in the action
           group above. Opened, it expands into a full-width card, and a card is
