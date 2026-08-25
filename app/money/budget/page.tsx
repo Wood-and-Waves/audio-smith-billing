@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { todayInChicago, addMonths, monthLabel } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
 import { redoTarget, isNewer, isNewerUndone } from '@/lib/budgetMoves'
+import { autoAssignBatchLabel } from '@/lib/budgetAutoAssign'
 import { FIRST_BUDGET_MONTH, MAX_MONTHS_AHEAD } from '@/lib/budget'
 import { assembleBudget, type RawMoveRow } from './data'
 import AppShell from '@/components/AppShell'
@@ -220,9 +221,16 @@ export default async function MoneyBudgetPage({
   // button's title never says anything the list itself wouldn't. `null`
   // when there is nothing to undo — BudgetHistory falls back to the plain
   // "Undo" label in that case.
-  const headMoveLabel = newestActiveMoveRow
-    ? `${formatUSD(newestActiveMoveRow.amount_cents)} · ${categoryDisplayName(newestActiveMoveRow.from_category_id)} → ${categoryDisplayName(newestActiveMoveRow.to_category_id)} · ${monthLabel(newestActiveMoveRow.month.slice(0, 7))}`
-    : null
+  const headMoveLabel = (() => {
+    if (!newestActiveMoveRow) return null
+    if (newestActiveMoveRow.batch_id !== null) {
+      const batch = moveRows.filter(
+        (m) => m.batch_id === newestActiveMoveRow.batch_id && m.undone_at === null,
+      )
+      return autoAssignBatchLabel(batch.length, batch.reduce((s, m) => s + m.amount_cents, 0))
+    }
+    return `${formatUSD(newestActiveMoveRow.amount_cents)} · ${categoryDisplayName(newestActiveMoveRow.from_category_id)} → ${categoryDisplayName(newestActiveMoveRow.to_category_id)} · ${monthLabel(newestActiveMoveRow.month.slice(0, 7))}`
+  })()
 
   const current = months.get(month)!
 

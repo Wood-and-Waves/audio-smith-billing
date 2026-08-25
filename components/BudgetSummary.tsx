@@ -1,6 +1,7 @@
 import { monthLabel } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
 import type { MonthBudget } from '@/lib/budget'
+import AutoAssignButton from './AutoAssignButton'
 
 /**
  * The right-hand month summary, Dan's own order: Left Over from Last Month,
@@ -47,6 +48,8 @@ export default function BudgetSummary({ month }: { month: MonthBudget }) {
               <dd className="tabular text-right">{formatUSD(month.underfundedCents)}</dd>
             </div>
           </dl>
+
+          {month.underfundedCents > 0 && <AutoAssignButton month={month.month} underfundedCents={month.underfundedCents} />}
         </>
       )}
     </div>
