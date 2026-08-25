@@ -97,10 +97,13 @@ was the danger). 2026-08-25: Dan chose the sanctioned cleanup — merge the
 two rows into the bank's one −$2,912.60 line, then split it Owner
 Investment $2,512.60 / Temporary Transfer $400.00, mirroring YNAB's own
 split row; parity re-run after.
-Residuals: the SplitEditor validates legs against the row's SAVED amount, so
-typing a new amount and opening Split… in the same edit shows a phantom
-remainder (Dan hit this on the 3/5 merge — fix: use the in-progress amount
-or refuse with "save the amount change first"); leg display order is arbitrary within a save (single-statement RPC = one timestamp, uuid tiebreak — an ordinal column is the fix); the
+2026-08-25 follow-up (shipped on Dan's "edit all figures at one time —
+that is how YNAB works", after he hit the phantom "−$400.00 remaining" on
+the 3/5 merge): migration 0045 gave replace_transaction_splits an optional
+parent patch, the SplitEditor validates against the amount the edit boxes
+HOLD, and the split save persists the whole edit session (fields + legs)
+in one atomic RPC call — including changing an already-split row's total.
+Residuals: leg display order is arbitrary within a save (single-statement RPC = one timestamp, uuid tiebreak — an ordinal column is the fix); the
 SplitEditor's remainder line could show per-leg deltas; per-leg payees out; a reconciled-splits carve-out (splitting moves no
 money, so the reconciled lock could permit it the way categorization is
 permitted) is a deliberate open decision — today reconciled rows refuse

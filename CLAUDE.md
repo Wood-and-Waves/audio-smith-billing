@@ -301,11 +301,20 @@ status.
   (`ledger_import_rejections`, consulted by the import's dedupe), delete
   second. Reconcile refuses while pending rows sit at or before the
   statement date.
-- Split parents refuse category and amount edits everywhere
-  (`This is a split — edit its legs.`); payee memory skips them entirely;
-  the Pending section's queue is its OWN unfiltered prop — the page's
-  display filter must never narrow it. Reconciled rows refuse splits
-  server-side (no carve-out yet — a deliberate open decision, BACKLOG);
+- Split parents refuse category edits everywhere, and amount edits on
+  every PLAIN path (`This is a split — edit its legs.`) — the ONE
+  sanctioned amount edit is the split save's own parent patch (0045):
+  replace_transaction_splits deletes old legs, patches the parent while
+  the row is momentarily unsplit, inserts new legs, and the deferred
+  trigger validates the final total against the final leg set at commit.
+  That is what lets Dan edit all figures at one time, YNAB-style — the
+  SplitEditor validates against the amount the edit boxes HOLD
+  (parseAmountBoxes, the one box-parsing brain add/saveEdit/saveSplit
+  share), and one Save persists fields + legs together. Payee memory
+  skips split parents entirely; the Pending section's queue is its OWN
+  unfiltered prop — the page's display filter must never narrow it.
+  Reconciled rows refuse splits server-side (no carve-out yet — a
+  deliberate open decision, BACKLOG);
   the 3/5 $400 hand-split was deliberately collapsed on 2026-08-25 at
   Dan's request: merged to the bank's one −$2,912.60 line, then split
   Owner Investment $2,512.60 / Temporary Transfer $400.00 to mirror
