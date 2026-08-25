@@ -34,6 +34,18 @@
 // (renamed, regrouped, re-ticked) is not a transition — nothing about the
 // budget's arithmetic changes on that save, so re-litigating its history
 // every time it's touched would refuse saves that do nothing wrong.
+//
+// Wave C final review (I3): `transactions` above reads ledger_transactions.
+// category_id alone, which is exactly the column a split parent's own
+// category_id is forced to null the instant it has legs (migration 0042).
+// A category referenced ONLY through split legs — never as a plain row's
+// category_id — used to pass this guard's "has transactions" check clean,
+// so flipping it to 'income' silently re-read every leg's own activity as
+// Ready to Assign, the identical hazard this file's header comment already
+// names for a plain transaction, just reached through a second table.
+// `splits` below closes that: the same fail-closed, error-first read as
+// moves/targets/transactions, checked last so the three original cases keep
+// their exact existing precedence over it.
 
 export const INCOME_ROLE_CHANGE_REFUSAL =
   "Move this category's assigned amounts, its target, and its " +
@@ -60,12 +72,23 @@ type RowsResult = { data: { id: string }[] | null; error: { message: string } | 
  * with no moves and no target at all — exactly the shape migration 0041's
  * eight restored categories are about to be in, carrying transactions
  * before they carry an assignment.
+ *
+ * `splits` covers the same hazard one table over (I3, Wave C final review):
+ * a category named ONLY by ledger_transaction_splits rows (a split leg,
+ * never a plain transaction's own category_id, which a split parent has
+ * forced to null) is otherwise invisible to `transactions` above, so
+ * without this fourth read a legs-only category could flip to 'income'
+ * with every one of `moves`/`targets`/`transactions` legitimately empty.
+ * Checked LAST, after the other three, so none of their existing precedence
+ * or messages change for a category this read would never have caught
+ * anyway.
  */
 export function decideIncomeRoleChange(
   currentRole: 'spending' | 'income',
   moves: RowsResult,
   targets: RowsResult,
   transactions: RowsResult,
+  splits: RowsResult,
 ): { error: string } | null {
   if (currentRole === 'income') return null
 
@@ -77,6 +100,9 @@ export function decideIncomeRoleChange(
 
   if (transactions.error) return { error: transactions.error.message }
   if (transactions.data && transactions.data.length > 0) return { error: INCOME_ROLE_CHANGE_REFUSAL }
+
+  if (splits.error) return { error: splits.error.message }
+  if (splits.data && splits.data.length > 0) return { error: INCOME_ROLE_CHANGE_REFUSAL }
 
   return null
 }

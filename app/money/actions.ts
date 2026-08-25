@@ -119,13 +119,22 @@ export async function ensureDefaultCategories(): Promise<Fail | { ok: true; seed
  * so a malformed id is refused here rather than trusted to fail safely once
  * it reaches Postgres.
  *
- * All four reads (current role, moves, targets, transactions) run even when
- * the category turns out to already be 'income' — decideIncomeRoleChange
- * short-circuits on that case, but fetching unconditionally keeps this
- * function simple and the query cost is one row each, nowhere near hot.
- * `error` on the current-role read is checked and returned on before
- * touching `current` at all, same fail-closed rule decideIncomeRoleChange
- * itself applies to the other three reads.
+ * All five reads (current role, moves, targets, transactions, splits) run
+ * even when the category turns out to already be 'income' —
+ * decideIncomeRoleChange short-circuits on that case, but fetching
+ * unconditionally keeps this function simple and the query cost is one row
+ * each, nowhere near hot. `error` on the current-role read is checked and
+ * returned on before touching `current` at all, same fail-closed rule
+ * decideIncomeRoleChange itself applies to the other four reads.
+ *
+ * `splits` (I3, Wave C final review) is the same `.limit(1)` EXISTS-shaped
+ * read isSplitParent uses elsewhere in this file, scoped to category_id
+ * instead of transaction_id: a category named only by a split leg — never
+ * by a plain transaction's own category_id, which a split parent has
+ * forced to null (migration 0042) — is invisible to the `transactions` read
+ * above, so without this the guard would wave through a category whose leg
+ * activity would silently start counting as Ready to Assign the instant the
+ * role flips.
  */
 async function incomeRoleChangeAllowed(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -138,6 +147,7 @@ async function incomeRoleChangeAllowed(
     moves,
     targets,
     transactions,
+    splits,
   ] = await Promise.all([
     supabase.from('ledger_categories').select('budget_role').eq('id', categoryId).maybeSingle(),
     supabase
@@ -148,11 +158,12 @@ async function incomeRoleChangeAllowed(
       .limit(1),
     supabase.from('ledger_category_targets').select('id').eq('category_id', categoryId).limit(1),
     supabase.from('ledger_transactions').select('id').eq('category_id', categoryId).limit(1),
+    supabase.from('ledger_transaction_splits').select('id').eq('category_id', categoryId).limit(1),
   ])
   if (currentError) return { error: currentError.message }
   const currentRole = (current?.budget_role === 'income' ? 'income' : 'spending') as 'spending' | 'income'
 
-  return decideIncomeRoleChange(currentRole, moves, targets, transactions)
+  return decideIncomeRoleChange(currentRole, moves, targets, transactions, splits)
 }
 
 /**
