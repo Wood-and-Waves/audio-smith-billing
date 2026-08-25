@@ -306,8 +306,12 @@ status.
   the Pending section's queue is its OWN unfiltered prop — the page's
   display filter must never narrow it. Reconciled rows refuse splits
   server-side (no carve-out yet — a deliberate open decision, BACKLOG);
-  the 3/5 $400 hand-split stays as two bank rows — collapsing it is an
-  optional both-books cleanup, never required.
+  the 3/5 $400 hand-split was deliberately collapsed on 2026-08-25 at
+  Dan's request: merged to the bank's one −$2,912.60 line, then split
+  Owner Investment $2,512.60 / Temporary Transfer $400.00 to mirror
+  YNAB's own split row (the old warning was against splitting WITHOUT
+  merging — that double-counts $400; merge-then-split is the sanctioned
+  path, parity re-run after).
 
 ## Current state (2026-08-24) & where things are written
 

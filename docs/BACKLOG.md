@@ -92,10 +92,15 @@ with tombstones, reconcile refusal, Dan's option-1 balance semantics).
 Migrations 0042-0044. The $400 story ENDED before this wave shipped: prod's
 March 5 already holds two hand-split bank rows (−$2,512.60 / −$400.00) and
 parity reads zero — the final review caught that the drafted "split the 3/5
-row" instruction would have double-counted $400. Do not split it. Optional
-future cleanup: collapse the hand-split into one true split row, changing
-both books deliberately, parity re-run after.
-Residuals: leg display order is arbitrary within a save (single-statement RPC = one timestamp, uuid tiebreak — an ordinal column is the fix); the
+row" instruction would have double-counted $400 (splitting WITHOUT merging
+was the danger). 2026-08-25: Dan chose the sanctioned cleanup — merge the
+two rows into the bank's one −$2,912.60 line, then split it Owner
+Investment $2,512.60 / Temporary Transfer $400.00, mirroring YNAB's own
+split row; parity re-run after.
+Residuals: the SplitEditor validates legs against the row's SAVED amount, so
+typing a new amount and opening Split… in the same edit shows a phantom
+remainder (Dan hit this on the 3/5 merge — fix: use the in-progress amount
+or refuse with "save the amount change first"); leg display order is arbitrary within a save (single-statement RPC = one timestamp, uuid tiebreak — an ordinal column is the fix); the
 SplitEditor's remainder line could show per-leg deltas; per-leg payees out; a reconciled-splits carve-out (splitting moves no
 money, so the reconciled lock could permit it the way categorization is
 permitted) is a deliberate open decision — today reconciled rows refuse
