@@ -27,7 +27,17 @@ type RawLedgerTxnRow = {
 /** Every ledger_transactions row for THIS account — the matcher's own BankRow
  *  candidates (income/expense kind, `linked` computed below) are drawn from
  *  this set, so it has to be complete or a real deposit/charge could be
- *  missing from the queue entirely. */
+ *  missing from the queue entirely.
+ *
+ *  `.not('entered_at', 'is', null)` excludes pending rows (Wave C final
+ *  review, I2): a pending import is an unapproved bank line Dan hasn't
+ *  accepted into his books yet (migration 0042's own `entered_at` null
+ *  means pending). Without this filter one could still be offered here,
+ *  accepted as an invoice payment through acceptIncomeMatch, and marked the
+ *  invoice paid — and then rejectTransaction (the Pending queue's own
+ *  reject) would refuse to delete it as "linked", stranding a row Dan never
+ *  actually entered. A row Dan hasn't accepted into his books cannot pay an
+ *  invoice or settle an expense. */
 async function fetchAllLedgerTxns(
   supabase: Awaited<ReturnType<typeof createClient>>,
   accountId: string,
@@ -39,6 +49,7 @@ async function fetchAllLedgerTxns(
       .from('ledger_transactions')
       .select('id, date, amount_cents, kind, payee')
       .eq('account_id', accountId)
+      .not('entered_at', 'is', null)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
       .range(from, from + PAGE_SIZE - 1)
