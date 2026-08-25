@@ -45,8 +45,13 @@ type RawTxnRow = {
   // transaction tagged to an old show or a since-hidden category still shows
   // its real name in the register — those two lists only exist to populate
   // the Select pickers, and neither is guaranteed to still contain a name
-  // some past transaction points at.
-  category: { name: string } | null
+  // some past transaction points at. grp/budget_role ride along for the same
+  // reason as name (Wave B Task 5): MoneyRegister's deriveKind needs a
+  // category's group and budget role to re-derive kind on save, and a
+  // since-hidden category (categories can be hidden, never hard-deleted —
+  // see /money/categories) is exactly the case where that lookup can't go
+  // through the not-hidden `categories` list below either.
+  category: { name: string; grp: string; budget_role: string } | null
   show: { name: string } | null
 }
 
@@ -61,7 +66,7 @@ async function fetchAllTransactions(
       .from('ledger_transactions')
       .select(`id, date, amount_cents, kind, category_id, show_id, payee, memo, cleared, created_at,
                 receipt_path, receipt_original,
-                category:ledger_categories(name), show:shows(name)`)
+                category:ledger_categories(name, grp, budget_role), show:shows(name)`)
       .eq('account_id', accountId)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
@@ -354,16 +359,19 @@ export default async function MoneyPage({
 
   const { data: categoryRows, error: categoryError } = await supabase
     .from('ledger_categories')
-    .select('id, name, grp, sort')
+    .select('id, name, grp, sort, budget_role')
     .eq('hidden', false)
     .order('grp', { ascending: true })
     .order('sort', { ascending: true })
   if (categoryError) return <LoadError message={categoryError.message} />
 
-  // grp rides along for MoneyRegister's "Group: Name" category cell — this
-  // query already selected it (below) for no reason beyond ordering until
-  // now.
-  const categories: CategoryOption[] = (categoryRows ?? []).map((c) => ({ id: c.id, name: c.name, grp: c.grp }))
+  // grp rides along for MoneyRegister's "Group: Name" category cell; both it
+  // and budget_role also feed MoneyRegister's deriveKind (Wave B Task 5) —
+  // this query already selected grp (below) for no reason beyond ordering
+  // until now, and now selects budget_role for the same reason.
+  const categories: CategoryOption[] = (categoryRows ?? []).map((c) => ({
+    id: c.id, name: c.name, grp: c.grp, budgetRole: c.budget_role as 'spending' | 'income',
+  }))
 
   // For the Add row's show tag picker only — capped, and ordered by however
   // recently the show was created, not by its own dates. A transaction tagged
@@ -598,6 +606,11 @@ export default async function MoneyPage({
     kind: t.kind,
     category_id: t.category_id,
     categoryName: t.category?.name ?? null,
+    // deriveKind's own fallback for a since-hidden category (see RawTxnRow's
+    // own comment above) — undefined-vs-null doesn't matter here since
+    // t.category is either the whole join or null, never partial.
+    categoryGrp: t.category?.grp ?? null,
+    categoryBudgetRole: t.category ? (t.category.budget_role === 'income' ? 'income' : 'spending') : null,
     show_id: t.show_id,
     showName: t.show?.name ?? null,
     payee: t.payee,

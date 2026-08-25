@@ -5,7 +5,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { validateTxnShape, isSaneLedgerDate, VALID_KINDS } from '../../lib/ledgerRules.ts'
+import { validateTxnShape, isSaneLedgerDate, deriveKind, VALID_KINDS } from '../../lib/ledgerRules.ts'
 
 test('VALID_KINDS is the four ledger kinds', () => {
   assert.deepEqual(VALID_KINDS, ['income', 'expense', 'owner_pay', 'transfer'])
@@ -98,4 +98,73 @@ test('isSaneLedgerDate rejects a year one outside either bound', () => {
 // and a real day — just two centuries away from what anyone meant to type.
 test('isSaneLedgerDate rejects a plausible-looking typo year', () => {
   assert.equal(isSaneLedgerDate('0206-05-01'), false)
+})
+
+// deriveKind — the kind dropdown's replacement (Wave B Task 5). Every test
+// below is one cell of the task's own derivation table, same row order the
+// helper's own doc comment reads top to bottom.
+
+const spending = { budgetRole: 'spending' as const, grp: 'Bills' }
+const income = { budgetRole: 'income' as const, grp: 'Income' }
+const ownerGroup = { budgetRole: 'spending' as const, grp: 'Owner Transactions' }
+
+test('Payment/Transfer derives transfer regardless of direction', () => {
+  assert.deepEqual(deriveKind('payment-transfer', 'inflow'), { kind: 'transfer' })
+  assert.deepEqual(deriveKind('payment-transfer', 'outflow'), { kind: 'transfer' })
+})
+
+test('an income-role category on an inflow derives income', () => {
+  assert.deepEqual(deriveKind(income, 'inflow'), { kind: 'income' })
+})
+
+test('an income-role category on an outflow is refused', () => {
+  assert.deepEqual(
+    deriveKind(income, 'outflow'),
+    { error: 'Income categories take inflows.' },
+  )
+})
+
+test('the Owner Transactions group on an outflow derives owner_pay', () => {
+  assert.deepEqual(deriveKind(ownerGroup, 'outflow'), { kind: 'owner_pay' })
+})
+
+test('the Owner Transactions group on an inflow is refused', () => {
+  assert.deepEqual(
+    deriveKind(ownerGroup, 'inflow'),
+    { error: 'Money in from you is a transfer — use Payment/Transfer.' },
+  )
+})
+
+test('any other spending category on an inflow derives income (a refund, category carried)', () => {
+  assert.deepEqual(deriveKind(spending, 'inflow'), { kind: 'income' })
+})
+
+test('any other spending category on an outflow derives expense', () => {
+  assert.deepEqual(deriveKind(spending, 'outflow'), { kind: 'expense' })
+})
+
+test('no category (Uncategorized) on an inflow derives income', () => {
+  assert.deepEqual(deriveKind(null, 'inflow'), { kind: 'income' })
+})
+
+test('no category (Uncategorized) on an outflow derives expense', () => {
+  assert.deepEqual(deriveKind(null, 'outflow'), { kind: 'expense' })
+})
+
+// The group match is by NAME (a deliberate, documented exception — see the
+// helper's own comment) — a spending category that merely happens to share
+// the same grp string, regardless of case or surrounding text, is what
+// actually trips the owner_pay/refusal branches; this pins that it is an
+// exact match, not a substring or case-insensitive one, so a group like
+// "owner transactions" or "Owner Transactions HQ" does NOT accidentally
+// qualify.
+test('the Owner Transactions match is exact, not case-insensitive or a substring', () => {
+  assert.deepEqual(
+    deriveKind({ budgetRole: 'spending', grp: 'owner transactions' }, 'outflow'),
+    { kind: 'expense' },
+  )
+  assert.deepEqual(
+    deriveKind({ budgetRole: 'spending', grp: 'Owner Transactions HQ' }, 'outflow'),
+    { kind: 'expense' },
+  )
 })
