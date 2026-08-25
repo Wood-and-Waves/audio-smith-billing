@@ -45,13 +45,16 @@ type RawTxnRow = {
   // transaction tagged to an old show or a since-hidden category still shows
   // its real name in the register — those two lists only exist to populate
   // the Select pickers, and neither is guaranteed to still contain a name
-  // some past transaction points at. grp/budget_role ride along for the same
-  // reason as name (Wave B Task 5): MoneyRegister's deriveKind needs a
-  // category's group and budget role to re-derive kind on save, and a
-  // since-hidden category (categories can be hidden, never hard-deleted —
-  // see /money/categories) is exactly the case where that lookup can't go
-  // through the not-hidden `categories` list below either.
-  category: { name: string; grp: string; budget_role: string } | null
+  // some past transaction points at. budget_role rides along for the same
+  // reason as name (Wave B Task 5, name-keyed since H1): MoneyRegister's
+  // deriveKind needs a category's own name and budget role to re-derive kind
+  // on save, and a since-hidden category (categories can be hidden, never
+  // hard-deleted — see /money/categories) is exactly the case where that
+  // lookup can't go through the not-hidden `categories` list below either.
+  // No `grp` here (H1 dropped it — deriveKind keys owner_pay on name, not
+  // group; `categories` below still selects its own grp, for the picker's
+  // "Group: Name" display, an unrelated need).
+  category: { name: string; budget_role: string } | null
   show: { name: string } | null
 }
 
@@ -66,7 +69,7 @@ async function fetchAllTransactions(
       .from('ledger_transactions')
       .select(`id, date, amount_cents, kind, category_id, show_id, payee, memo, cleared, created_at,
                 receipt_path, receipt_original,
-                category:ledger_categories(name, grp, budget_role), show:shows(name)`)
+                category:ledger_categories(name, budget_role), show:shows(name)`)
       .eq('account_id', accountId)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
@@ -421,52 +424,63 @@ export default async function MoneyPage({
   // buildBudget's own BudgetTxn list from it (below) needs no second paged
   // query — only the same `.gte(FIRST_BUDGET_MONTH)` filter and the same
   // opening-balance seed row that page's own txns assembly injects.
+  //
+  // M1 (Wave B final review): either fetch failing used to LoadError the
+  // WHOLE register — but this map only feeds CategoryPicker's balance
+  // FIGURES, a decoration on top of the register, not a guard. (Every
+  // ownership/money read elsewhere on this page still fails closed with
+  // LoadError, unchanged — this is the one map that's display-only.) A
+  // transient error here now degrades to an empty map instead: no balance
+  // figures show in the picker, but Dan can still see and edit every
+  // transaction. Nothing sensitive is logged — the error text itself is
+  // simply dropped, the same as it would have been inside LoadError's own
+  // rendered message.
   const { rows: budgetCategoryRows, error: budgetCategoryError } = await fetchAllCategoriesForBudget(supabase)
-  if (budgetCategoryError) return <LoadError message={budgetCategoryError} />
-
   const { rows: moveRows, error: moveError } = await fetchAllBudgetMoves(supabase)
-  if (moveError) return <LoadError message={moveError} />
 
-  const budgetCategories: BudgetCategory[] = budgetCategoryRows.map((c) => ({
-    id: c.id, name: c.name, grp: c.grp, sort: c.sort, hidden: c.hidden,
-    budgetRole: c.budget_role as 'spending' | 'income',
-  }))
-  const budgetMoves: BudgetMove[] = moveRows.map((m) => ({
-    month: m.month.slice(0, 7),
-    fromCategoryId: m.from_category_id,
-    toCategoryId: m.to_category_id,
-    amountCents: m.amount_cents,
-    undoneAt: m.undone_at,
-  }))
-
-  const currentMonth = todayInChicago().slice(0, 7)
-  // The account's opening balance is not a transaction, but it is money that
-  // needs a job just like app/money/budget/page.tsx's own RTA seed — clamped
-  // the exact same way that file's own seedMonth is (see its own comment for
-  // why both ends need the clamp), just against `currentMonth` in place of
-  // that page's navigable `last` (this page never looks past today).
-  const openingMonth = accountRow.opening_date.slice(0, 7)
-  const budgetSeedMonth =
-    openingMonth < OPENING_MONTH ? OPENING_MONTH :
-    openingMonth > currentMonth ? currentMonth :
-    openingMonth
-  const budgetTxns: BudgetTxn[] = [
-    { month: budgetSeedMonth, categoryId: null, amountCents: accountRow.opening_balance_cents },
-    // Same `.gte(FIRST_BUDGET_MONTH)` filter app/money/budget/page.tsx's own
-    // fetchAllBudgetTxns applies at the DB level — applied here in JS
-    // instead, over the SAME paged `allTxns` this page already fetched
-    // above, rather than a second query for rows this page already holds.
-    ...allTxns
-      .filter((t) => t.date >= `${FIRST_BUDGET_MONTH}-01`)
-      .map((t) => ({ month: t.date.slice(0, 7), categoryId: t.category_id, amountCents: t.amount_cents })),
-  ]
-
-  const budget = buildBudget({
-    categories: budgetCategories, moves: budgetMoves, txns: budgetTxns, targets: [],
-    fromMonth: OPENING_MONTH, toMonth: currentMonth,
-  })
   const categoryBalanceCents: Record<string, number> = {}
-  for (const row of budget.get(currentMonth)?.rows ?? []) categoryBalanceCents[row.categoryId] = row.availableCents
+  if (!budgetCategoryError && !moveError) {
+    const budgetCategories: BudgetCategory[] = budgetCategoryRows.map((c) => ({
+      id: c.id, name: c.name, grp: c.grp, sort: c.sort, hidden: c.hidden,
+      budgetRole: c.budget_role as 'spending' | 'income',
+    }))
+    const budgetMoves: BudgetMove[] = moveRows.map((m) => ({
+      month: m.month.slice(0, 7),
+      fromCategoryId: m.from_category_id,
+      toCategoryId: m.to_category_id,
+      amountCents: m.amount_cents,
+      undoneAt: m.undone_at,
+    }))
+
+    const currentMonth = todayInChicago().slice(0, 7)
+    // The account's opening balance is not a transaction, but it is money
+    // that needs a job just like app/money/budget/page.tsx's own RTA seed —
+    // clamped the exact same way that file's own seedMonth is (see its own
+    // comment for why both ends need the clamp), just against
+    // `currentMonth` in place of that page's navigable `last` (this page
+    // never looks past today).
+    const openingMonth = accountRow.opening_date.slice(0, 7)
+    const budgetSeedMonth =
+      openingMonth < OPENING_MONTH ? OPENING_MONTH :
+      openingMonth > currentMonth ? currentMonth :
+      openingMonth
+    const budgetTxns: BudgetTxn[] = [
+      { month: budgetSeedMonth, categoryId: null, amountCents: accountRow.opening_balance_cents },
+      // Same `.gte(FIRST_BUDGET_MONTH)` filter app/money/budget/page.tsx's
+      // own fetchAllBudgetTxns applies at the DB level — applied here in JS
+      // instead, over the SAME paged `allTxns` this page already fetched
+      // above, rather than a second query for rows this page already holds.
+      ...allTxns
+        .filter((t) => t.date >= `${FIRST_BUDGET_MONTH}-01`)
+        .map((t) => ({ month: t.date.slice(0, 7), categoryId: t.category_id, amountCents: t.amount_cents })),
+    ]
+
+    const budget = buildBudget({
+      categories: budgetCategories, moves: budgetMoves, txns: budgetTxns, targets: [],
+      fromMonth: OPENING_MONTH, toMonth: currentMonth,
+    })
+    for (const row of budget.get(currentMonth)?.rows ?? []) categoryBalanceCents[row.categoryId] = row.availableCents
+  }
 
   // Link tables + everything the Matches badge needs — both pages that touch
   // these (this one and app/money/matches/page.tsx) page past 1000 rows for
@@ -605,11 +619,10 @@ export default async function MoneyPage({
     amount_cents: t.amount_cents,
     kind: t.kind,
     category_id: t.category_id,
-    categoryName: t.category?.name ?? null,
     // deriveKind's own fallback for a since-hidden category (see RawTxnRow's
     // own comment above) — undefined-vs-null doesn't matter here since
     // t.category is either the whole join or null, never partial.
-    categoryGrp: t.category?.grp ?? null,
+    categoryName: t.category?.name ?? null,
     categoryBudgetRole: t.category ? (t.category.budget_role === 'income' ? 'income' : 'spending') : null,
     show_id: t.show_id,
     showName: t.show?.name ?? null,
