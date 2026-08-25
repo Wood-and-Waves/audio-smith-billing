@@ -288,8 +288,11 @@ status.
 - **One explosion helper** (`lib/ledgerSplits.ts`): category-reading
   consumers call `explodeForCategories` (budget) or `explodeForReports`
   (kind-aware — P&L); balance-reading consumers NEVER explode and NEVER
-  filter pending. Adding a consumer? It calls the helper or it is
-  balance-shaped; there is no third kind.
+  filter pending. A THIRD kind exists and must be named when adding one:
+  LINK-shaped readers (the invoice matcher, bridge links) match on
+  amount/date/payee — the matcher excludes pending rows (an unaccepted
+  import cannot pay an invoice) and never needs legs. Adding a consumer?
+  Decide which of the three it is, in a comment, before the query.
 - **Pending = `entered_at IS NULL`** — only the OFX importer inserts it;
   the column defaults to now() so a forgotten path is safe-by-construction
   (0044's lesson: reconcile's adjustment predated the column). Pending
@@ -301,7 +304,10 @@ status.
 - Split parents refuse category and amount edits everywhere
   (`This is a split — edit its legs.`); payee memory skips them entirely;
   the Pending section's queue is its OWN unfiltered prop — the page's
-  display filter must never narrow it.
+  display filter must never narrow it. Reconciled rows refuse splits
+  server-side (no carve-out yet — a deliberate open decision, BACKLOG);
+  the 3/5 $400 hand-split stays as two bank rows — collapsing it is an
+  optional both-books cleanup, never required.
 
 ## Current state (2026-08-24) & where things are written
 
