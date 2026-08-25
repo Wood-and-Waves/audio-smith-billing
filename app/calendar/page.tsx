@@ -89,12 +89,27 @@ export default async function CalendarPage({
   // like it FINISHES there — a rounded corner that lies (see
   // lib/showRuns.ts's own note). So: the show ids touching this window,
   // then every day those shows have, whichever month it falls in.
-  const { data: windowRows, error: windowError } = await supabase
-    .from('show_days')
-    .select('show_id')
-    .gte('date', first)
-    .lte('date', last)
+  //
+  // The flights query depends on neither show query, so it goes out
+  // CONCURRENTLY with the first one rather than waiting behind both.
+  const [
+    { data: windowRows, error: windowError },
+    { data: flightRows, error: flightError },
+  ] = await Promise.all([
+    supabase
+      .from('show_days')
+      .select('show_id')
+      .gte('date', first)
+      .lte('date', last),
+    supabase
+      .from('flights')
+      .select('id, flight_no, flight_date, dep_airport, arr_airport, dep_at, arr_at, dep_tz, arr_tz, note')
+      .gte('flight_date', first)
+      .lte('flight_date', last)
+      .order('flight_date'),
+  ])
   if (windowError) return <LoadError message={windowError.message} />
+  if (flightError) return <LoadError message={flightError.message} />
 
   const showIds = [...new Set((windowRows ?? []).map((r) => r.show_id as string))]
 
@@ -115,20 +130,7 @@ export default async function CalendarPage({
     dayRows = data ?? []
   }
 
-  const [
-    { data: flightRows, error: flightError },
-  ] = await Promise.all([
-    supabase
-      .from('flights')
-      .select('id, flight_no, flight_date, dep_airport, arr_airport, dep_at, arr_at, dep_tz, arr_tz, note')
-      .gte('flight_date', first)
-      .lte('flight_date', last)
-      .order('flight_date'),
-  ])
-
-  if (flightError) return <LoadError message={flightError.message} />
-
-  const dayRowsTyped = (dayRows ?? []) as unknown as ShowDayRow[]
+  const dayRowsTyped = dayRows as unknown as ShowDayRow[]
   const flightRowsTyped = (flightRows ?? []) as unknown as FlightRow[]
 
   // Grouped here, server-side, into plain objects keyed by date — a Map

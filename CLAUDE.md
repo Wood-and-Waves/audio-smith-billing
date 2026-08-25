@@ -362,16 +362,20 @@ status.
   helpers live in lib/dates.ts under its UTC-pinning doctrine; nav is SIX
   items; **the grid draws ONE bar per contiguous show run** via
   lib/showRuns.ts — rounded on a true start/finish, square where a run
-  continues into the next week, stacked in lanes, and the feed publishes
-  one VEVENT per run from that SAME helper with an EXCLUSIVE DTEND (0047
-  added the show_id it needs); the calendar page fetches whole shows, not
-  just the days inside the window, so edge runs do not fake a finish). **The feed link lives in SETTINGS, not /calendar** (moved
-  2026-08-22): Regenerate IS revocation with no undo, and Dan has shared his
-  feed with his wife, so an accidental click on a daily page would break her
-  subscription too. Flight times render in EACH airport's own zone, never
-  converted (the boarding-pass convention), with `elapsedLabel` reconciling
-  them — the zone LABEL prints only when the zone is known, because
-  hand-typed times carry none and were stored as Chicago wall time.
+  continues into the next week, laid out a WHOLE MONTH at a time so a run
+  keeps its lane across a week break, and stacked up to `MAX_LANES = 3`
+  lanes; anything past that is not drawn and counts into the cell's "+N
+  more" instead. The feed publishes one VEVENT per run from that SAME
+  helper with an EXCLUSIVE DTEND (0047 added the show_id it needs); the
+  calendar page fetches whole shows, not just the days inside the window,
+  so edge runs do not fake a finish). **The feed link lives in SETTINGS,
+  not /calendar** (moved 2026-08-22): Regenerate IS revocation with no undo,
+  and Dan has shared his feed with his wife, so an accidental click on a
+  daily page would break her subscription too. Flight times render in EACH
+  airport's own zone, never converted (the boarding-pass convention), with
+  `elapsedLabel` reconciling them — the zone LABEL prints only when the
+  zone is known, because hand-typed times carry none and were stored as
+  Chicago wall time.
 - **The ledger is Dan's live books**: YNAB Register backfilled to prod
   2026-08-20 — 328 txns in "Chase Checking" (opening $585.75 @ 2026-01-01,
   ending verified against the bank). Monthly OFX imports adopt the manual

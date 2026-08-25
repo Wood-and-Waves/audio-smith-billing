@@ -7,7 +7,8 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { contiguousRuns, segmentForWeek, layOutWeek, MAX_LANES } from '../../lib/showRuns.ts'
+import { contiguousRuns, segmentForWeek, layOutWeek, layOutMonth, MAX_LANES } from '../../lib/showRuns.ts'
+import { monthGrid, addDays } from '../../lib/dates.ts'
 
 const day = (showId: string, date: string, showName = showId) => ({ showId, showName, date })
 
@@ -116,4 +117,88 @@ test('lane order is stable — identical input gives an identical layout', () =>
   const once = layOutWeek(contiguousRuns(days), W_SEP13).bars
   const twice = layOutWeek(contiguousRuns([...days].reverse()), W_SEP13).bars
   assert.deepEqual(once, twice)
+})
+
+// --- layOutMonth: a run must not step lanes at a week boundary ---------------
+
+// The grid the feature was designed against: Sep 2026 starts on a Tuesday,
+// so week 2 is Sep 13-19 and week 3 is Sep 20-26.
+const SEP = monthGrid('2026-09')
+const W_OF_13 = 2
+const W_OF_20 = 3
+
+const spanDays = (showId: string, showName: string, from: string, to: string) => {
+  const out = []
+  for (let d = from; d <= to; d = addDays(d, 1)) out.push(day(showId, d, showName))
+  return out
+}
+
+test("layOutMonth: Children's Health keeps ONE lane across the 9/19-9/20 break", () => {
+  const runs = contiguousRuns([
+    ...spanDays('bms', 'BMS', '2026-09-13', '2026-09-17'),
+    ...spanDays('chf', 'CHF', '2026-09-17', '2026-09-20'),
+  ])
+
+  // The bug, for the record: per-week greedy puts CHF on lane 1 beside BMS
+  // and then on lane 0 once BMS is gone — the bar steps up a row.
+  assert.equal(layOutWeek(runs, SEP[W_OF_13]).bars.find((b) => b.showName === 'CHF')!.lane, 1)
+  assert.equal(layOutWeek(runs, SEP[W_OF_20]).bars.find((b) => b.showName === 'CHF')!.lane, 0)
+
+  const month = layOutMonth(runs, SEP)
+  const before = month[W_OF_13].bars.find((b) => b.showName === 'CHF')!
+  const after = month[W_OF_20].bars.find((b) => b.showName === 'CHF')!
+  assert.equal(before.lane, after.lane)
+  assert.equal(before.continuesRight, true)
+  assert.equal(after.continuesLeft, true)
+  // BMS is untouched: it never crosses, so it still owns lane 0.
+  assert.equal(month[W_OF_13].bars.find((b) => b.showName === 'BMS')!.lane, 0)
+})
+
+test('layOutMonth: an uncontested run crossing a boundary stays on lane 0', () => {
+  const runs = contiguousRuns(spanDays('a', 'A', '2026-09-17', '2026-09-22'))
+  const month = layOutMonth(runs, SEP)
+  assert.deepEqual(month[W_OF_13].bars.map((b) => b.lane), [0])
+  assert.deepEqual(month[W_OF_20].bars.map((b) => b.lane), [0])
+})
+
+test('layOutMonth: a three-week run holds one lane the whole way', () => {
+  const runs = contiguousRuns([
+    // `early` claims lane 0 in the first week, pushing `long` to lane 1.
+    ...spanDays('early', 'EARLY', '2026-09-07', '2026-09-12'),
+    ...spanDays('long', 'LONG', '2026-09-08', '2026-09-24'),
+    ...spanDays('p', 'P', '2026-09-14', '2026-09-15'),
+  ])
+
+  // Per-week greedy would drop LONG from lane 1 to lane 0 the moment EARLY
+  // finishes — the bar steps DOWN a row mid-booking.
+  assert.equal(layOutWeek(runs, SEP[1]).bars.find((b) => b.showName === 'LONG')!.lane, 1)
+  assert.equal(layOutWeek(runs, SEP[2]).bars.find((b) => b.showName === 'LONG')!.lane, 0)
+
+  const month = layOutMonth(runs, SEP)
+  const lanes = [1, 2, 3].map((w) => month[w].bars.find((b) => b.showName === 'LONG')!.lane)
+  assert.deepEqual(lanes, [1, 1, 1])
+  // P was placed AROUND the pinned lane, not dropped.
+  assert.equal(month[2].bars.find((b) => b.showName === 'P')!.lane, 0)
+})
+
+test('layOutMonth: one entry per week, and a single-week layout matches layOutWeek', () => {
+  const runs = contiguousRuns([
+    ...spanDays('bms', 'BMS', '2026-09-13', '2026-09-17'),
+    ...spanDays('chf', 'CHF', '2026-09-17', '2026-09-19'),
+  ])
+  assert.equal(layOutMonth(runs, SEP).length, SEP.length)
+
+  const solo = layOutMonth(runs, [W_SEP13])
+  assert.equal(solo.length, 1)
+  assert.deepEqual(solo[0], layOutWeek(runs, W_SEP13))
+})
+
+test('layOutMonth: overflow beyond MAX_LANES still counts into overflowByCol', () => {
+  const days = []
+  for (let i = 0; i < MAX_LANES + 1; i++) {
+    days.push(...spanDays(`s${i}`, `S${i}`, '2026-09-14', '2026-09-15'))
+  }
+  const week = layOutMonth(contiguousRuns(days), SEP)[W_OF_13]
+  assert.equal(week.bars.length, MAX_LANES)
+  assert.deepEqual(week.overflowByCol, [0, 1, 1, 0, 0, 0, 0])
 })

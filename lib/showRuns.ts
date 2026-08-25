@@ -152,3 +152,100 @@ export function layOutWeek(
 
   return { bars, overflowByCol }
 }
+
+/**
+ * Every week's bars, laid out in order so a run that crosses a week
+ * boundary KEEPS ITS LANE on the other side. `layOutWeek` alone cannot do
+ * this: it sees one week, so a continuing run competes for lanes afresh
+ * each time and visibly steps up or down a row at the break — which is
+ * exactly what the spanning bar exists to avoid ("it reads as a single
+ * booking flowing across the break").
+ *
+ * A continuing run therefore gets FIRST claim on the lane it already
+ * occupies; everything else is placed greedily around it, in
+ * `contiguousRuns`' own total order. When that lane is somehow taken (only
+ * reachable if two continuing runs claim the same one, which the carry map
+ * prevents), the run falls back to ordinary greedy placement rather than
+ * refusing to draw.
+ */
+export function layOutMonth(
+  runs: ShowRun[],
+  weeks: string[][],
+  maxLanes: number = MAX_LANES,
+): { bars: PlacedBar[]; overflowByCol: number[] }[] {
+  // Run key -> the lane it held in the week just laid out. `showId` alone
+  // would collide for a show with a gap (two runs, two bars); the start
+  // date disambiguates them, and two runs of one show can never share one.
+  let carry = new Map<string, number>()
+  const weeksOut: { bars: PlacedBar[]; overflowByCol: number[] }[] = []
+
+  for (const week of weeks) {
+    const overflowByCol = new Array(week.length).fill(0) as number[]
+    const lanes: boolean[][] = []
+
+    const isFree = (lane: number, seg: BarSegment) => {
+      if (!lanes[lane]) lanes[lane] = new Array(week.length).fill(false)
+      for (let c = seg.startCol; c < seg.startCol + seg.span; c++) {
+        if (lanes[lane][c]) return false
+      }
+      return true
+    }
+    const claim = (lane: number, seg: BarSegment) => {
+      for (let c = seg.startCol; c < seg.startCol + seg.span; c++) lanes[lane][c] = true
+    }
+
+    const touching: { run: ShowRun; seg: BarSegment; key: string }[] = []
+    for (const run of runs) {
+      const seg = segmentForWeek(run, week)
+      if (seg) touching.push({ run, seg, key: `${run.showId}-${run.start}` })
+    }
+
+    // -1 = not placed yet; it stays -1 for a segment that overflows.
+    const laneOf = new Array<number>(touching.length).fill(-1)
+
+    // Pass one: continuing runs reclaim the lane they already occupy,
+    // BEFORE any newcomer can greedily take it.
+    touching.forEach((t, i) => {
+      if (!t.seg.continuesLeft) return
+      const lane = carry.get(t.key)
+      if (lane === undefined || lane >= maxLanes) return
+      if (!isFree(lane, t.seg)) return
+      claim(lane, t.seg)
+      laneOf[i] = lane
+    })
+
+    // Pass two: the ordinary greedy layout, around what pass one pinned.
+    touching.forEach((t, i) => {
+      if (laneOf[i] >= 0) return
+      let lane = 0
+      while (lane < maxLanes && !isFree(lane, t.seg)) lane++
+      if (lane >= maxLanes) {
+        for (let c = t.seg.startCol; c < t.seg.startCol + t.seg.span; c++) overflowByCol[c]++
+        return
+      }
+      claim(lane, t.seg)
+      laneOf[i] = lane
+    })
+
+    // Emitted in `touching` order — i.e. `contiguousRuns`' order — so the
+    // array does not reshuffle just because pass one ran first.
+    const bars: PlacedBar[] = []
+    touching.forEach((t, i) => {
+      if (laneOf[i] < 0) return
+      bars.push({ ...t.seg, lane: laneOf[i], showId: t.run.showId, showName: t.run.showName })
+    })
+
+    // A FRESH map, not an updated one: a run that ended this week must not
+    // keep a reservation, or a year of browsing would accumulate lanes for
+    // shows that finished months ago.
+    const next = new Map<string, number>()
+    touching.forEach((t, i) => {
+      if (t.seg.continuesRight && laneOf[i] >= 0) next.set(t.key, laneOf[i])
+    })
+    carry = next
+
+    weeksOut.push({ bars, overflowByCol })
+  }
+
+  return weeksOut
+}

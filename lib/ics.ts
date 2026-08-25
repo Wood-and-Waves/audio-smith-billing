@@ -16,10 +16,12 @@
 // duplicating an event is the stable UID below: DTSTAMP only ever tells it
 // "the feed was regenerated," never "this event changed."
 //
-// UIDs are derived from the row's own id (`showday-{id}@…`,
-// `flight-{id}@…`), never generated. A calendar app keys on UID: a stable
-// one means an edited show or flight updates the existing event: a fresh
-// one every build would duplicate it instead.
+// UIDs are derived from stable schedule facts, never generated: a show run
+// is `showrun-{showId}-{runStart}@…` (run-scoped — one UID per bar the
+// month grid draws), a flight leg is `flight-{id}@…` (day-scoped, the
+// row's own id). A calendar app keys on UID: a stable one means an edited
+// show or flight updates the existing event: a fresh one every build would
+// duplicate it instead.
 //
 // Pure: no database, no @/ imports, no JSX. Exercised by node --test.
 

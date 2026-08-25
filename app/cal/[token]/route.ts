@@ -18,7 +18,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 type FeedRow = {
   days: {
     id: string
-    show_id: string
+    /** Optional on purpose: a deploy that lands before migration 0047 gets
+     *  rows without it, and the mapping below falls back rather than
+     *  collapsing every show into one run. */
+    show_id?: string
     date: string
     show_name: string
     venue: string | null
@@ -63,7 +66,11 @@ export async function GET(
   const row = data as FeedRow
   const days: FeedDay[] = row.days.map((d) => ({
     id: d.id,
-    showId: d.show_id,
+    // Pre-0047 the RPC returns no show_id. Falling back to the day's own id
+    // degrades to one event per day — exactly what this feed published
+    // yesterday — instead of collapsing every show into one merged event
+    // and silently dropping the rest. Costs nothing once 0047 is applied.
+    showId: d.show_id ?? d.id,
     date: d.date,
     showName: d.show_name,
     venue: d.venue,

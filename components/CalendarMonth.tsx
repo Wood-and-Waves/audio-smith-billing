@@ -8,7 +8,7 @@ import { instantToWall, friendlyTime, elapsedLabel } from '@/lib/zonedTime'
 import { timezoneShortLabel } from '@/lib/timezones'
 import { deleteFlight } from '@/app/calendar/actions'
 import AddFlightDialog from '@/components/AddFlightDialog'
-import { layOutWeek, type ShowRun } from '@/lib/showRuns'
+import { layOutMonth, type ShowRun } from '@/lib/showRuns'
 
 export type DayEntry = {
   id: string
@@ -106,6 +106,13 @@ export default function CalendarMonth({
   const dayShows = selectedDate ? (showsByDate[selectedDate] ?? []) : []
   const dayFlights = selectedDate ? (flightsByDate[selectedDate] ?? []) : []
 
+  // The WHOLE month at once, not week by week: laying out each week in
+  // isolation lets a run that crosses a Saturday land on a different lane on
+  // the other side, so the bar steps up or down a row exactly where it is
+  // supposed to read as one continuous booking. One entry per grid row, in
+  // grid order — see lib/showRuns.ts.
+  const weekLayouts = layOutMonth(runs, grid)
+
   return (
     <div>
       <div className="border-t border-l border-line">
@@ -118,7 +125,7 @@ export default function CalendarMonth({
         </div>
 
         {grid.map((week, wi) => {
-          const { bars, overflowByCol } = layOutWeek(runs, week)
+          const { bars, overflowByCol } = weekLayouts[wi]
           const laneCount = bars.length === 0 ? 0 : Math.max(...bars.map((b) => b.lane)) + 1
           const laneBlock = laneCount * LANE_H
 
