@@ -84,7 +84,17 @@ Five findings that all touch `components/MoneyRegister.tsx`; do as one pass:
 9. **Math in money boxes.** Typing `24.36+45.72` in an amount field should
    enter 70.08. YNAB does this; parseUSD is the entry point.
 
-### Wave C — model gaps (each needs brainstorm + migration; deferred by Dan)
+### Wave C — BUILT 2026-08-24 (branch splits-pending; final review pending)
+
+Splits (cross-kind legs, DB-enforced sums, inline editor per Dan's YNAB
+screenshot, Approve-on-pending) and pending imports (Enter Now/All, Reject
+with tombstones, reconcile refusal, Dan's option-1 balance semantics).
+Migrations 0042-0044. The $400 punch-list variance becomes fixable in-app:
+split the 3/5 row — Owner Pay + $400 Temporary Transfer.
+Residuals: leg display order is insertion order (not editor order); the
+SplitEditor's remainder line could show per-leg deltas; per-leg payees out.
+
+### Wave C items as originally filed (model gaps)
 
 10. **Split transactions.** He has real transactions spanning two categories
     that cannot reconcile without them. Phase-one scoping ("one split in all
