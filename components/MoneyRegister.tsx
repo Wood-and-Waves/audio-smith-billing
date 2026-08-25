@@ -1429,7 +1429,16 @@ export default function MoneyRegister({
         pinnedOptions={[
           { id: '', label: 'Uncategorized' },
           { id: TRANSFER_SENTINEL, label: 'Payment/Transfer' },
-          { id: SPLIT_SENTINEL, label: 'Split…' },
+          // Split… omitted on a transfer row (M2, Wave C final review):
+          // replaceSplits refuses a transfer outright — it moves money
+          // between Dan's own accounts and carries no category to split
+          // (the same rule setTransactionCategory already enforces on this
+          // kind) — so offering the pin here would let him fill in a whole
+          // split draft that Save then rejects. `t.kind`, not
+          // `editCategoryId === TRANSFER_SENTINEL`: the row's OWN kind is
+          // what the server actually checks, and stays true even before the
+          // picker's local sentinel is touched.
+          ...(t.kind === 'transfer' ? [] : [{ id: SPLIT_SENTINEL, label: 'Split…' }]),
         ]}
       />
     )
