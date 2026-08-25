@@ -67,3 +67,55 @@ $fn$;
 
 revoke all on function public.reconcile_ledger_account(uuid, bigint, date, bigint) from public, anon;
 grant execute on function public.reconcile_ledger_account(uuid, bigint, date, bigint) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Folded in from Task 1's review before this file was ever applied (an
+-- unapplied migration is the one kind that may still be edited):
+--
+-- (1) entered_at gains DEFAULT now(). 0042 shipped the column with no
+-- default, which is fail-DANGEROUS: any insert path that forgets the column
+-- silently lands pending — and reconcile_ledger_account proved that class of
+-- miss real on the first grep. With the default, forgetting is safe (the row
+-- is entered), and the ONE path that wants pending — the OFX importer —
+-- passes entered_at: null explicitly, which always beats a default.
+
+alter table ledger_transactions alter column entered_at set default now();
+
+-- (2) Split legs must belong to their parent's owner, at the DATABASE.
+-- The legs table's RLS checks only the leg row's own owner_id, and
+-- replace_transaction_splits verifies the transaction but not each leg's
+-- category — while the table's grants make direct PostgREST writes a
+-- first-class path. This trigger closes both doors: a leg's owner must be
+-- the parent transaction's owner, and a categorised leg's category must
+-- belong to that same owner. Same never-trust-a-caller-supplied-id doctrine
+-- as categoryOwnedByCaller, enforced where it cannot be bypassed.
+
+create or replace function ledger_transaction_splits_ownership()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_txn_owner uuid;
+  v_cat_owner uuid;
+begin
+  select owner_id into v_txn_owner from ledger_transactions where id = new.transaction_id;
+  if v_txn_owner is null or v_txn_owner <> new.owner_id then
+    raise exception 'split leg owner does not match its transaction''s owner';
+  end if;
+  if new.category_id is not null then
+    select owner_id into v_cat_owner from ledger_categories where id = new.category_id;
+    if v_cat_owner is null or v_cat_owner <> new.owner_id then
+      raise exception 'split leg category does not belong to the leg''s owner';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists ledger_transaction_splits_ownership on ledger_transaction_splits;
+create trigger ledger_transaction_splits_ownership
+  before insert or update on ledger_transaction_splits
+  for each row execute function ledger_transaction_splits_ownership();
+

@@ -22,6 +22,9 @@
 
 import { readFileSync } from 'node:fs'
 import pg from 'pg'
+// NOTE (0042/0044): entered_at now defaults to now(), so this backfill's raw
+// INSERT lands rows entered — correct for historical data. Do not add
+// entered_at: null here.
 
 // Money arrives as integer cents and must stay that way; stop node-postgres
 // handing back bigint as a JS number that could lose precision silently.
