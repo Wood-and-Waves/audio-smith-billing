@@ -142,11 +142,29 @@ export default function CategoryPicker({
   // activedescendant-driven list (APG's select-only combobox pattern, which
   // the rest of this component already follows) makes them keyboard-
   // reachable without a second, real-focus system to keep in sync.
+  //
+  // H3 (Wave B final review): while a query is non-empty, the pinned rows,
+  // "+ New Category", AND the "Selected" echo all drop OUT of this list
+  // (restored the instant the query is cleared) — they used to sit first
+  // regardless of `q`, so typing to filter (say "off") and pressing Enter
+  // fired whichever one `onQueryChange`'s `active: 0` landed on instead of
+  // an actual match: Uncategorized here, or — worse — the inline register
+  // picker's own bare `flatIds` (no pinnedOptions at all, see MoneyRegister's
+  // own call sites) put "+ New Category" first, so Enter there actually
+  // NAVIGATED AWAY to /money/categories mid-keystroke. The Selected echo is
+  // the same failure by a different door: re-opening the edit row's picker
+  // on an already-categorized transaction seeds `value` (and so `selected`)
+  // before a single key is typed, so without this it would keep winning
+  // Enter over whatever the typed query actually matched. All three are
+  // still visible in the open panel below (unfiltered, same as ever) — only
+  // the keyboard-navigable list excludes them, so a typed query can only
+  // ever land on an actual matching category.
+  const hasQuery = q !== ''
   const pinnedIds = (pinnedOptions ?? []).map((p) => p.id)
   const flatIds = [
-    ...pinnedIds,
-    NEW_CATEGORY_ID,
-    ...(selected ? [selected.id] : []),
+    ...(hasQuery ? [] : pinnedIds),
+    ...(hasQuery ? [] : [NEW_CATEGORY_ID]),
+    ...(hasQuery ? [] : (selected ? [selected.id] : [])),
     ...groups.flatMap((g) => g.items.map((o) => o.id)),
   ]
 
