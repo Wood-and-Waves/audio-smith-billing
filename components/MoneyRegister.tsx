@@ -1429,12 +1429,6 @@ export default function MoneyRegister({
         <span className="tabular text-xs text-muted">{formatDateShort(t.date)}</span>
         <span className="min-w-0 flex items-center gap-2">
           <span className="truncate font-medium">{t.payee || '—'}</span>
-          {t.showName && (
-            <span className="text-[11px] font-bold uppercase tracking-wider text-muted
-                             bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
-              {t.showName}
-            </span>
-          )}
           {t.invoiceNumbers.length > 0 && (
             <span className="text-[11px] font-bold uppercase tracking-wider text-muted
                              bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
@@ -1562,12 +1556,6 @@ export default function MoneyRegister({
               </span>
             )}
           </div>
-          {t.showName && (
-            <span className="text-[11px] font-bold uppercase tracking-wider text-muted
-                             bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
-              {t.showName}
-            </span>
-          )}
           {t.invoiceNumbers.length > 0 && (
             <span className="text-[11px] font-bold uppercase tracking-wider text-muted
                              bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
