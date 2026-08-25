@@ -1470,11 +1470,27 @@ export async function replaceSplits(
 
   const { data: existing, error: existingError } = await supabase
     .from('ledger_transactions')
-    .select('amount_cents, kind')
+    .select('amount_cents, kind, cleared')
     .eq('id', transactionId)
     .maybeSingle()
   if (existingError) return { error: existingError.message }
   if (!existing) return { error: 'That transaction no longer exists.' }
+  // Same reconciled lock as updateLedgerTransaction/deleteLedgerTransaction
+  // above (Wave C final review, S2): this action had NO server-side refusal
+  // at all before this — SplitEditor simply never offered the "Split…" pin
+  // on a reconciled row's edit form, which is a client habit, not a
+  // boundary; a direct call (or a stale tab) reached the RPC unguarded. A
+  // reconciled row has already been matched against a bank statement, so
+  // rewriting its legs out from under that reconciliation is the same
+  // hazard updateLedgerTransaction's own comment names for an amount edit —
+  // refused here, before the RPC, in the app's own voice.
+  //
+  // NOT extended into a reconciled-splits carve-out even though "splitting
+  // moves no money" is true (the parent's own amount_cents never changes
+  // by this action): that's a deliberate future decision the controller is
+  // backlogging, not something this fix also resolves. Refuse first;
+  // loosen later only on purpose.
+  if (existing.cleared === 'reconciled') return { error: 'Reconciled transactions are locked.' }
   // A transfer moves money between Dan's own accounts and never carries a
   // category (lt_nocat_for_transfer, migration 0038) — the same rule
   // setTransactionCategory enforces on this exact kind, applied here before
