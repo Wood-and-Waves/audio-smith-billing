@@ -4,6 +4,7 @@ import { todayInChicago, monthGrid, monthLabel, addMonths } from '@/lib/dates'
 import AppShell from '@/components/AppShell'
 import CalendarMonth, { type DayEntry, type FlightEntry } from '@/components/CalendarMonth'
 import AddFlightDialog from '@/components/AddFlightDialog'
+import { contiguousRuns, type ShowRun } from '@/lib/showRuns'
 
 export const dynamic = 'force-dynamic'
 
@@ -83,19 +84,40 @@ export default async function CalendarPage({
     )
   }
 
-  const [
-    { data: dayRows, error: dayError },
-    { data: flightRows, error: flightError },
-  ] = await Promise.all([
-    supabase
+  // Runs have to be TRUE at the grid's edges. Fetching only the days inside
+  // the window would make a show that carries on past the last cell look
+  // like it FINISHES there — a rounded corner that lies (see
+  // lib/showRuns.ts's own note). So: the show ids touching this window,
+  // then every day those shows have, whichever month it falls in.
+  const { data: windowRows, error: windowError } = await supabase
+    .from('show_days')
+    .select('show_id')
+    .gte('date', first)
+    .lte('date', last)
+  if (windowError) return <LoadError message={windowError.message} />
+
+  const showIds = [...new Set((windowRows ?? []).map((r) => r.show_id as string))]
+
+  // A plain guarded read rather than a ternary around `await`: the two
+  // branches of a ternary have different result shapes and the union does
+  // not narrow cleanly under `tsc --noEmit`.
+  let dayRows: unknown[] = []
+  if (showIds.length > 0) {
+    const { data, error: dayError } = await supabase
       .from('show_days')
       .select(
         'id, date, travel_in, travel_out, pay_as_half_day, show_id, ' +
           'shows(name, venue, location, timezone, clients(name))',
       )
-      .gte('date', first)
-      .lte('date', last)
-      .order('date'),
+      .in('show_id', showIds)
+      .order('date')
+    if (dayError) return <LoadError message={dayError.message} />
+    dayRows = data ?? []
+  }
+
+  const [
+    { data: flightRows, error: flightError },
+  ] = await Promise.all([
     supabase
       .from('flights')
       .select('id, flight_no, flight_date, dep_airport, arr_airport, dep_at, arr_at, dep_tz, arr_tz, note')
@@ -104,7 +126,6 @@ export default async function CalendarPage({
       .order('flight_date'),
   ])
 
-  if (dayError) return <LoadError message={dayError.message} />
   if (flightError) return <LoadError message={flightError.message} />
 
   const dayRowsTyped = (dayRows ?? []) as unknown as ShowDayRow[]
@@ -116,6 +137,9 @@ export default async function CalendarPage({
   const showsByDate: Record<string, DayEntry[]> = {}
   for (const d of dayRowsTyped) {
     if (!d.shows) continue
+    // The fetch above deliberately reaches outside the grid for run
+    // boundaries; the dialog only ever asks about a cell that is on screen.
+    if (d.date < first || d.date > last) continue
     const entry: DayEntry = {
       id: d.id,
       showId: d.show_id,
@@ -129,6 +153,12 @@ export default async function CalendarPage({
     }
     ;(showsByDate[d.date] ??= []).push(entry)
   }
+
+  const runs: ShowRun[] = contiguousRuns(
+    dayRowsTyped.flatMap((d) =>
+      d.shows ? [{ showId: d.show_id, showName: d.shows.name, date: d.date }] : [],
+    ),
+  )
 
   const flightsByDate: Record<string, FlightEntry[]> = {}
   for (const f of flightRowsTyped) {
@@ -183,6 +213,7 @@ export default async function CalendarPage({
         today={today}
         showsByDate={showsByDate}
         flightsByDate={flightsByDate}
+        runs={runs}
       />
     </AppShell>
   )

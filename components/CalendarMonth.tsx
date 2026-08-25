@@ -8,6 +8,7 @@ import { instantToWall, friendlyTime, elapsedLabel } from '@/lib/zonedTime'
 import { timezoneShortLabel } from '@/lib/timezones'
 import { deleteFlight } from '@/app/calendar/actions'
 import AddFlightDialog from '@/components/AddFlightDialog'
+import { layOutWeek, type ShowRun } from '@/lib/showRuns'
 
 export type DayEntry = {
   id: string
@@ -60,8 +61,15 @@ function FlightTime({ at, tz }: { at: string | null; tz: string | null }) {
   )
 }
 
+// The date number's own line, and one bar lane, in px. The bar overlay is
+// positioned against these rather than guessed, so a bar can never sit on
+// top of the date or the flight chips below it.
+const DATE_ROW_H = 18
+const LANE_GAP = 4
+const LANE_H = 20
+
 export default function CalendarMonth({
-  grid, month, today, showsByDate, flightsByDate,
+  grid, month, today, showsByDate, flightsByDate, runs,
 }: {
   grid: string[][]
   /** 'YYYY-MM' being viewed — dates outside it (the padded leading/trailing
@@ -72,6 +80,7 @@ export default function CalendarMonth({
   today: string
   showsByDate: Record<string, DayEntry[]>
   flightsByDate: Record<string, FlightEntry[]>
+  runs: ShowRun[]
 }) {
   const router = useRouter()
   const [pending, start] = useTransition()
@@ -99,64 +108,108 @@ export default function CalendarMonth({
 
   return (
     <div>
-      <div className="grid grid-cols-7 border-t border-l border-line">
-        {WEEKDAYS.map((w) => (
-          <div key={w} className="border-b border-r border-line px-1 py-1.5 text-center">
-            <span className="eyebrow">{w}</span>
-          </div>
-        ))}
+      <div className="border-t border-l border-line">
+        <div className="grid grid-cols-7">
+          {WEEKDAYS.map((w) => (
+            <div key={w} className="border-b border-r border-line px-1 py-1.5 text-center">
+              <span className="eyebrow">{w}</span>
+            </div>
+          ))}
+        </div>
 
-        {grid.flat().map((date) => {
-          const shows = showsByDate[date] ?? []
-          const flights = flightsByDate[date] ?? []
-          const chips = [
-            ...shows.map((s) => ({
-              key: `s-${s.id}`,
-              node: (
-                <div className="truncate rounded-field bg-accent-surface text-accent-ink px-1 py-0.5 text-[11px] font-semibold">
-                  {s.showName}
-                </div>
-              ),
-            })),
-            ...flights.map((f) => ({
-              key: `f-${f.id}`,
-              node: <div className="truncate text-[11px] text-ink">✈ {f.flightNo}</div>,
-            })),
-          ]
-          const visible = chips.slice(0, MAX_VISIBLE)
-          const overflow = chips.length - visible.length
-          const isCurrentMonth = date.slice(0, 7) === month
-          const isToday = date === today
-          const dayNum = Number(date.slice(8, 10))
+        {grid.map((week, wi) => {
+          const { bars, overflowByCol } = layOutWeek(runs, week)
+          const laneCount = bars.length === 0 ? 0 : Math.max(...bars.map((b) => b.lane)) + 1
+          const laneBlock = laneCount * LANE_H
 
           return (
-            <button
-              key={date}
-              type="button"
-              onClick={() => setSelectedDate(date)}
-              className={`min-h-[5.5rem] sm:min-h-[7rem] flex flex-col items-stretch
-                          border-b border-r border-line p-1.5 sm:p-2 text-left
-                          ${isCurrentMonth ? 'text-ink' : 'text-muted opacity-60'}
-                          ${isToday ? 'bg-accent-wash border-l-2 border-l-accent' : ''}`}
-            >
-              <span className="self-end tabular text-[11px] sm:text-xs">{dayNum}</span>
+            <div key={week[0]} className="relative">
+              <div className="grid grid-cols-7">
+                {week.map((date, di) => {
+                  const flights = flightsByDate[date] ?? []
+                  const visible = flights.slice(0, MAX_VISIBLE)
+                  const overflow = flights.length - visible.length
+                  const isCurrentMonth = date.slice(0, 7) === month
+                  const isToday = date === today
+                  const dayNum = Number(date.slice(8, 10))
 
-              {/* Tablet/desktop: readable chips. */}
-              <div className="hidden sm:flex flex-col gap-0.5 mt-1 min-w-0">
-                {visible.map((c) => <div key={c.key}>{c.node}</div>)}
-                {overflow > 0 && <div className="text-[10px] text-muted">+{overflow} more</div>}
+                  return (
+                    <button
+                      key={date}
+                      type="button"
+                      onClick={() => setSelectedDate(date)}
+                      className={`min-h-[5.5rem] sm:min-h-[7rem] flex flex-col items-stretch
+                                  border-b border-r border-line p-1.5 sm:p-2 text-left
+                                  ${isCurrentMonth ? 'text-ink' : 'text-muted opacity-60'}
+                                  ${isToday ? 'bg-accent-wash border-l-2 border-l-accent' : ''}`}
+                    >
+                      <span
+                        className="self-end tabular text-[11px] sm:text-xs"
+                        style={{ height: DATE_ROW_H, lineHeight: `${DATE_ROW_H}px` }}
+                      >
+                        {dayNum}
+                      </span>
+
+                      {/* Reserves exactly the space the bar overlay occupies
+                          in THIS week, so flights never render underneath a
+                          bar and a bar-free week keeps its old height. */}
+                      <div aria-hidden style={{ height: laneBlock + LANE_GAP }} />
+
+                      {overflowByCol[di] > 0 && (
+                        <div className="text-[10px] text-muted">+{overflowByCol[di]} more</div>
+                      )}
+
+                      {/* Tablet/desktop: readable flight chips. Shows have
+                          left the cell entirely — they are bars now. */}
+                      <div className="hidden sm:flex flex-col gap-0.5 mt-1 min-w-0">
+                        {visible.map((f) => (
+                          <div key={f.id} className="truncate text-[11px] text-ink">✈ {f.flightNo}</div>
+                        ))}
+                        {overflow > 0 && <div className="text-[10px] text-muted">+{overflow} more</div>}
+                      </div>
+
+                      {/* Phone: flights stay dots (bars carry the shows). */}
+                      {flights.length > 0 && (
+                        <div className="sm:hidden flex flex-wrap gap-0.5 mt-1">
+                          {flights.slice(0, 4).map((f) => (
+                            <span key={f.id} className="h-1.5 w-1.5 rounded-full bg-accent-surface" />
+                          ))}
+                        </div>
+                      )}
+                    </button>
+                  )
+                })}
               </div>
 
-              {/* Phone: no room for text, so entries collapse to dots — the
-                  day-tap dialog is the actual reader below sm. */}
-              {chips.length > 0 && (
-                <div className="sm:hidden flex flex-wrap gap-0.5 mt-1">
-                  {chips.slice(0, 4).map((c) => (
-                    <span key={c.key} className="h-1.5 w-1.5 rounded-full bg-accent-surface" />
+              {/* The bar layer. It floats ABOVE the day buttons rather than
+                  living inside them, which is what lets a bar be a <Link>
+                  without nesting an interactive element inside a <button>
+                  (invalid HTML, and a real click-target conflict). The layer
+                  itself is click-through; only the bars take pointer events. */}
+              {bars.length > 0 && (
+                <div
+                  className="pointer-events-none absolute inset-x-0 grid grid-cols-7
+                             top-[28px] sm:top-[30px]"
+                  style={{ rowGap: LANE_H - 17 }}
+                >
+                  {bars.map((b) => (
+                    <Link
+                      key={`${b.showId}-${b.startCol}-${wi}`}
+                      href={`/shows/${b.showId}`}
+                      title={b.showName}
+                      className={`pointer-events-auto truncate h-[17px] leading-[17px] mx-px px-1.5
+                                  bg-accent-surface text-accent-ink text-[11px] font-semibold
+                                  hover:opacity-80 transition-opacity
+                                  ${b.continuesLeft ? 'rounded-l-none' : 'rounded-l-field'}
+                                  ${b.continuesRight ? 'rounded-r-none' : 'rounded-r-field'}`}
+                      style={{ gridColumn: `${b.startCol + 1} / span ${b.span}`, gridRow: b.lane + 1 }}
+                    >
+                      {b.showName}
+                    </Link>
                   ))}
                 </div>
               )}
-            </button>
+            </div>
           )
         })}
       </div>
