@@ -1649,9 +1649,19 @@ export default function MoneyRegister({
     // typed above it is ever discarded. Cancel here is SplitEditor's own —
     // it collapses the editor only, never the whole edit row (cancelEdit,
     // by contrast, closes both).
+    // The error node below SplitEditor mirrors secondLine's own (M2, Wave
+    // B final review — the shared bottom-of-register copy is aria-hidden
+    // and ~all 328 rows away): while the editor is open it is the ONE
+    // visible, announced home for everything saveSplit can refuse —
+    // editRowCore's payee/date refusals, either zero-leg write failing,
+    // replaceSplits' server refusals, and finishSplitSave's "approving
+    // failed" (which deliberately leaves the editor open, so its
+    // explanation must be visible here).
     const bottomBlock = splitEditorOpen ? (
+      <>
       <SplitEditor
         parentAmountCents={editAmountCents}
+        parentAmountHint={'error' in editBoxes ? editBoxes.error : null}
         direction={editDirection}
         seedLegs={t.legs.length > 0
           ? t.legs.map((l) => ({ categoryId: l.categoryId, amountCents: l.amountCents, note: l.note }))
@@ -1664,6 +1674,8 @@ export default function MoneyRegister({
         onSave={(legs) => saveSplit(t, legs)}
         onCancel={() => { setSplitEditorOpen(false); setPendingSplitSeed(null) }}
       />
+      {error && <p role="alert" className="text-xs text-danger mt-2 sm:pl-9">{error}</p>}
+      </>
     ) : secondLine
 
     if (desktop) {

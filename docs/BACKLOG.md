@@ -103,12 +103,21 @@ the 3/5 merge): migration 0045 gave replace_transaction_splits an optional
 parent patch, the SplitEditor validates against the amount the edit boxes
 HOLD, and the split save persists the whole edit session (fields + legs)
 in one atomic RPC call — including changing an already-split row's total.
+(The zero-leg save — removing every leg — is deliberately two writes:
+unsplit, then the ordinary edit save; the gap state is visible and
+retryable, see saveSplit's own comment.)
 Residuals: leg display order is arbitrary within a save (single-statement RPC = one timestamp, uuid tiebreak — an ordinal column is the fix); the
 SplitEditor's remainder line could show per-leg deltas; per-leg payees out; a reconciled-splits carve-out (splitting moves no
 money, so the reconciled lock could permit it the way categorization is
 permitted) is a deliberate open decision — today reconciled rows refuse
-splits server-side; un-split leaves an uncategorized parent the review
-queue never surfaces; the invoice matcher now excludes pending rows.
+splits server-side (note: that lock lives in the app's actions only, not
+the DB — a direct authenticated RPC/table write bypasses it, exact parity
+with what direct table writes always allowed; if the carve-out decision
+ever hardens the lock, harden it in Postgres); un-split leaves an
+uncategorized parent the review queue never surfaces (including the
+zero-leg save's abandon path: unsplit succeeded, field save failed,
+Cancel walks away from an unsplit uncategorized row); the invoice matcher
+now excludes pending rows.
 
 ### Wave C items as originally filed (model gaps)
 

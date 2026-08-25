@@ -78,6 +78,7 @@ function draftFromSeed(seed: SplitEditorSeedLeg[], nextKey: () => number): Draft
 
 export default function SplitEditor({
   parentAmountCents,
+  parentAmountHint,
   direction,
   seedLegs,
   categoryOptions,
@@ -97,6 +98,11 @@ export default function SplitEditor({
    *  or invalid — Save disables with the boxes' own refusal message until
    *  they hold exactly one positive amount. */
   parentAmountCents: number | null
+  /** The refusal parseAmountBoxes gave for the edit boxes whenever
+   *  parentAmountCents is null — shown as the hint, so Save's disablement
+   *  explains itself in the boxes' own words ('Enter an amount.' for a
+   *  typed 0, not the generic pick-a-box line). */
+  parentAmountHint?: string | null
   /** Which box every leg here gets — the edit boxes' own direction, falling
    *  back to the row's saved sign while they're blank/invalid (so the leg
    *  boxes never jump sides mid-keystroke). MoneyRegister computes it
@@ -181,7 +187,7 @@ export default function SplitEditor({
   // their message (parseAmountBoxes' own) is the hint, and Save stays
   // disabled until they hold exactly one positive amount.
   const hint = parentAmountCents === null
-    ? 'Enter an amount in Outflow or Inflow.'
+    ? (parentAmountHint ?? 'Enter an amount in Outflow or Inflow.')
     : validateLegs(parentAmountCents, preparedLegs())
   const saveDisabled = pending || hint !== null
 
