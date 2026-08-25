@@ -83,6 +83,12 @@ settlement when the state is short or over:
 `Bank deposit · Aug 21 · Paid $590.00 · $10.00 short`. An exact settlement
 renders exactly as it does today — no new noise on the normal case.
 
+`'unpaid'` renders NOTHING. That state is reachable on an invoice whose
+status is already `paid` but which carries no link (one of the hand-marked
+paids), and printing "unpaid" beside a Paid badge would flatly contradict
+it. Those invoices show the Link a payment control instead, which is the
+honest affordance for exactly that case.
+
 ### "Link a payment" (new, `components/LinkPaymentPanel.tsx`)
 
 Rendered when the invoice has **no link** and its status is `sent` or
@@ -120,8 +126,9 @@ the confirm needs no undo of its own.
 
 `lib/invoicePayment.ts` is where the logic is proven (`node --test`):
 unpaid; exact; short by $10; over by $10; a combo link (invoiceCount 3)
-reading exact rather than a phantom overpayment; a $0 total guarded; and
-that `deltaCents` sign is the ONLY thing distinguishing short from over.
+reading exact rather than a phantom overpayment; and that `deltaCents`'
+sign is the ONLY thing distinguishing short from over. A `totalCents` of 0
+needs no special case and gets none — the same rules apply to it.
 Plus the usual gates and a browser walkthrough against a sandbox invoice
 settled $10 short, then unlinked to prove the way back.
 
