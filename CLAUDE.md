@@ -309,9 +309,14 @@ status.
   (kind-aware — P&L); balance-reading consumers NEVER explode and NEVER
   filter pending. A THIRD kind exists and must be named when adding one:
   LINK-shaped readers (the invoice matcher, bridge links) match on
-  amount/date/payee — the matcher excludes pending rows (an unaccepted
-  import cannot pay an invoice) and never needs legs. Adding a consumer?
-  Decide which of the three it is, in a comment, before the query.
+  amount/date/payee and never need legs. The matcher does NOT filter on
+  `entered_at`: an unreviewed deposit is ordinary money that already hit the
+  account, so it can pay an invoice like any other, and the matcher sees
+  every CLEARED deposit whether or not he has looked at it yet. That
+  exclusion was deliberately deleted in three places
+  (`app/money/matches/page.tsx`, `app/invoices/[id]/page.tsx`,
+  `acceptIncomeMatch`) — do not restore it. Adding a consumer? Decide which
+  of the three it is, in a comment, before the query.
 - **`entered_at IS NULL` = UNREVIEWED, a review marker and NOTHING else**
   (Dan reversed Wave C on 2026-08-25). An imported row counts in the budget,
   reports, P&L, forecast and parity the moment it lands; Enter only clears

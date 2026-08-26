@@ -76,6 +76,18 @@ export type LedgerTxnRow = {
    *  explodeForCategories' job, Task 5) — the register only ever asks
    *  "is this row pending," never "what month did it enter." */
   entered_at: string | null
+  /** True only when the bank file created this row — `source === 'import'`
+   *  AND a non-null `import_id` (app/money/page.tsx's toRow requires both, so
+   *  one stray marker can't promote a hand-entered row).
+   *
+   *  The payee-rename offer is gated on this and nothing else. That whole
+   *  feature rests on one premise — "this string is the bank's ugly
+   *  descriptor, not a name he chose" — and the premise is simply false for a
+   *  row he typed. Without the gate, a hand-typed `Costco Wholesale #487` gets
+   *  offered `Use "Costco"` the moment `Costco` is a known payee: a one-click
+   *  overwrite of his own words, plus an alias keyed on a descriptor no bank
+   *  will ever send, which then sits in the table forever matching nothing. */
+  isImported: boolean
   /** Split legs (Wave C Task 4) — [] means unsplit, the ordinary row. A
    *  split parent's own category_id is forced null by replace_transaction_
    *  splits the instant legs exist (migration 0042), so `legs.length > 0`
@@ -1100,6 +1112,33 @@ export default function MoneyRegister({
     }
   }
 
+  /**
+   * The cleaned-up name to suggest for `row`, or null when this row has not
+   * earned a rename offer at all. ONE definition, deliberately, because two
+   * things hang off it — the "Use …" chip and the "Remember this name, and
+   * rename matching rows" checkbox — and a third (saveEdit's alias write)
+   * must be gated on exactly the same answer. Split across those sites it
+   * would drift, and the direction it drifted would be silent.
+   *
+   * Three conditions, all required:
+   *
+   *   * `row.isImported` — the bank wrote this string. The whole premise is
+   *     "that's the bank's ugly descriptor, not a name you chose", and it is
+   *     simply untrue of a row he typed himself (see LedgerTxnRow.isImported).
+   *   * not already aliased — no offer on a descriptor he has already named.
+   *     A null `aliasedRawPayees` (the read failed — see that prop's own
+   *     comment) counts as "already aliased" here on purpose: not knowing must
+   *     suppress the offer, never fabricate one.
+   *   * the suggestion differs from what the row already says — nothing to
+   *     offer when the answer is the text already on screen.
+   */
+  function renameSuggestion(row: LedgerTxnRow): string | null {
+    if (!row.isImported) return null
+    if (aliasedRawPayees === null || aliasedRawPayees.includes(normalizePayee(row.payee))) return null
+    const suggested = suggestDisplayName(row.payee, knownPayees)
+    return suggested === row.payee ? null : suggested
+  }
+
   function saveEdit(row: LedgerTxnRow) {
     setError(null)
     const input = editRowUpdateInput(row)
@@ -1119,7 +1158,14 @@ export default function MoneyRegister({
       // save just did completely invisible: he retitles one row and seventeen
       // others silently change behind him. Reporting it is the other half of
       // the checkbox above now naming both of its effects.
-      if (rememberPayee && input.payee !== row.payee) {
+      //
+      // `renameSuggestion(row) !== null` is re-asked HERE, and not left to
+      // `rememberPayee` alone, because that flag is seeded ON by startEdit and
+      // is simply never shown to him on a row that earned no offer — so on
+      // such a row it reads `true` while no checkbox was ever rendered to say
+      // so. Reading it by itself would fire the biggest write in this file
+      // from a control that was never on screen.
+      if (rememberPayee && renameSuggestion(row) !== null && input.payee !== row.payee) {
         const aliased = await setPayeeAlias(row.payee, input.payee)
         if ('error' in aliased) {
           setError(`Saved — but the name wasn't remembered: ${aliased.error}`)
@@ -1527,16 +1573,18 @@ export default function MoneyRegister({
     const canAdjust = t.receipt_original !== null && t.receipt_path !== null && !t.receipt_original.endsWith('.pdf')
     const hasReceipt = t.receipt_path !== null || t.receipt_original !== null
 
-    // Offer a rename only when this payee has never been confirmed and the
-    // suggestion actually differs from what is there — no chip on a row he
-    // has already named, and none that suggests what it already says. A null
-    // `aliasedRawPayees` (the read failed — see that prop's own comment)
-    // counts as "already aliased" here on purpose: not knowing must suppress
-    // the chip, never fabricate one.
-    const rawNormalized = normalizePayee(t.payee)
-    const alreadyAliased = aliasedRawPayees === null || aliasedRawPayees.includes(rawNormalized)
-    const suggestion = alreadyAliased ? null : suggestDisplayName(t.payee, knownPayees)
-    const offerRename = suggestion !== null && suggestion !== t.payee && suggestion !== editPayee
+    // This row's suggestion, if it has earned one (renameSuggestion, above) —
+    // the single fact BOTH the chip and the remember-this-name checkbox are
+    // gated on, and the same one saveEdit re-asks before it writes an alias.
+    //
+    // The chip itself carries one extra condition the checkbox must NOT: it
+    // hides once `editPayee` already holds the suggestion, because there is
+    // then nothing left to click. The checkbox has to survive that click —
+    // taking the suggestion is the main way the flow ends, and a checkbox
+    // that vanished at exactly that moment would be a control nobody could
+    // ever use.
+    const suggestion = renameSuggestion(t)
+    const offerRename = suggestion !== null && suggestion !== editPayee
 
     // A split parent's category IS its legs (migration 0042 forces
     // category_id null the instant legs exist) — never re-derived from
@@ -1655,7 +1703,29 @@ export default function MoneyRegister({
           onChange={setEditShowId}
           options={showOptions}
         />
-        {editPayee !== t.payee && (
+        {/* Scoped to the SUGGESTION flow — `suggestion !== null`, not just
+            "the payee changed". This checkbox defaults ON and its second
+            effect is a bulk write: setPayeeAlias rewrites the alias AND
+            renames every other row sharing this payee. Ungated, the ordinary
+            act of relabelling one charge detonates it — 40 imported rows all
+            reading `Amazon`, one of them opened to say `Amazon - AWS`, an
+            already-ticked box, Save, and thirty-nine payees he never touched
+            are gone, with a four-second notice as the only trace.
+            `suggestion !== null` means there is a bank descriptor here with a
+            better name to remember (renameSuggestion, above); when it is null
+            there is nothing to remember, so no checkbox and — saveEdit re-asks
+            the same question — no alias write either.
+
+            The asymmetry with the category sweep a few hundred lines up is
+            deliberate, and this is the side that was wrong. That sweep is the
+            house pattern for a same-payee bulk write: it counts the affected
+            rows first, shows the count in a prompt, waits for an explicit
+            "Apply to all" click, and refuses to overwrite any row that already
+            has a category. Nothing here counts, prompts, or defaults off. The
+            gate does not close that gap — it only keeps the control inside the
+            one flow the spec scoped it to, where its two effects are the point
+            rather than a surprise. */}
+        {suggestion !== null && editPayee !== t.payee && (
           <label className="flex items-center gap-1.5 text-xs text-muted">
             <input
               type="checkbox"

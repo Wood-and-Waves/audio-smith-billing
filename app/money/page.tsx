@@ -47,6 +47,14 @@ type RawTxnRow = {
   // count every row the moment it lands, reviewed or not (Dan's 2026-08-25
   // decision).
   entered_at: string | null
+  // Where the row came from (migration 0027): 'manual' for anything he typed
+  // into the register, 'import' for a row the bank file created. import_id is
+  // the bank's own per-row key, non-null only on an imported row (0027's
+  // partial unique index is what makes a re-import a no-op). Both are read
+  // here for exactly one thing — LedgerTxnRow.isImported below, the gate on
+  // the payee-rename offer.
+  source: 'manual' | 'import'
+  import_id: string | null
   receipt_path: string | null
   receipt_original: string | null
   // Denormalized here (rather than cross-referenced client-side against the
@@ -77,7 +85,7 @@ async function fetchAllTransactions(
     const { data, error } = await supabase
       .from('ledger_transactions')
       .select(`id, date, amount_cents, kind, category_id, show_id, payee, memo, cleared, created_at,
-                entered_at, receipt_path, receipt_original,
+                entered_at, source, import_id, receipt_path, receipt_original,
                 category:ledger_categories(name, budget_role), show:shows(name)`)
       .eq('account_id', accountId)
       .order('created_at', { ascending: true })
@@ -728,6 +736,11 @@ export default async function MoneyPage({
     memo: t.memo,
     cleared: t.cleared,
     entered_at: t.entered_at,
+    // BOTH markers, deliberately (see LedgerTxnRow.isImported): a row is only
+    // treated as the bank's if it says 'import' AND carries the bank's own
+    // per-row key, so a hand-entered row that somehow ended up with one of
+    // the two can't be mistaken for a bank descriptor and offered a rename.
+    isImported: t.source === 'import' && t.import_id !== null,
     legs: legsByTxnId.get(t.id) ?? [],
     // Non-null assertion is safe: t comes from allTxns (via sorted/filtered),
     // and balanceById was built from ledgerOrdered — the exact same array,

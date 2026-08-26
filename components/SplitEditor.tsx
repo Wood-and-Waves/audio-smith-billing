@@ -112,8 +112,10 @@ export default function SplitEditor({
   seedLegs: SplitEditorSeedLeg[]
   categoryOptions: readonly CategoryPickerOption[]
   pending: boolean
-  /** True when the row is pending (entered_at null, migration 0042) — the
-   *  Save button reads "Approve" instead, Dan's own screenshot button.
+  /** True when the row is UNREVIEWED (entered_at null, migration 0042) — the
+   *  Save button reads "Approve" instead, Dan's own screenshot button. Not
+   *  "pending": that word means UNCLEARED here, the bank's axis, and the
+   *  `pending` prop right above is this component's unrelated busy flag.
    *  MoneyRegister is the one that actually calls enterTransactions after
    *  a successful onSave; this component only relabels. */
   approveOnSave: boolean

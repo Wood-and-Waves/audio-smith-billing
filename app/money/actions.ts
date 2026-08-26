@@ -400,7 +400,7 @@ export async function addLedgerTransaction(input: {
       show_id: input.showId,
       payee: input.payee.trim(),
       memo: input.memo.trim() || null,
-      // Wave C (migration 0042): entered_at null means pending, and the ONE
+      // Wave C (migration 0042): entered_at null means UNREVIEWED, and the ONE
       // path allowed to insert null is the OFX importer (importOfx below).
       // A hand-entered row is entered by definition — the design doc's own
       // out-of-scope list — so this is set explicitly here, not left to the
@@ -1661,14 +1661,18 @@ export async function unsplitTransaction(transactionId: string): Promise<Fail | 
 }
 
 // ---------------------------------------------------------------------------
-// Pending (Wave C Task 3) — entered_at null means pending (migration 0042).
-// Enter Now/Enter All share one action below; Reject is its own, since a
-// reject both tombstones and deletes rather than merely flipping a column.
+// Review markers (Wave C Task 3) — entered_at null means UNREVIEWED
+// (migration 0042). NOT "pending": that word names the BANK's axis in this
+// codebase (`cleared`, and the register's own "Pending" group), which is why
+// the flag the register passes around is `isUnreviewed` and deliberately not
+// `isPending`. Enter Now/Enter All share one action below; Reject is its own,
+// since a reject both tombstones and deletes rather than merely flipping a
+// column.
 // ---------------------------------------------------------------------------
 
 /**
- * Enters one or more pending transactions — Enter Now passes a single id,
- * Enter All passes the whole pending queue; both are this same action, no
+ * Enters one or more UNREVIEWED transactions — Enter Now passes a single id,
+ * Enter All passes the whole unreviewed queue; both are this same action, no
  * separate code path per the design doc's own naming. Ownership-scoped on
  * the update itself (`owner_id` in the WHERE, not just RLS) since this
  * writes straight from a caller-supplied id array with no prior per-row
@@ -1683,7 +1687,7 @@ export async function unsplitTransaction(transactionId: string): Promise<Fail | 
  * landed" vs. "correctly did nothing") — rather than collapsing "entered 3
  * of 5" and "entered 0 of 5, all already entered" into the same bare
  * `{ ok: true }`. An empty `ids` array is a no-op success, not a validation
- * error: Enter All on an empty pending queue is a normal state, not a
+ * error: Enter All on an empty unreviewed queue is a normal state, not a
  * mistake.
  */
 export async function enterTransactions(ids: string[]): Promise<Fail | { ok: true; wrote: number }> {
@@ -1759,7 +1763,7 @@ export async function rejectTransaction(
   // row would delete it out of a closed reconciliation, leaving the cleared
   // balance short with no adjustment.
   if (existing.cleared === 'reconciled') return { error: 'Reconciled transactions are locked.' }
-  if (existing.entered_at !== null) return { error: 'Only a pending transaction can be rejected.' }
+  if (existing.entered_at !== null) return { error: 'Only an unreviewed transaction can be rejected.' }
   if (existing.source !== 'import' || !existing.import_id) {
     return { error: 'Only an imported transaction can be rejected.' }
   }
@@ -2008,12 +2012,17 @@ export async function importOfx(
       cleared: 'cleared',
       import_id: ins.importId,
       source: 'import',
-      // Wave C (migration 0042): the OFX importer is the ONE path allowed
-      // to insert entered_at null — every inserted row lands PENDING, a
-      // reviewable queue instead of instantly moving the budget (the design
-      // doc's own framing). Explicit null, not an omission, the same
-      // discipline addLedgerTransaction's own explicit timestamp uses on
-      // the opposite side of this one rule.
+      // Wave C (migration 0042): the OFX importer is still the ONE path
+      // allowed to insert entered_at null. What that null MEANS was
+      // reversed on 2026-08-25 (Dan's call), and this is the line a reader
+      // comes to when asking what it means at insert time: an inserted row
+      // counts in the budget IMMEDIATELY, the moment it lands, exactly like
+      // a hand-entered one. entered_at null marks it "not yet reviewed" and
+      // nothing more — a to-do list, never an accounting gate, and never
+      // the bank's axis (`cleared` above is that, and it lands 'cleared'
+      // because the bank already settled it). Explicit null, not an
+      // omission, the same discipline addLedgerTransaction's own explicit
+      // timestamp uses on the opposite side of this one rule.
       entered_at: null,
     })
     if (error) {
