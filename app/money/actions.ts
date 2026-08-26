@@ -1967,16 +1967,32 @@ export async function importOfx(
     else duplicates += 1
   }
 
+  // Aliases first, memory second — the ORDER is the point. Renaming
+  // `STARBUCKS 8007827282 800-782-728` to `Starbucks` before the memory
+  // lookup is what lets his 18 existing categorized Starbucks rows teach
+  // this row its category. The other order would rename a row that had
+  // already failed to match.
+  const { data: aliasRows, error: aliasError } = await supabase
+    .from('ledger_payee_aliases').select('raw_payee, display_name').eq('owner_id', user.id)
+  if (aliasError) return { error: aliasError.message }
+  const aliases = new Map<string, string>(
+    (aliasRows ?? []).map((a) => [a.raw_payee as string, a.display_name as string]),
+  )
+
   let imported = 0
   let autoCategorized = 0
   for (const ins of plan.inserts) {
+    // The alias resolves FIRST, and both the memory lookup and the stored
+    // payee use its result: the raw descriptor becomes the name he uses,
+    // and only then is the memory asked what that name is categorized as.
+    const payee = aliases.get(normalizePayee(ins.row.name)) ?? ins.row.name
     // Remembered category or null — keyed on (kind, payee) so an expense
     // teaching (e.g. "SQUARE INC" -> Bank Fees) can never pre-fill an
     // income row of the same payee, or the reverse (I1). Every plan.inserts
     // row is already income/expense (planImport's only two insert kinds),
     // so ins.kind is exactly what memoryKey wants; a payee with no memory
     // yet for that kind just gets null, same as before this feature existed.
-    const categoryId = remembered.get(memoryKey(ins.kind, ins.row.name)) ?? null
+    const categoryId = remembered.get(memoryKey(ins.kind, payee)) ?? null
     const { error } = await supabase.from('ledger_transactions').insert({
       owner_id: user.id,
       account_id: accountId,
@@ -1984,7 +2000,7 @@ export async function importOfx(
       amount_cents: ins.row.amountCents,
       kind: ins.kind,
       category_id: categoryId,
-      payee: ins.row.name,
+      payee,
       memo: ins.row.memo,
       cleared: 'cleared',
       import_id: ins.importId,
@@ -2017,6 +2033,53 @@ export async function importOfx(
     statementBalanceCents: parsed.ledgerBalanceCents,
     autoCategorized,
   }
+}
+
+/**
+ * Remember that a bank descriptor means this name, and apply it backwards.
+ *
+ * Dan confirms a suggestion once per merchant (his decision, 2026-08-25 — no
+ * silent auto-merging). Writing the alias also renames every existing row
+ * carrying that exact raw payee, so one confirmation cleans up the rows
+ * already imported as well as every future one. `raw` is normalized on the
+ * way in so a lookup can never miss on case or spacing.
+ *
+ * Upsert, not insert: confirming a different name for the same descriptor
+ * later must correct the alias rather than fail on the unique constraint.
+ */
+export async function setPayeeAlias(
+  rawPayee: string,
+  displayName: string,
+): Promise<Fail | { ok: true; renamed: number }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const raw = normalizePayee(rawPayee)
+  const name = displayName.trim()
+  if (raw === '') return { error: 'That payee is empty.' }
+  if (name === '') return { error: 'Give the payee a name.' }
+
+  const { error: upsertError } = await supabase
+    .from('ledger_payee_aliases')
+    .upsert(
+      { owner_id: user.id, raw_payee: raw, display_name: name },
+      { onConflict: 'owner_id,raw_payee' },
+    )
+  if (upsertError) return { error: upsertError.message }
+
+  // Rename what is already in the books. Owner-scoped explicitly, not just
+  // by RLS, because this is a bulk write keyed on a caller-supplied string.
+  const { data: renamedRows, error: renameError } = await supabase
+    .from('ledger_transactions')
+    .update({ payee: name })
+    .eq('owner_id', user.id)
+    .eq('payee', rawPayee)
+    .select('id')
+  if (renameError) return { error: renameError.message }
+
+  revalidatePath('/money')
+  return { ok: true, renamed: (renamedRows ?? []).length }
 }
 
 /**

@@ -8,6 +8,7 @@ import { formatAmount, formatUSD, parseUSD } from '@/lib/money'
 import { parseAmountBoxes } from '@/lib/moneyMath'
 import { formatDateLong, formatDateShort, todayInChicago } from '@/lib/dates'
 import { normalizePayee } from '@/lib/payeeMemory'
+import { suggestDisplayName } from '@/lib/payeeName'
 import { deriveKind, type CategoryForKind, type LedgerDirection, type LedgerKind } from '@/lib/ledgerRules'
 import { type SplitLegInput } from '@/lib/ledgerSplits'
 import { type Quad } from '@/lib/receiptQuad'
@@ -25,7 +26,7 @@ import {
   createLedgerAccount, addLedgerTransaction, updateLedgerTransaction,
   deleteLedgerTransaction, setTransactionCleared, setTransactionCategory,
   attachLedgerReceipt, replaceLedgerReceipt, removeLedgerReceipt, unlinkTransaction,
-  replaceSplits, unsplitTransaction, enterTransactions, rejectTransaction,
+  replaceSplits, unsplitTransaction, enterTransactions, rejectTransaction, setPayeeAlias,
 } from '@/app/money/actions'
 
 export type CategoryOption = { id: string; name: string; grp: string; budgetRole: 'spending' | 'income' }
@@ -416,7 +417,8 @@ function CreateAccountCard() {
 
 export default function MoneyRegister({
   account: accountProp, categories, categoryBalanceCents, shows, transactions, toReviewIds, workingBalanceCents,
-  clearedBalanceCents, uncategorizedCount, totalCount, uncategorizedOnly, headerActions,
+  clearedBalanceCents, uncategorizedCount, totalCount, knownPayees, aliasedRawPayees,
+  uncategorizedOnly, headerActions,
 }: {
   /** Null in first-run mode — every other prop is meaningless then. */
   account: LedgerAccountSummary | null
@@ -465,6 +467,19 @@ export default function MoneyRegister({
    * already the plumbing it needs.
    */
   totalCount: number
+  /**
+   * Payees already carrying a category — the same rows payee memory learns
+   * from. suggestDisplayName matches a raw bank descriptor against these, so
+   * his existing `Starbucks` is what a `STARBUCKS 8007827282 …` row is
+   * offered as.
+   */
+  knownPayees: string[]
+  /**
+   * Raw descriptors he has already confirmed a name for, NORMALIZED (the
+   * form `ledger_payee_aliases.raw_payee` stores). A row whose payee is in
+   * here gets no chip: he has already named it.
+   */
+  aliasedRawPayees: string[]
   /**
    * Set from `?filter=uncategorized` (app/money/page.tsx). Balances above
    * are never touched by this — only which rows the list below shows, and
@@ -520,6 +535,9 @@ export default function MoneyRegister({
   const [editCategoryId, setEditCategoryId] = useState('')
   const [editShowId, setEditShowId] = useState('')
   const [editMemo, setEditMemo] = useState('')
+  // Remembering a rename is ON by default (Dan's decision) — startEdit resets
+  // it, so every edit starts willing to teach the importer the new name.
+  const [rememberPayee, setRememberPayee] = useState(true)
 
   // SplitEditor's own open/closed flag (Wave C Task 4) — one at a time,
   // same "single set of state, not a per-row map" rule as editingId itself:
@@ -961,6 +979,7 @@ export default function MoneyRegister({
     setEditCategoryId(row.kind === 'transfer' ? TRANSFER_SENTINEL : (row.category_id ?? ''))
     setEditShowId(row.show_id ?? '')
     setEditMemo(row.memo ?? '')
+    setRememberPayee(true)
     // A split parent (legs.length > 0) opens straight into the editor —
     // the display row's own "Edit split" affordance and a plain click on
     // the row body both land here, and either way there is no reason to
@@ -1069,6 +1088,15 @@ export default function MoneyRegister({
     start(async () => {
       const result = await updateLedgerTransaction(input)
       if ('error' in result) { setError(result.error); return }
+      // The rename he confirmed, remembered for next month's import. Failing
+      // here must not read as "the edit failed" — the row itself already
+      // saved — so it surfaces as a note, not an error.
+      if (rememberPayee && input.payee !== row.payee) {
+        const aliased = await setPayeeAlias(row.payee, input.payee)
+        if ('error' in aliased) {
+          setError(`Saved — but the name wasn't remembered: ${aliased.error}`)
+        }
+      }
       setEditingId(null)
       router.refresh()
     })
@@ -1467,6 +1495,14 @@ export default function MoneyRegister({
     const canAdjust = t.receipt_original !== null && t.receipt_path !== null && !t.receipt_original.endsWith('.pdf')
     const hasReceipt = t.receipt_path !== null || t.receipt_original !== null
 
+    // Offer a rename only when this payee has never been confirmed and the
+    // suggestion actually differs from what is there — no chip on a row he
+    // has already named, and none that suggests what it already says.
+    const rawNormalized = normalizePayee(t.payee)
+    const alreadyAliased = aliasedRawPayees.includes(rawNormalized)
+    const suggestion = alreadyAliased ? null : suggestDisplayName(t.payee, knownPayees)
+    const offerRename = suggestion !== null && suggestion !== t.payee && suggestion !== editPayee
+
     // A split parent's category IS its legs (migration 0042 forces
     // category_id null the instant legs exist) — never re-derived from
     // category_id being null, which an ordinary uncategorized row is also
@@ -1584,6 +1620,17 @@ export default function MoneyRegister({
           onChange={setEditShowId}
           options={showOptions}
         />
+        {editPayee !== t.payee && (
+          <label className="flex items-center gap-1.5 text-xs text-muted">
+            <input
+              type="checkbox"
+              checked={rememberPayee}
+              onChange={(e) => setRememberPayee(e.target.checked)}
+              disabled={pending}
+            />
+            Remember this name for future imports
+          </label>
+        )}
         <button
           type="button"
           onClick={() => saveEdit(t)}
@@ -1693,8 +1740,21 @@ export default function MoneyRegister({
             <span aria-hidden />
             <input aria-label="Date" type="date" className={FIELD_FULL} value={editDate} disabled={pending}
                    onChange={(e) => setEditDate(e.target.value)} />
-            <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={editPayee}
-                   disabled={pending} onChange={(e) => setEditPayee(e.target.value)} />
+            {/* Input and chip share ONE grid cell — a bare sibling here would
+                take the next column and shove the whole row out of line. */}
+            <div className="flex flex-col gap-0.5 min-w-0">
+              <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={editPayee}
+                     disabled={pending} onChange={(e) => setEditPayee(e.target.value)} />
+              {offerRename && (
+                <button
+                  type="button"
+                  onClick={() => setEditPayee(suggestion)}
+                  className="text-[11px] font-semibold text-accent hover:opacity-80 truncate"
+                >
+                  Use &ldquo;{suggestion}&rdquo;
+                </button>
+              )}
+            </div>
             {categoryCell}
             <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={editMemo}
                    disabled={pending} onChange={(e) => setEditMemo(e.target.value)} />
@@ -1723,8 +1783,20 @@ export default function MoneyRegister({
         <div className="grid gap-2 grid-cols-2 items-center">
           <input aria-label="Date" type="date" className={FIELD_FULL} value={editDate} disabled={pending}
                  onChange={(e) => setEditDate(e.target.value)} />
-          <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={editPayee}
-                 disabled={pending} onChange={(e) => setEditPayee(e.target.value)} />
+          {/* Same one-cell wrapper as the desktop copy, for the same reason. */}
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <input aria-label="Payee" className={FIELD_FULL} placeholder="Payee" value={editPayee}
+                   disabled={pending} onChange={(e) => setEditPayee(e.target.value)} />
+            {offerRename && (
+              <button
+                type="button"
+                onClick={() => setEditPayee(suggestion)}
+                className="text-[11px] font-semibold text-accent hover:opacity-80 truncate"
+              >
+                Use &ldquo;{suggestion}&rdquo;
+              </button>
+            )}
+          </div>
           {categoryCell}
           <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={editMemo}
                  disabled={pending} onChange={(e) => setEditMemo(e.target.value)} />

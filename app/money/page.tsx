@@ -463,6 +463,8 @@ export default async function MoneyPage({
           clearedBalanceCents={0}
           uncategorizedCount={0}
           totalCount={0}
+          knownPayees={[]}
+          aliasedRawPayees={[]}
         />
       </AppShell>
     )
@@ -748,6 +750,16 @@ export default async function MoneyPage({
     lastReconciledAt: accountRow.last_reconciled_at,
   }
 
+  // The suggestion's raw material: payees he already uses, and the aliases he
+  // has already confirmed. Both are small — a few hundred rows at most — and
+  // the register needs them to decide whether to offer a rename at all.
+  const { data: aliasRows } = await supabase
+    .from('ledger_payee_aliases').select('raw_payee')
+  const aliasedRaw: string[] = ((aliasRows ?? []) as { raw_payee: string }[]).map((a) => a.raw_payee)
+  const knownPayees: string[] = [...new Set(
+    allTxns.filter((t) => t.category_id !== null && t.payee.trim() !== '').map((t) => t.payee),
+  )]
+
   return (
     <AppShell current="money" wide>
       <MoneyRegister
@@ -761,6 +773,8 @@ export default async function MoneyPage({
         clearedBalanceCents={clearedBalanceCents}
         uncategorizedCount={uncategorizedCount}
         totalCount={totalCount}
+        knownPayees={knownPayees}
+        aliasedRawPayees={aliasedRaw}
         uncategorizedOnly={uncategorizedOnly}
         headerActions={
           <>
