@@ -436,6 +436,63 @@ Still open:
   make elapsed time work without a lookup at all. Matters whenever the API
   misses a flight — a charter, a codeshare, a very new schedule.
 
+## Flight check-in alarm, 24 hours out (2026-08-26, Dan)
+
+Dan: *"I would [like] my flights in the calendar to have an alarm 24 hours
+before the flight so I can check in on time."*
+
+**Where.** `flightEvent` in `lib/ics.ts` — the feed already emits one VEVENT
+per flight, `UID:flight-{id}@theaudiosmith.com`. The alarm is a nested
+VALARM inside that VEVENT:
+
+```
+BEGIN:VALARM
+TRIGGER:-PT24H
+ACTION:DISPLAY
+DESCRIPTION:Check in for <flight no>
+END:VALARM
+```
+
+**The timing cases already in that function decide whether this is even
+meaningful:**
+- `depAt` known -> `DTSTART` is a real instant, so `-PT24H` fires exactly 24
+  hours before departure. This is the case worth building for.
+- `depAt` unknown -> the event falls back to `DTSTART;VALUE=DATE`, an
+  all-day event. A 24-hour trigger off an all-day start means "midnight the
+  day before" in most clients, which is not what he asked for and would fire
+  at a useless hour. Either skip the VALARM entirely when `depAt` is null,
+  or use a wall-clock trigger; skipping is the honest default, since the app
+  genuinely does not know when the flight leaves.
+- Flight times come from AeroDataBox at entry (`FLIGHT_API_KEY`); a
+  hand-entered flight may have no times at all, which is exactly the
+  `depAt`-null case above. See the open item about hand-entered flights
+  having no timezone — the same gap feeds this one.
+
+**THE CATCH, verify before building.** Alarms on a SUBSCRIBED ics feed are
+handled inconsistently by calendar clients, and in the worst case silently:
+- **Google Calendar ignores VALARM entirely on subscribed (ICS URL)
+  calendars.** If that is where Dan reads this feed, the feature cannot work
+  as asked and the answer is a different mechanism (see below).
+- **Apple Calendar** honours them, but each subscription has a
+  "Remove alerts" / "Auto-refresh" setting that can strip them, and the
+  refresh interval means an alarm added today may not appear until the
+  client next polls.
+So: **ask Dan which calendar app subscribes to the feed before writing any
+code.** Building it blind risks shipping something that appears to work and
+silently never fires.
+
+**If his client strips alarms**, the fallback that definitely works is the
+app's own reminder cron (`app/api/cron/reminders/route.ts`, with the
+`reminder_log` once-per-day dedupe already in place) sending him an email or
+push 24 hours before a flight with times. That is a different feature with
+the same outcome, and it does not depend on any subscriber's settings.
+
+**Note it changes every subscriber's calendar**, his wife's included — she
+would start getting check-in alarms for his flights unless the VALARM is
+somehow scoped, which ICS cannot do (one feed, one set of events). Worth
+asking whether that is fine or whether the cron/email route is better for
+that reason alone.
+
 ## W-9 on file + attach-to-invoice checkbox + annual refresh reminder (2026-08-19, Dan)
 
 New clients ask for a W-9. Wanted: upload one to the app; a checkbox on the
