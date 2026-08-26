@@ -412,3 +412,23 @@ test('conservation law holds for explodeForReports too: every row counted, none 
   assert.equal(outputTotal, total)
   assert.equal(output.length, 4) // cat-1, cat-2, owner-pay leg, temp-transfer leg
 })
+
+test('the gate cannot come back quietly: a row carrying entered_at still yields its line', () => {
+  // Dan reversed Wave C's decision on 2026-08-25 — imported rows count in
+  // the budget immediately. Deleting `enteredAt` from the input type is not
+  // enough to defend that: re-adding it as an OPTIONAL field plus the old
+  // `if (txn.enteredAt === null) continue` restores the gate with every
+  // other test still green. The cast is deliberate — it feeds the shape a
+  // reintroduction would read, so this test goes red the moment one lands.
+  const unreviewed = {
+    month: '2026-08', categoryId: 'cat-a', amountCents: -59210, enteredAt: null,
+  } as unknown as TxnForExplode
+  assert.deepEqual(explodeForCategories([unreviewed]), [
+    { month: '2026-08', categoryId: 'cat-a', amountCents: -59210 },
+  ])
+
+  const unreviewedReport = {
+    month: '2026-08', categoryId: 'cat-a', amountCents: -59210, kind: 'expense', enteredAt: null,
+  } as unknown as ReportTxnForExplode
+  assert.equal(explodeForReports([unreviewedReport]).length, 1)
+})

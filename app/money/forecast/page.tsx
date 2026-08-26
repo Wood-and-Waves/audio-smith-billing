@@ -24,29 +24,30 @@ export const dynamic = 'force-dynamic'
 // (app/money/actions.ts) may only export actions.
 const PAGE_SIZE = 1000
 
-// `entered_at` and `category_id` are Task 5's own addition (Wave C) — this
-// same fetch feeds TWO different reads below, one balance-shaped and one
-// kind-shaped, and they disagree on purpose about pending and legs:
+// `category_id` is Task 5's own addition (Wave C) — this same fetch feeds
+// TWO different reads below, one balance-shaped and one kind-shaped, and
+// they disagree on purpose about legs, but never about review state:
 //   - workingBalance (lib/ledgerBalance.ts) is balance-shaped — Dan's own
-//     option 1 semantics, pending counts in the working balance and a split
-//     parent's total is still real money either way, so `txnRows` is
-//     handed to it completely UNFILTERED, exactly as before this wave.
+//     option 1 semantics, an unreviewed row counts in the working balance
+//     and a split parent's total is still real money either way, so
+//     `txnRows` is handed to it completely UNFILTERED, as it always was.
 //   - computeOverheadCents (lib/forecast.ts) sums by KIND the same way
 //     lib/ledgerReports.ts's plSummary does (expense only, excluding
 //     owner_pay/transfer/income) — that makes it kind-shaped, not balance-
 //     shaped, so it goes through explodeForReports below before ever
-//     reaching computeOverheadCents: a pending row must not skew the
-//     3-month average before Dan has reviewed it, and a split parent's own
-//     kind (unchanged by splitting — only category_id is forced null, see
+//     reaching computeOverheadCents: a split parent's own kind (unchanged
+//     by splitting — only category_id is forced null, see
 //     replace_transaction_splits' own doc comment) must not stand in for
 //     its legs' real, possibly-different kinds (the $400 case).
+// `entered_at` is not fetched at all: it marks only "I have looked at this"
+// (2026-08-25), so an unreviewed row belongs in the 3-month average exactly
+// like every other row, and neither read has any use for the column.
 type RawTxnRow = {
   id: string
   date: string
   amount_cents: number
   kind: string
   category_id: string | null
-  entered_at: string | null
 }
 
 async function fetchAllForecastTxns(
@@ -58,7 +59,7 @@ async function fetchAllForecastTxns(
   for (;;) {
     const { data, error } = await supabase
       .from('ledger_transactions')
-      .select('id, date, amount_cents, kind, category_id, entered_at')
+      .select('id, date, amount_cents, kind, category_id')
       .eq('account_id', accountId)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })

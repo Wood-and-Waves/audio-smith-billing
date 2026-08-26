@@ -159,13 +159,14 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
 
   // Candidates for "Link a payment": recent deposits not already spoken for.
   //
-  // Pending rows are excluded. A PENDING row (entered_at null, migration
-  // 0042) is an imported bank line he has not accepted into his books yet —
-  // it counts in no category, no report, no budget and no forecast, all of
-  // which drop entered_at === null. Settling an invoice against one would
-  // mark it paid off money that is not in the books, and rejectTransaction
-  // would then refuse to reject the row because it is "linked". Every other
-  // consumer filters these out; acceptIncomeMatch refuses them too.
+  // UNREVIEWED rows are offered too, deliberately. entered_at null
+  // (migration 0042) means only "Dan has not looked at this imported row
+  // yet" — it is a review marker, not an accounting gate, and such a row
+  // counts in every category, report, budget and forecast the moment it
+  // lands (his 2026-08-25 decision). So it is ordinary money and can be the
+  // deposit that paid this invoice; often it is the very row that says the
+  // invoice got paid, and filtering it out would hide the payment from the
+  // one panel built to find it. acceptIncomeMatch takes the same view.
   //
   // PostgREST has no clean NOT IN subquery, so this reads the newest
   // qualifying deposits and THEN asks both link tables which of THOSE ids
@@ -195,7 +196,6 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
       .select('id, date, payee, amount_cents')
       .eq('kind', 'income')
       .gt('amount_cents', 0)
-      .not('entered_at', 'is', null)
       .order('date', { ascending: false })
       .order('id', { ascending: false })
       .limit(200)

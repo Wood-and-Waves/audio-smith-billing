@@ -87,18 +87,17 @@ async function fetchAllBudgetMoves(
   return { rows, error: null }
 }
 
-// `id` and `entered_at` are Task 5's own addition (Wave C): `id` is what
-// the split-legs map below is keyed by, and `entered_at` is what
-// explodeForCategories reads to drop a pending row from activity entirely
-// (migration 0042 — null means pending). Neither existed on this page's
-// txn assembly before this wave; buildBudget's own arithmetic (lib/budget.ts)
+// `id` is Task 5's own addition (Wave C): it is what the split-legs map
+// below is keyed by. `entered_at` is deliberately NOT read here — every row
+// counts in the budget the moment it lands, reviewed or not (Dan's
+// 2026-08-25 decision), so the review marker has no bearing on activity and
+// this page never fetches it. buildBudget's own arithmetic (lib/budget.ts)
 // is untouched, only what feeds it changes.
 type RawTxnRow = {
   id: string
   date: string
   category_id: string | null
   amount_cents: number
-  entered_at: string | null
 }
 
 // Same single-account model as the register (see accountRow's own query
@@ -120,7 +119,7 @@ async function fetchAllBudgetTxns(
   for (;;) {
     const { data, error } = await supabase
       .from('ledger_transactions')
-      .select('id, date, category_id, amount_cents, entered_at')
+      .select('id, date, category_id, amount_cents')
       .eq('account_id', accountId)
       .gte('date', `${FIRST_BUDGET_MONTH}-01`)
       .order('created_at', { ascending: true })
@@ -241,9 +240,10 @@ export async function assembleBudget(
   if (txnError) return { ok: false, error: txnError }
 
   // Split legs (Wave C Task 5) — owner-wide, bucketed by transaction_id, fed
-  // into explodeForCategories below alongside entered_at so a split parent's
-  // legs (not its own suppressed line) and no pending row ever reach
-  // buildBudget. A transaction absent from this map is simply unsplit.
+  // into explodeForCategories below so a split parent's legs, not its own
+  // suppressed line, are what reach buildBudget. That is the only row this
+  // path drops; an unreviewed row is not filtered here or anywhere else. A
+  // transaction absent from this map is simply unsplit.
   const { rows: splitLegRows, error: splitLegError } = await fetchAllBudgetSplitLegs(supabase)
   if (splitLegError) return { ok: false, error: splitLegError }
   const legsByTxnId = new Map<string, { categoryId: string | null; amountCents: number }[]>()

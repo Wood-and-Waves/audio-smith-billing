@@ -21,20 +21,21 @@ export const dynamic = 'force-dynamic'
 // either existing copy (no category/show names — reports never renders one).
 const LEDGER_TXN_PAGE_SIZE = 1000
 
-// `id` and `entered_at` are Task 5's own addition (Wave C) — `id` is the
-// split-legs map's key below, `entered_at` is what explodeForReports reads
-// to drop a pending row (migration 0042: null = pending) before it ever
-// reaches plSummary/spendByCategory/monthlyTotals. This raw shape is
-// deliberately NOT `ReportTxn` (lib/ledgerReports.ts's own pure-lib input,
-// unchanged by this wave) — it's the row this page fetches, one step before
-// the explosion below produces `ReportTxn`s.
+// `id` is Task 5's own addition (Wave C) — it is the split-legs map's key
+// below. `entered_at` is pointedly absent: explodeForReports drops nothing
+// for being unreviewed (migration 0042's marker means only "I have looked at
+// this", per Dan's 2026-08-25 decision), so every row reaches
+// plSummary/spendByCategory/monthlyTotals and this page has no reason to
+// fetch the column. This raw shape is deliberately NOT `ReportTxn`
+// (lib/ledgerReports.ts's own pure-lib input, unchanged by this wave) — it's
+// the row this page fetches, one step before the explosion below produces
+// `ReportTxn`s.
 type RawReportTxnRow = {
   id: string
   date: string
   amount_cents: number
   kind: string
   category_id: string | null
-  entered_at: string | null
 }
 
 async function fetchAllReportTxns(
@@ -46,7 +47,7 @@ async function fetchAllReportTxns(
   for (;;) {
     const { data, error } = await supabase
       .from('ledger_transactions')
-      .select('id, date, amount_cents, kind, category_id, entered_at')
+      .select('id, date, amount_cents, kind, category_id')
       .eq('account_id', accountId)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })

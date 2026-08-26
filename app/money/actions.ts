@@ -312,12 +312,14 @@ type LedgerTxnRow = {
   payee: string
   category_id: string | null
   kind: LedgerKind
-  // Wave C (migration 0042): null = pending. Rides along on every caller of
-  // this loader for the same "cheap column on an already-open row" reason as
-  // payee/category_id/kind above — reconcileAccount's own pending-block
-  // check (below) is the one caller that actually needs it; every other
-  // caller's cast just ignores it, same as they already ignore payee/
-  // category_id/kind when they don't need those either.
+  // Migration 0042: null = UNREVIEWED, meaning only "Dan hasn't looked at
+  // this imported row yet." It is never an accounting gate — an unreviewed
+  // row counts in the budget, the reports and the reconcile math exactly
+  // like any other. So no caller of this loader branches on it today (the
+  // pending-block refusal reconcileAccount used to run was removed on
+  // 2026-08-25); it rides along for the same "cheap column on an already-
+  // open row" reason as payee/category_id/kind above, and every caller's
+  // cast simply ignores it.
   entered_at: string | null
 }
 
@@ -764,7 +766,7 @@ export async function acceptIncomeMatch(input: {
 
   const { data: txn } = await supabase
     .from('ledger_transactions')
-    .select('id, date, amount_cents, kind, payee, show_id, entered_at')
+    .select('id, date, amount_cents, kind, payee, show_id')
     .eq('id', input.transactionId)
     .maybeSingle()
   if (!txn) return { error: 'That transaction no longer exists.' }
@@ -774,16 +776,13 @@ export async function acceptIncomeMatch(input: {
   if (txn.kind !== 'income' || txn.amount_cents <= 0) {
     return { error: 'Only a deposit can be matched to an invoice.' }
   }
-  // A PENDING row (entered_at null, migration 0042) is an imported bank line
-  // he has not accepted into his books yet: it counts in no category, no
-  // report and no budget. Settling an invoice against one would mark it paid
-  // off money that is not in the books — and rejectTransaction would then
-  // refuse to reject the row because it is "linked". The Matches queue
-  // already filters these out; this is the boundary that makes it true for
-  // every caller.
-  if (txn.entered_at === null) {
-    return { error: 'That deposit is still pending — enter it on the ledger first.' }
-  }
+  // No review check here, deliberately. An UNREVIEWED row (entered_at null,
+  // migration 0042) is an imported bank line Dan has not looked at yet, and
+  // nothing more: it counts in every category, report, budget and forecast
+  // the moment it lands. So it is ordinary money, and it can legitimately be
+  // the deposit that paid an invoice — often it is the very row that tells
+  // him the invoice got paid. entered_at is a review marker, never an
+  // accounting gate.
 
   // Neither link table may already name this transaction — a bank row is
   // either an income link, an expense link, or unlinked, never two of those
@@ -1746,11 +1745,17 @@ export async function rejectTransaction(
 
   const { data: existing, error: existingError } = await supabase
     .from('ledger_transactions')
-    .select('account_id, entered_at, source, import_id, receipt_path, receipt_original')
+    .select('account_id, entered_at, cleared, source, import_id, receipt_path, receipt_original')
     .eq('id', id)
     .maybeSingle()
   if (existingError) return { error: existingError.message }
   if (!existing) return { error: 'That transaction no longer exists.' }
+  // Reconcile locks a row on `cleared` alone (0029's RPC never reads
+  // entered_at), so since the pending-block refusal was removed a row can be
+  // BOTH reconciled and unreviewed. Every other mutator honours that lock;
+  // without this one, rejecting such a row would delete it out of a closed
+  // reconciliation, leaving the cleared balance short with no adjustment.
+  if (existing.cleared === 'reconciled') return { error: 'Reconciled transactions are locked.' }
   if (existing.entered_at !== null) return { error: 'Only a pending transaction can be rejected.' }
   if (existing.source !== 'import' || !existing.import_id) {
     return { error: 'Only an imported transaction can be rejected.' }

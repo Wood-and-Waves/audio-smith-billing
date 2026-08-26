@@ -39,11 +39,12 @@ type RawTxnRow = {
   memo: string | null
   cleared: 'uncleared' | 'cleared' | 'reconciled'
   created_at: string
-  // null = pending (migration 0042) — the register's Pending section reads
-  // this directly (LedgerTxnRow.entered_at, unchanged here); nothing on
-  // THIS page re-derives anything from it yet (Task 5's job: exploding legs
-  // and dropping pending from the budget/CategoryPicker-balance assembly
-  // below — untouched by this wave, per the plan's own Global Constraints).
+  // null = UNREVIEWED (migration 0042) — a review marker, "I have looked at
+  // this", never an accounting gate. The register renders it directly
+  // (LedgerTxnRow.entered_at, unchanged here) and the Matches badge below
+  // still keys off it, but no money math on this page does: the budget and
+  // CategoryPicker-balance assembly below count every row the moment it
+  // lands, reviewed or not (Dan's 2026-08-25 decision).
   entered_at: string | null
   receipt_path: string | null
   receipt_original: string | null
