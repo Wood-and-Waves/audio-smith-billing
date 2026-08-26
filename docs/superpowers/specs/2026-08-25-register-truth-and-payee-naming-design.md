@@ -63,6 +63,17 @@ brought in, and it still tombstones before deleting.
 **Entering now moves no money.** It sets `entered_at` and clears the marks.
 Nothing else changes, because the row already counted.
 
+**The count is whole-register.** `N to review` counts every unreviewed row the
+account has, never the filtered view — the same rule the Pending section's own
+unfiltered prop already enforced, and for the same reason: a display filter
+must never shrink what `Enter All` reaches.
+
+**The invoice matcher stops excluding them too.** `app/money/page.tsx` filters
+`entered_at !== null` out of the rows it hands the matcher (Wave C's F2). With
+the gate gone that filter has no rationale: an unreviewed deposit is ordinary
+money and can legitimately be the one that paid an invoice. It is removed, so
+the matcher sees every cleared deposit.
+
 ## Part 2 — the budget gate is removed
 
 `explodeForCategories` (`lib/ledgerSplits.ts`) currently yields NOTHING for a
