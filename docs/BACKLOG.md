@@ -703,6 +703,19 @@ design and so can sit above an empty filtered body.
 
 ## Small / cosmetic
 
+- Import error message can't tell a broken download from a wrong format
+  (2026-08-26, Dan). He tried to import a QFX Chase had just handed him and
+  got "Not an OFX file." The file was **9 bytes containing the literal text
+  `undefined`** — Chase's download had failed and written a JavaScript
+  `undefined` to disk. The message was accurate but pointed him at the format
+  (and at us) instead of at the failed download. `parseOfx` (`lib/ofx.ts`)
+  throws that string when neither `<OFX` nor `<STMTTRN` is present; the fix is
+  to check length/emptiness FIRST and say so — e.g. "That file is empty or
+  didn't download correctly (9 bytes)." Suggested threshold: anything under
+  ~100 bytes, or text with no `<` at all, is a failed download, not a format
+  mismatch. Keep "Not an OFX file." for real files of the wrong type (a CSV,
+  a PDF).
+
 - Calendar feed link moved to Settings (2026-08-22, Dan: "I don't want to
   accidentally hit the refresh button" — he has shared his feed with his
   wife). `/calendar` keeps only Add flight. Considered and not done: an
