@@ -102,10 +102,16 @@ export default function LedgerImport({
           selected", a caption) that read as none-of-this-is-a-button (Dan).
           Same sr-only-input-inside-a-label trick as ExpenseLog's picker. */}
       <label className={pending ? undefined : 'cursor-pointer'}>
+        {/* QFX, QBO and OFX are one format — Chase's own export menu offers
+            all three and they differ only by INTU.BID, which parseOfx
+            ignores. Leaving .qbo off `accept` greyed it out in Finder (Dan),
+            so the one file type his bank hands him that always downloads
+            cleanly was the one he couldn't pick. The Intuit MIME types are
+            for the browsers that send those instead of an extension. */}
         <input
           ref={inputRef}
           type="file"
-          accept=".ofx,.qfx,application/x-ofx"
+          accept=".ofx,.qfx,.qbo,application/x-ofx,application/vnd.intu.qfx,application/vnd.intu.qbo"
           disabled={pending}
           onChange={(e) => onPick(e.target.files)}
           className="sr-only peer"
