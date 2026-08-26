@@ -501,6 +501,42 @@ Still open from that design, deliberately deferred:
 - **Envelope auto-funding** from the projected tax set-aside (still waiting
   on the CPA's rate, same as the bridge's deferred set-aside).
 
+## The register told the truth — SHIPPED 2026-08-26
+
+Dan, after importing his August statement: *"The transactions say 'Pending'
+but they are not pending. They are cleared... In YNAB 'pending' is a not
+cleared transaction."* He was right, and the evidence was on his screen:
+every row in that section carried a PENDING chip AND a green cleared badge.
+Wave C had hung the section on `entered_at` (has HE reviewed it) and named
+it with YNAB's word for `cleared` (has the BANK posted it).
+Design: docs/superpowers/specs/2026-08-25-register-truth-and-payee-naming-design.md.
+His five decisions: imported rows count in the budget immediately
+(`entered_at` becomes a review marker only); payee naming SUGGESTS and he
+confirms once; a confirmed name REPLACES the bank's text; no chip —
+unreviewed is bold + a rail dot; "Pending" means uncleared.
+Also fixed his category-dropdown rendering bug, whose root cause was the
+`opacity-70` on those rows: opacity below 1 creates a stacking context, so
+the open menu both inherited the fade and was trapped under the sticky
+header despite its higher z-index. Removing the fade was the fix; no
+z-index changed.
+Migration 0048 adds `ledger_payee_aliases`, applied at import BEFORE the
+payee-memory lookup — that order is what makes his 18 existing categorized
+`Starbucks` rows finally teach an imported `STARBUCKS 8007827282
+800-782-728` its category.
+Review catches worth remembering: removing the reconcile refusal made
+"reconciled AND unreviewed" reachable, and `rejectTransaction` had no
+reconciled lock, so a locked row could have been deleted out of a closed
+reconciliation (fixed); the test suite would have stayed green if the gate
+were reintroduced as an OPTIONAL field (a cast-based regression test now
+holds it red).
+Residuals: the `Pending` (uncleared) group will be empty for him by
+construction — his imports always arrive cleared and he rarely enters a row
+before it clears; a SHORT known payee can substring-match an unrelated
+merchant (`Ace` inside `Palace`), bounded by confirm-before-write; accented
+and non-Latin merchant names get stripped by the name cleaner; with
+`?filter=uncategorized` on, the `N to review` count stays whole-register by
+design and so can sit above an empty filtered body.
+
 ## Money module — remaining phases
 
 - ~~Invoice/expense auto-bridge~~ **BUILT 2026-08-21** (migration 0032;

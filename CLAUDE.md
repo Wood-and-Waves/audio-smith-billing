@@ -312,7 +312,37 @@ status.
   amount/date/payee — the matcher excludes pending rows (an unaccepted
   import cannot pay an invoice) and never needs legs. Adding a consumer?
   Decide which of the three it is, in a comment, before the query.
-- **Pending = `entered_at IS NULL`** — only the OFX importer inserts it;
+- **`entered_at IS NULL` = UNREVIEWED, a review marker and NOTHING else**
+  (Dan reversed Wave C on 2026-08-25). An imported row counts in the budget,
+  reports, P&L, forecast and parity the moment it lands; Enter only clears
+  the marker. The gate was two `continue` lines in `lib/ledgerSplits.ts`'s
+  two explode helpers — every category-shaped consumer goes through those,
+  which is why the reversal lives there and nowhere else. Consequence that
+  bit us: reconcile locks on `cleared` alone, so a row can now be reconciled
+  AND unreviewed — `rejectTransaction` gained the reconciled lock every
+  other mutator already had.
+- **"Pending" in the register means UNCLEARED**, the bank's axis, as YNAB
+  uses it. Wave C hung a section on the REVIEW axis and called it Pending,
+  so every row in it showed a PENDING chip beside a green cleared badge —
+  Dan: *"The transactions say 'Pending' but they are not pending."* The
+  register flag for the review axis is `isUnreviewed`, deliberately not
+  `isPending`. Unreviewed rows render inline by date, bold + a rail dot,
+  never in a section, never with a chip.
+- **NEVER put `opacity` (or transform/filter/isolation) on a container that
+  holds a popover.** `opacity-70` on the old pending row created a stacking
+  context that both faded the open CategoryPicker menu and trapped it under
+  the sticky header despite a higher z-index. The fix was deleting the fade,
+  not raising a z-index.
+- **Payee aliases (0048) apply BEFORE payee memory.** He has 18 rows
+  categorized under `Starbucks`; the bank sends
+  `STARBUCKS 8007827282 800-782-728`, and `memoryKey` matches the payee
+  string EXACTLY, so memory never fired. `ledger_payee_aliases` maps the
+  bank's descriptor to his name at import, and only then does memory run —
+  that order is the feature. `raw_payee` is stored already `normalizePayee`d
+  (SQL cannot enforce it); every read and write must normalize or lookups
+  silently miss. Suggestions only, confirmed once — a silent auto-merge
+  would eventually fold his `Hyatt Regency Greenwich` into a Grand Hyatt.
+- **Superseded (Wave C, 2026-08-24):** Pending = `entered_at IS NULL` — only the OFX importer inserts it;
   the column defaults to now() so a forgotten path is safe-by-construction
   (0044's lesson: reconcile's adjustment predated the column). Pending
   counts in working AND cleared balances (Dan's chosen semantics), and in
