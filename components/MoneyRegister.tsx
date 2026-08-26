@@ -413,7 +413,7 @@ function CreateAccountCard() {
 }
 
 export default function MoneyRegister({
-  account: accountProp, categories, categoryBalanceCents, shows, transactions, pendingRows, workingBalanceCents,
+  account: accountProp, categories, categoryBalanceCents, shows, transactions, toReviewIds, workingBalanceCents,
   clearedBalanceCents, uncategorizedCount, totalCount, uncategorizedOnly, headerActions,
 }: {
   /** Null in first-run mode — every other prop is meaningless then. */
@@ -437,9 +437,15 @@ export default function MoneyRegister({
    * regardless of what subset is being rendered.
    */
   transactions: LedgerTxnRow[]
-  /** The FULL pending queue, unfiltered — the page's display filter must
-   *  never narrow what the Pending section shows or Enter All reaches. */
-  pendingRows: LedgerTxnRow[]
+  /**
+   * Ids of every UNREVIEWED row (entered_at null), built server-side from the
+   * UNFILTERED set. `transactions` above is the DISPLAY-FILTERED one
+   * (?filter=uncategorized narrows it), so counting unreviewed rows from it
+   * would under-count and Enter All would silently reach fewer rows than the
+   * line above it claims. That is why this is its own prop and not derived
+   * here.
+   */
+  toReviewIds: string[]
   workingBalanceCents: number
   clearedBalanceCents: number
   uncategorizedCount: number
@@ -1152,7 +1158,7 @@ export default function MoneyRegister({
 
   function enterAll() {
     setError(null)
-    const ids = pendingRows.map((t) => t.id)
+    const ids = toReviewIds
     if (ids.length === 0) return
     start(async () => {
       const result = await enterTransactions(ids)
@@ -1784,9 +1790,8 @@ export default function MoneyRegister({
     // able to unlink (renderEditRow's own Unlink covers editable rows via
     // edit mode).
     const showUnlink = !editable && (t.invoiceNumbers.length > 0 || t.expenseLinked)
-    // Pending (Wave C Task 4): entered_at null. The chip's TEXT is the
-    // signal ("the chip text is the non-color signal", per the plan) — the
-    // muted row tone is decoration on top of it, never the only cue.
+    // Unreviewed: entered_at null. Marked bold + a rail dot below (Dan's
+    // decision: no chip). Never a fade — see the wrapper's own comment.
     const isPending = t.entered_at === null
 
     return (
@@ -1795,21 +1800,32 @@ export default function MoneyRegister({
         onClick={() => { if (editable) startEdit(t) }}
         style={{ gridTemplateColumns: gridTemplate }}
         className={
+          /* Bold, never faded. `opacity` below 1 creates a CSS stacking
+             context, which both faded the open category menu inside the row
+             and trapped it beneath the sticky header despite its higher
+             z-index. Never put opacity (or transform/filter/isolation) on a
+             row that contains a popover. */
           `grid items-center gap-x-3 pl-3 -ml-3 pr-3 py-2 border-b border-line ${
             editable ? 'cursor-pointer hover:bg-surface' : ''
-          } ${isPending ? 'opacity-70' : ''}`
+          } ${isPending ? 'font-semibold' : ''}`
         }
       >
-        <ReceiptControl row={t} pending={pending} onView={openReceipt} onAttach={openAttach} />
+        <span className="relative flex items-center justify-center">
+          <ReceiptControl row={t} pending={pending} onView={openReceipt} onAttach={openAttach} />
+          {/* Unreviewed marker (Dan's decision: no chip). Paired with the
+              bold row above; both clear the moment he enters the row. */}
+          {isPending && (
+            <span
+              aria-hidden
+              className="absolute -left-1 h-1.5 w-1.5 rounded-full bg-accent"
+            />
+          )}
+        </span>
         <span className="tabular text-xs text-muted">{formatDateShort(t.date)}</span>
         <span className="min-w-0 flex items-center gap-2">
           <span className="truncate font-medium">{t.payee || '—'}</span>
-          {isPending && (
-            <span className="text-[11px] font-bold uppercase tracking-wider text-muted
-                             bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
-              Pending
-            </span>
-          )}
+          {/* Screen readers get the state from text, not the dot. */}
+          {isPending && <span className="sr-only"> (to review)</span>}
           {t.invoiceNumbers.length > 0 && (
             <span className="text-[11px] font-bold uppercase tracking-wider text-muted
                              bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
@@ -1952,17 +1968,24 @@ export default function MoneyRegister({
     const canAdjustReceipt = showReceiptLinks
       && t.receipt_original !== null && t.receipt_path !== null && !t.receipt_original.endsWith('.pdf')
     const showUnlink = !editable && (t.invoiceNumbers.length > 0 || t.expenseLinked)
-    // Same pending flag as renderDesktopRow's own — see its comment.
+    // Same unreviewed flag as renderDesktopRow's own — see its comment.
     const isPending = t.entered_at === null
 
     return (
       <li
         key={t.id}
         onClick={() => { if (editable) startEdit(t) }}
-        className={`border-b border-line py-3 ${editable ? 'cursor-pointer' : ''} ${isPending ? 'opacity-70' : ''}`}
+        className={
+          /* Bold, never faded — see renderDesktopRow's own comment for why
+             opacity here broke the category menu. */
+          `border-b border-line py-3 ${editable ? 'cursor-pointer' : ''} ${isPending ? 'font-semibold' : ''}`
+        }
       >
         <div className="flex items-baseline gap-2">
-          <span className="font-semibold flex-1 min-w-0 truncate">{t.payee || '—'}</span>
+          <span className="font-semibold flex-1 min-w-0 truncate">
+            {t.payee || '—'}
+            {isPending && <span className="sr-only"> (to review)</span>}
+          </span>
           <span className="tabular font-semibold shrink-0">
             {/* A zero-cent txn (transfer carries no sign constraint) would
                 otherwise fall through to inflowCents and print "$0.00" —
@@ -1972,12 +1995,6 @@ export default function MoneyRegister({
           <ClearedControl row={t} pending={pending} onToggle={() => toggleCleared(t)} />
         </div>
         <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
-          {isPending && (
-            <span className="text-[11px] font-bold uppercase tracking-wider text-muted
-                             bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
-              Pending
-            </span>
-          )}
           <div onClick={stopPropagation}>
             {isSplit ? (
               <span className="inline-flex items-center gap-1 text-[11px] text-muted
@@ -2092,65 +2109,28 @@ export default function MoneyRegister({
     )
   }
 
-  // Pending (Wave C Task 4, entered_at null) — Dan's own reviewable import
-  // queue, pinned above EVERYTHING else on both layouts (his YNAB
-  // screenshot's own "Pending Transactions" group). Partitioned out of
-  // `transactions` entirely rather than duplicated: a pending row renders
-  // once, in this section, never again in the dated list/table below —
-  // same "pulled out, not duplicated" shape the phone grouping already used
-  // for uncleared rows before this wave (see its own comment, now renamed,
-  // just below). Balances are untouched by this split: balanceCents is
-  // computed per-row in app/money/page.tsx over the FULL account regardless
-  // of which section a row ends up rendered in (Dan's option 1 — pending
-  // counts in working/cleared balances).
-  // The queue is its own unfiltered prop — the review caught the filtered
-  // version silently shrinking the section and Enter All's reach whenever
-  // ?filter=uncategorized was on.
-  const pendingQueue = pendingRows
-  const nonPending = transactions.filter((t) => t.entered_at !== null)
+  // Dan, 2026-08-25: "In YNAB 'pending' is a not cleared transaction." Wave
+  // C hung this section on entered_at (has he reviewed it) and labelled it
+  // with YNAB's word for `cleared` (has the BANK posted it), so every row in
+  // it showed a PENDING chip AND a green cleared badge. Every row now
+  // renders in date order whatever its entered_at; `Pending` below means
+  // uncleared, which is what it meant before Wave C took the word.
+  const toReviewCount = toReviewIds.length
 
-  // Phone grouping, over the same (newest-first) NON-PENDING rows the
-  // desktop table renders: every uncleared row first, under an "Uncleared"
-  // header (renamed from "Pending" now that Wave C gives that word its own,
-  // different meaning above — the section built from pendingQueue owns it
-  // instead), then the rest bucketed by date. Bucketing by "does this row's
-  // date match the open bucket" rather than a Map works because
-  // `nonPending` is still newest-first (a filter over an already-sorted
-  // array preserves order) — same-date rows are always contiguous once the
-  // interleaved uncleared ones are pulled out, so this never needs to
-  // re-sort.
-  const unclearedRows = nonPending.filter((t) => t.cleared === 'uncleared')
-  const clearedRows = nonPending.filter((t) => t.cleared !== 'uncleared')
+  // Phone grouping, over the same (newest-first) rows the desktop table
+  // renders: every uncleared row first, under a "Pending" header, then the
+  // rest bucketed by date. Bucketing by "does this row's date match the open
+  // bucket" rather than a Map works because `transactions` is newest-first
+  // (a filter over an already-sorted array preserves order) — same-date rows
+  // are always contiguous once the interleaved uncleared ones are pulled
+  // out, so this never needs to re-sort.
+  const unclearedRows = transactions.filter((t) => t.cleared === 'uncleared')
+  const clearedRows = transactions.filter((t) => t.cleared !== 'uncleared')
   const dateGroups: { date: string; rows: LedgerTxnRow[] }[] = []
   for (const t of clearedRows) {
     const open = dateGroups[dateGroups.length - 1]
     if (open && open.date === t.date) open.rows.push(t)
     else dateGroups.push({ date: t.date, rows: [t] })
-  }
-
-  /** A plain, non-sticky, non-resizable copy of the desktop column header —
-   *  used above the Pending section's own rows so its grid still reads
-   *  under labels, without touching payeeHeadRef/memoHeadRef (which must
-   *  stay attached to exactly one DOM node — the real, sticky header below
-   *  still owns them and the column-resize math they feed) or duplicating
-   *  the drag grips onto a second set of pointer handlers. */
-  function pendingColumnHeader() {
-    return (
-      <div
-        style={{ gridTemplateColumns: gridTemplate }}
-        className="grid gap-x-3 pl-3 -ml-3 pr-3 pt-1 pb-2 mb-1 border-b border-line"
-      >
-        <span aria-hidden />
-        <span className="eyebrow">Date</span>
-        <span className="eyebrow">Payee</span>
-        <span className="eyebrow">Category</span>
-        <span className="eyebrow">Memo</span>
-        <span className="eyebrow text-right">Outflow</span>
-        <span className="eyebrow text-right">Inflow</span>
-        <span className="eyebrow text-right">Balance</span>
-        <span aria-hidden />
-      </div>
-    )
   }
 
   return (
@@ -2425,47 +2405,28 @@ export default function MoneyRegister({
         </p>
       )}
 
-      {/* Pending (Wave C Task 4) — pinned above EVERYTHING below, both
-          layouts, per the design doc's own "pinned above the dated list"
-          (Dan's YNAB screenshot's "Pending Transactions" group). Hidden
-          entirely at zero, same as the old uncleared-only phone group used
-          to be (now "Uncleared", just below) — an empty header with an
-          Enter All that would do nothing is worse than no section at all. */}
-      {pendingQueue.length > 0 && (
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-2">
-            <p className="eyebrow">Pending ({pendingQueue.length})</p>
-            <button
-              type="button"
-              onClick={enterAll}
-              disabled={pending}
-              className="text-xs font-semibold text-accent hover:opacity-80 disabled:opacity-40"
-            >
-              Enter All
-            </button>
-          </div>
-          <div className="hidden sm:block">
-            {pendingColumnHeader()}
-            {pendingQueue.map(renderDesktopRow)}
-          </div>
-          <ul className="sm:hidden border-t border-line">
-            {pendingQueue.map(renderPhoneRow)}
-          </ul>
+      {/* Dan's own words for the action ("Enter Now" / "Enter All") on a
+          line that replaces Wave C's whole section. Counted over the FULL
+          unreviewed set (toReviewIds), never the filtered `transactions`
+          below — a display filter must never shrink what Enter All reaches
+          or what this line claims it will reach. */}
+      {toReviewCount > 0 && (
+        <div className="mb-3 flex items-center justify-between">
+          <p className="eyebrow">
+            {toReviewCount} to review
+          </p>
+          <button
+            type="button"
+            onClick={enterAll}
+            disabled={pending}
+            className="text-xs font-semibold text-accent hover:opacity-80 disabled:opacity-40"
+          >
+            Enter All
+          </button>
         </div>
       )}
 
-      {nonPending.length === 0 ? (
-        // Gated on `nonPending`, not `transactions` (M4, Wave C final
-        // review): the body below renders `nonPending`
-        // (desktop/uncleared/dateGroups all derive from it), not the raw
-        // `transactions` prop — a register where every row is still pending
-        // has `transactions.length > 0` but nothing in the set this branch
-        // actually draws from, so the old check showed the column headers
-        // over an empty table instead of this message. The Pending section
-        // above (pendingQueue) renders unconditionally either way, so a
-        // fully-pending register still shows its queue, just with this
-        // empty-state message below it instead of a header with nothing
-        // under it.
+      {transactions.length === 0 ? (
         <p className="text-muted border-l-2 border-line pl-4 py-1">
           {uncategorizedOnly ? 'Nothing uncategorized.' : 'No transactions yet.'}
         </p>
@@ -2473,9 +2434,8 @@ export default function MoneyRegister({
         <>
           {/* Desktop/tablet: a YNAB-style spreadsheet — one CSS grid per row,
               a shared column template (resizable via the header grips), matching the
-              edit-mode grid the phone list below also drops into. Rows here are
-              the NON-pending set (nonPending) — a pending row renders once, in
-              the Pending section above, never twice. */}
+              edit-mode grid the phone list below also drops into. Every row in
+              `transactions` renders here, unreviewed ones included. */}
           <div className="hidden sm:block">
             <div
               style={{ gridTemplateColumns: gridTemplate }}
@@ -2496,17 +2456,21 @@ export default function MoneyRegister({
               <span className="eyebrow text-right">Balance</span>
               <span aria-hidden />
             </div>
-            {nonPending.map(renderDesktopRow)}
+            {unclearedRows.length > 0 && (
+              <>
+                <p className="eyebrow mt-3 mb-1">Pending ({unclearedRows.length})</p>
+                {unclearedRows.map(renderDesktopRow)}
+              </>
+            )}
+            {clearedRows.map(renderDesktopRow)}
           </div>
 
-          {/* Phone: YNAB-mobile's date-grouped list — an "Uncleared" section
-              (Wave C's rename: the word "Pending" now belongs to the section
-              above) for every uncleared, non-pending row, then one section
-              per date. */}
+          {/* Phone: YNAB-mobile's date-grouped list — a "Pending" section for
+              every uncleared row, then one section per date. */}
           <div className="sm:hidden">
             {unclearedRows.length > 0 && (
               <div className="mb-2">
-                <p className="eyebrow mb-2">Uncleared</p>
+                <p className="eyebrow mb-2">Pending</p>
                 <ul className="border-t border-line">
                   {unclearedRows.map(renderPhoneRow)}
                 </ul>

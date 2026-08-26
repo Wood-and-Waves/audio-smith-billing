@@ -29,15 +29,12 @@ type RawLedgerTxnRow = {
  *  this set, so it has to be complete or a real deposit/charge could be
  *  missing from the queue entirely.
  *
- *  `.not('entered_at', 'is', null)` excludes pending rows (Wave C final
- *  review, I2): a pending import is an unapproved bank line Dan hasn't
- *  accepted into his books yet (migration 0042's own `entered_at` null
- *  means pending). Without this filter one could still be offered here,
- *  accepted as an invoice payment through acceptIncomeMatch, and marked the
- *  invoice paid — and then rejectTransaction (the Pending queue's own
- *  reject) would refuse to delete it as "linked", stranding a row Dan never
- *  actually entered. A row Dan hasn't accepted into his books cannot pay an
- *  invoice or settle an expense. */
+ *  No entered_at filter (2026-08-25): `entered_at` is a review marker, not an
+ *  accounting gate, so an unreviewed deposit is ordinary money that can
+ *  legitimately be the one that paid an invoice. acceptIncomeMatch and the
+ *  invoice page's Link-a-payment list already accept them; filtering them out
+ *  here was the last place treating them as not-money, and it hid exactly the
+ *  links this queue exists to surface. */
 async function fetchAllLedgerTxns(
   supabase: Awaited<ReturnType<typeof createClient>>,
   accountId: string,
@@ -49,7 +46,6 @@ async function fetchAllLedgerTxns(
       .from('ledger_transactions')
       .select('id, date, amount_cents, kind, payee')
       .eq('account_id', accountId)
-      .not('entered_at', 'is', null)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
       .range(from, from + PAGE_SIZE - 1)

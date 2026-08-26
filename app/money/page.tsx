@@ -41,10 +41,11 @@ type RawTxnRow = {
   created_at: string
   // null = UNREVIEWED (migration 0042) — a review marker, "I have looked at
   // this", never an accounting gate. The register renders it directly
-  // (LedgerTxnRow.entered_at, unchanged here) and the Matches badge below
-  // still keys off it, but no money math on this page does: the budget and
-  // CategoryPicker-balance assembly below count every row the moment it
-  // lands, reviewed or not (Dan's 2026-08-25 decision).
+  // (LedgerTxnRow.entered_at, unchanged here) to mark the row for review, and
+  // toReviewIds below counts it, but nothing else on this page keys off it:
+  // the Matches badge, the budget and the CategoryPicker-balance assembly all
+  // count every row the moment it lands, reviewed or not (Dan's 2026-08-25
+  // decision).
   entered_at: string | null
   receipt_path: string | null
   receipt_original: string | null
@@ -457,7 +458,7 @@ export default async function MoneyPage({
           categoryBalanceCents={{}}
           shows={shows}
           transactions={[]}
-          pendingRows={[]}
+          toReviewIds={[]}
           workingBalanceCents={0}
           clearedBalanceCents={0}
           uncategorizedCount={0}
@@ -619,10 +620,11 @@ export default async function MoneyPage({
   const linkedInvoiceIds = new Set(invoiceLinkRows.map((l) => l.invoice_id))
   const linkedExpenseIds = new Set(expenseLinkRows.map((l) => l.expense_id))
 
-  // Entered rows only — the matcher's other call site (/money/matches)
-  // filters pending at the fetch; this badge must never disagree with the
-  // page it links to (the register's own badge/list rule).
-  const matchRows: BankRow[] = allTxns.filter((t) => t.entered_at !== null).map((t) => ({
+  // No pending filter (2026-08-25): an unreviewed deposit is ordinary money
+  // now and can legitimately be the one that paid an invoice. /money/matches
+  // drops the same filter at its own fetch, so this badge still agrees with
+  // the page it links to (the register's own badge/list rule).
+  const matchRows: BankRow[] = allTxns.map((t) => ({
     id: t.id, date: t.date, amount_cents: t.amount_cents, payee: t.payee, kind: t.kind,
     linked: linkedTxnIds.has(t.id),
   }))
@@ -706,11 +708,7 @@ export default async function MoneyPage({
     ? sorted.filter((t) => t.category_id === null && !legsByTxnId.has(t.id) && (t.kind === 'income' || t.kind === 'expense'))
     : sorted
   const totalCount = filtered.length
-  // One mapper for both lists below — the DISPLAY list obeys the page
-  // filter, but the Pending queue must never: a pending row that is already
-  // categorized (allowed and expected) would otherwise vanish from the
-  // Pending section — and from Enter All's reach — the moment the
-  // Uncategorized filter is on. The queue is the whole queue, always.
+  // The one row mapper for the DISPLAY list, which obeys the page filter.
   const toRow = (t: (typeof sorted)[number]): LedgerTxnRow => ({
     id: t.id,
     date: t.date,
@@ -740,7 +738,9 @@ export default async function MoneyPage({
     linkedReceiptPath: linkedReceiptPathByTxnId.get(t.id) ?? null,
   })
   const transactions: LedgerTxnRow[] = filtered.map(toRow)
-  const pendingRows: LedgerTxnRow[] = sorted.filter((t) => t.entered_at === null).map(toRow)
+  // Unreviewed ids from the UNFILTERED set: the review count and Enter All
+  // must never shrink because a display filter is on.
+  const toReviewIds: string[] = sorted.filter((t) => t.entered_at === null).map((t) => t.id)
 
   const account: LedgerAccountSummary = {
     id: accountRow.id,
@@ -756,7 +756,7 @@ export default async function MoneyPage({
         categoryBalanceCents={categoryBalanceCents}
         shows={shows}
         transactions={transactions}
-        pendingRows={pendingRows}
+        toReviewIds={toReviewIds}
         workingBalanceCents={workingBalanceCents}
         clearedBalanceCents={clearedBalanceCents}
         uncategorizedCount={uncategorizedCount}
