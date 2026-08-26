@@ -468,18 +468,21 @@ meaningful:**
   `depAt`-null case above. See the open item about hand-entered flights
   having no timezone — the same gap feeds this one.
 
-**THE CATCH, verify before building.** Alarms on a SUBSCRIBED ics feed are
-handled inconsistently by calendar clients, and in the worst case silently:
-- **Google Calendar ignores VALARM entirely on subscribed (ICS URL)
-  calendars.** If that is where Dan reads this feed, the feature cannot work
-  as asked and the answer is a different mechanism (see below).
-- **Apple Calendar** honours them, but each subscription has a
-  "Remove alerts" / "Auto-refresh" setting that can strip them, and the
-  refresh interval means an alarm added today may not appear until the
-  client next polls.
-So: **ask Dan which calendar app subscribes to the feed before writing any
-code.** Building it blind risks shipping something that appears to work and
-silently never fires.
+**ANSWERED 2026-08-26: Apple Calendar, on iPhone and Mac, both of them.**
+That is the client that DOES honour VALARM on a subscribed feed (Google
+Calendar ignores alarms on ICS subscriptions outright, so this would have
+been unbuildable there). Two Apple-specific settings still decide whether it
+actually fires, and BOTH are on his devices, not in our code:
+- **"Remove alerts" / "Remove Alarms"** per subscription — macOS Calendar >
+  the subscription's info pane; iOS Settings > Calendar > Accounts >
+  Subscribed Calendars > the feed. If that is on, every alarm we publish is
+  stripped on arrival.
+- **The refresh interval.** A subscribed calendar only sees a new alarm when
+  it next polls. If the subscription refreshes weekly, a flight added
+  Thursday for a Saturday trip may never deliver its 24-hour alarm. Set the
+  subscription to refresh daily or hourly, or the feature is unreliable by
+  construction rather than by bug.
+Check both before concluding a missing alarm is our defect.
 
 **If his client strips alarms**, the fallback that definitely works is the
 app's own reminder cron (`app/api/cron/reminders/route.ts`, with the
