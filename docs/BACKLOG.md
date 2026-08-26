@@ -529,7 +529,19 @@ reconciled lock, so a locked row could have been deleted out of a closed
 reconciliation (fixed); the test suite would have stayed green if the gate
 were reintroduced as an OPTIONAL field (a cast-based regression test now
 holds it red).
-Residuals: the `Pending` (uncleared) group will be empty for him by
+Residuals: **correcting a payee name a second time does not propagate.**
+The rename checkbox is deliberately scoped to the suggestion flow (final
+review: ungated, it fired on ANY payee edit — relabelling one of 40
+`Amazon` rows would have silently rewritten all 40 and the alias with
+them). The cost is that once a name is confirmed, the row carries the
+display name, no suggestion is offered, and `setPayeeAlias`'s correction
+branch — which IS implemented and correct server-side — is unreachable
+from the register. Renaming touches the one row and the alias goes stale,
+so the next import still lands under the old name. Safe direction, real
+gap. The fix is the shape the category sweep already uses in that same
+component: rename the row, then offer "also rename the other N rows and
+remember it?" with a count, an explicit click, defaulting OFF.
+Also: the `Pending` (uncleared) group will be empty for him by
 construction — his imports always arrive cleared and he rarely enters a row
 before it clears; a SHORT known payee can substring-match an unrelated
 merchant (`Ace` inside `Palace`), bounded by confirm-before-write; accented
