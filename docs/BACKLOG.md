@@ -555,6 +555,33 @@ Still open from that design, deliberately deferred:
   homework questions (in the reference doc).
 - **Income-by-payee report**: Dan's YNAB tracked income per client; payee
   carries that here — a Reports section grouping income by payee.
+- **A live Chase connection (SimpleFIN, or Plaid) — DAN'S CHOSEN WAY FORWARD
+  for pending transactions (2026-08-25).** Investigation that day settled
+  what each export can and cannot do; do not redo it:
+  - **QFX / QBO / OFX are the same format** (byte-identical for the same
+    download bar one `<INTU.BID>` routing tag — 10898 Quicken, 2430
+    QuickBooks). All are structurally posted-only: `<BANKTRANLIST>` requires
+    `DTPOSTED` on every entry and OFX has no standard pending element. A
+    file import can therefore NEVER carry a pending transaction.
+  - They do carry the FACT of pending activity: his 8/25 statement showed
+    `LEDGERBAL` 7105.06 against `AVAILBAL` 8830.97. `lib/ofx.ts` reads only
+    LEDGERBAL (deliberately — see its own comment on tag order) and discards
+    AVAILBAL. Surfacing the gap as "$X pending at the bank" is a small,
+    safe, unbuilt option that needs no new format.
+  - **Chase's CSV DOES contain pending rows**, marked by an EMPTY `Balance`
+    column (a posted row always carries its running balance; a pending one
+    cannot). Verified on his real 8/25 export: 7 empty-balance rows summing
+    to exactly $1,725.91 = AVAILBAL − LEDGERBAL, to the penny, cross-checked
+    against the QFX. Its posted rows are the same 20 the QFX carries, so the
+    CSV is a strict superset.
+  - **Why we are NOT importing that CSV (Dan's call):** it has NO transaction
+    id — columns are Details, Posting Date, Description, Amount, Type,
+    Balance, Check or Slip # — where the QFX gives every row a `FITID` that
+    the importer dedupes on. Worse, a pending charge is a moving target: the
+    amount can change when a tip posts, a hold can vanish, and when it does
+    post it arrives with a real FITID matching nothing we generated, so the
+    same charge would land twice. *"I don't want to do it without ID's."*
+  - So itemized pending needs a live connection, not a better file.
 - **SimpleFIN auto-connect** (optional, privacy-first alternative to Plaid).
 - **Mark-as-owner-pay quick control** on imported rows (row-click → edit
   mode covers it today — less discoverable since the register rebuild, which
