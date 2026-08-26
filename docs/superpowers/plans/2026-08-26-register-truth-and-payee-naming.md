@@ -124,7 +124,9 @@ git commit -m "feat: imported rows count in the budget immediately"
 
 - [ ] **Step 1: Merge the queue back into the register**
 
-In `components/MoneyRegister.tsx`, delete the `pendingRows` prop (both from the destructured parameter list and from the props type) and its doc comment. Then replace the partition:
+In `components/MoneyRegister.tsx`, REPLACE the `pendingRows` prop with `toReviewIds: string[]` (in the destructured parameter list and the props type). This matters: `transactions` is the DISPLAY-FILTERED set (`?filter=uncategorized` narrows it), so counting unreviewed rows from it would under-count and `Enter All` would silently reach fewer rows than it claims. `toReviewIds` is built server-side from the unfiltered set — the same reason Wave C's queue was its own unfiltered prop. Document that on the prop.
+
+Then replace the partition:
 
 ```ts
   const pendingQueue = pendingRows
@@ -140,7 +142,7 @@ with the honest one — every row renders, and the two groups are now the BANK's
   // it showed a PENDING chip AND a green cleared badge. Every row now
   // renders in date order whatever its entered_at; `Pending` below means
   // uncleared, which is what it meant before Wave C took the word.
-  const toReviewCount = transactions.filter((t) => t.entered_at === null).length
+  const toReviewCount = toReviewIds.length
 ```
 
 Everywhere below that referenced `nonPending`, use `transactions` instead — the desktop table, `unclearedRows`, `clearedRows` and the phone `dateGroups` all derive from the full set now. Rename the phone group's `"Uncleared"` heading to `"Pending"`.
@@ -176,7 +178,7 @@ In its place, immediately above the register body, add:
 `enterAll` currently reads `pendingRows.map((t) => t.id)`. Change that one line to:
 
 ```ts
-    const ids = transactions.filter((t) => t.entered_at === null).map((t) => t.id)
+    const ids = toReviewIds
 ```
 
 - [ ] **Step 2b: Uncleared rows group under "Pending" on desktop too**
@@ -231,7 +233,15 @@ Screen readers get the state from text, not the dot, so add to the payee cell, r
 
 - [ ] **Step 4: The page stops splitting the rows**
 
-In `app/money/page.tsx`, delete the `pendingRows` prop passed to `<MoneyRegister …>` and whatever computes it. In the same file remove the matcher's pending filter:
+In `app/money/page.tsx`, replace the `pendingRows` computation and prop with the id list, built from the UNFILTERED `sorted` set (`transactions` on the next line is built from `filtered`, which a display filter narrows — that is exactly what this must not inherit):
+
+```ts
+  // Unreviewed ids from the UNFILTERED set: the review count and Enter All
+  // must never shrink because a display filter is on.
+  const toReviewIds: string[] = sorted.filter((t) => t.entered_at === null).map((t) => t.id)
+```
+
+and pass `toReviewIds={toReviewIds}`. Note `transactions` already includes unreviewed rows (it is `filtered.map(toRow)` with no entered_at filter), so nothing else needs to change for them to render inline. The empty-state render near the top of the file passes `transactions={[]} pendingRows={[]}` — change that second one to `toReviewIds={[]}`. In the same file remove the matcher's pending filter:
 
 ```ts
   const matchRows: BankRow[] = allTxns.filter((t) => t.entered_at !== null).map((t) => ({
@@ -312,6 +322,15 @@ test('a different Hyatt does NOT get merged into his Greenwich one', () => {
   assert.equal(suggestDisplayName('GRAND HYATT SAN DIEGO F SAN DIEG', KNOWN), 'Grand Hyatt')
 })
 
+test('a suggestion can be imperfect, and that is the design — it costs one correction', () => {
+  // His real string is `UBER *BUSINESS EATS SAN FRANCISC`, which contains
+  // "uber" but not "ubereats", so it suggests `Uber`. He corrects it once and
+  // the alias — keyed on the exact raw string — never asks again. Pinned so
+  // nobody later "fixes" this into fuzzy matching that would merge his
+  // Hyatt Regency into a Grand Hyatt.
+  assert.equal(suggestDisplayName('UBER *BUSINESS EATS SAN FRANCISC', KNOWN), 'Uber')
+})
+
 test('an already-clean payee suggests itself unchanged', () => {
   assert.equal(suggestDisplayName('Starbucks', KNOWN), 'Starbucks')
 })
@@ -374,7 +393,7 @@ function titleCase(w: string): string {
 /**
  * Clean a raw descriptor into something readable: drop a leading processor
  * prefix (`TST*`), keep words until the first noise word, title-case them,
- * and cap at three words so a long location tail cannot ride along.
+ * and cap at TWO words so a long location tail cannot ride along.
  */
 function cleanRaw(raw: string): string {
   const stripped = raw.replace(/^[A-Z]{2,4}\*/i, '').replace(/\*/g, ' ')
@@ -383,7 +402,9 @@ function cleanRaw(raw: string): string {
   for (const w of words) {
     if (isNoiseWord(w)) break
     kept.push(titleCase(w.replace(/[^A-Za-z0-9&'-]/g, '')))
-    if (kept.length === 3) break
+    // TWO words, not three: 'GRAND HYATT SAN DIEGO F SAN DIEG' has no noise
+    // word to stop at, and three would keep the stray 'San'.
+    if (kept.length === 2) break
   }
   const out = kept.join(' ').trim()
   return out === '' ? raw.trim() : out
