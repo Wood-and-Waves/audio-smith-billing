@@ -211,22 +211,22 @@ export default async function MoneyReportsPage({
     legsByTxnId.set(l.transaction_id, list)
   }
 
-  // Seam choice (Wave C Task 5, stated per the plan's own instruction):
-  // explode ONCE, here, before any row reaches lib/ledgerReports.ts's pure
-  // functions — that lib stays untouched, same "only the assembly changes"
-  // rule the plan's Global Constraints hold lib/budget.ts to. explodeForReports
+  // Seam choice (stated per the plan's own instruction): explode ONCE,
+  // here, before any row reaches lib/ledgerReports.ts's pure functions —
+  // that lib stays untouched, same "only the assembly changes" rule the
+  // plan's Global Constraints hold lib/budget.ts to. explodeForReports
   // (lib/ledgerSplits.ts) is the kind-aware sibling of explodeForCategories:
-  // a pending row (entered_at null) yields nothing, and a split parent's own
-  // line is suppressed in favor of its legs, each carrying ITS OWN kind —
-  // never the parent's (the $400 case: an owner_pay parent's Temporary
-  // Transfer leg must show as an EXPENSE in the P&L below, which only a
-  // leg-level kind read can produce).
+  // every row yields its line, reviewed or not (2026-08-25 — entered_at is
+  // a review marker, not an accounting gate, so it isn't read here), and a
+  // split parent's own line is suppressed in favor of its legs, each
+  // carrying ITS OWN kind — never the parent's (the $400 case: an owner_pay
+  // parent's Temporary Transfer leg must show as an EXPENSE in the P&L
+  // below, which only a leg-level kind read can produce).
   const explodableTxns: ReportTxnForExplode[] = rawTxns.map((t) => ({
     date: t.date,
     amountCents: t.amount_cents,
     kind: t.kind,
     categoryId: t.category_id,
-    enteredAt: t.entered_at,
     legs: legsByTxnId.get(t.id),
   }))
   const allTxns: ReportTxn[] = explodeForReports(explodableTxns).map((line) => ({

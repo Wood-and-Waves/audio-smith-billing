@@ -14,7 +14,7 @@ import {
 } from '@/lib/ledgerRules'
 import { decideIncomeRoleChange } from '@/lib/incomeRoleGuard'
 import { amountLinkRefusal } from '@/lib/invoicePayment'
-import { validateLegs, pendingBlocksReconcile, type SplitLegInput, type SplitParentPatch } from '@/lib/ledgerSplits'
+import { validateLegs, type SplitLegInput, type SplitParentPatch } from '@/lib/ledgerSplits'
 
 type Fail = { error: string }
 
@@ -2069,26 +2069,13 @@ export async function reconcileAccount(input: {
   // above), which sorts identically to a real date compare.
   const rows = allRows.filter((r) => r.date <= input.reconciledOn)
 
-  // Reconcile refuses while any pending row is dated on or before the
-  // statement date (Task 3, Global Constraints; the predicate itself is
-  // lib/ledgerSplits.ts's pendingBlocksReconcile, Task 2 — this action just
-  // supplies the pending rows and the date, never re-derives the rule).
-  // `rows` above is already narrowed to date <= reconciledOn, so this is
-  // the exact pool the design doc means by "pending rows exist at or before
-  // the statement date": they already count toward `cleared` below (Dan's
-  // own balance semantics — pending counts in both balances) but haven't
-  // been approved, so locking them into 'reconciled' would be dishonest and
-  // excluding them from the statement math would break it. The message
-  // names what to do, the design doc's own resolution.
-  const pendingAtOrBeforeStatement = rows.filter((r) => r.entered_at === null)
-  if (pendingBlocksReconcile(pendingAtOrBeforeStatement, input.reconciledOn)) {
-    const n = pendingAtOrBeforeStatement.length
-    return {
-      error: `${n} pending transaction${n === 1 ? '' : 's'} dated on or before the statement date ` +
-        `${input.reconciledOn} — enter or reject ${n === 1 ? 'it' : 'them'} first, then reconcile.`,
-    }
-  }
-
+  // No unreviewed-row refusal here any more (removed 2026-08-25): Wave C
+  // had reconcile stop while any row with entered_at null sat at or before
+  // the statement date. Dan reversed that — entered_at is a review marker,
+  // not an accounting gate, and an imported row is as real to the statement
+  // as any other. Those rows already counted toward `cleared` below (his
+  // own balance semantics), so nothing about the statement math changes;
+  // only the refusal is gone.
   const cleared = clearedBalance(account.opening_balance_cents, rows as BalanceLike[])
   const diff = input.statementBalanceCents - cleared
 

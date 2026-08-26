@@ -523,22 +523,22 @@ export default async function MoneyForecastPage() {
 
   const takeHomeCents = settingsRow?.monthly_take_home_cents ?? 0
   const overheadOverrideCents = settingsRow?.monthly_overhead_cents ?? null
-  // Wave C Task 5: computeOverheadCents sums by kind (expense only,
-  // lib/forecast.ts's own doc comment) — the same shape lib/ledgerReports.ts's
-  // plSummary reads — so it goes through explodeForReports (lib/ledgerSplits.ts)
-  // rather than the raw `txnRows` workingBalance uses above. A pending row
-  // (entered_at null) drops out entirely; a split parent's own line is
-  // suppressed in favor of its legs, each carrying its OWN kind (a split
-  // parent's `kind` column is left unchanged by splitting — only
-  // category_id is forced null, see replace_transaction_splits' own doc
-  // comment — so reading the parent's kind here would misclassify a leg
-  // whose real kind differs, the same $400 case P&L must get right).
+  // computeOverheadCents sums by kind (expense only, lib/forecast.ts's own
+  // doc comment) — the same shape lib/ledgerReports.ts's plSummary reads —
+  // so it goes through explodeForReports (lib/ledgerSplits.ts) rather than
+  // the raw `txnRows` workingBalance uses above. Every row counts, reviewed
+  // or not (2026-08-25: entered_at is a review marker, not an accounting
+  // gate, and is not read here); a split parent's own line is suppressed in
+  // favor of its legs, each carrying its OWN kind (a split parent's `kind`
+  // column is left unchanged by splitting — only category_id is forced
+  // null, see replace_transaction_splits' own doc comment — so reading the
+  // parent's kind here would misclassify a leg whose real kind differs, the
+  // same $400 case P&L must get right).
   const overheadExplodable: ReportTxnForExplode[] = txnRows.map((t) => ({
     date: t.date,
     amountCents: t.amount_cents,
     kind: t.kind,
     categoryId: t.category_id,
-    enteredAt: t.entered_at,
     legs: legsByTxnId.get(t.id),
   }))
   const overheadTxns = explodeForReports(overheadExplodable).map((line) => ({

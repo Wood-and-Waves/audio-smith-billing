@@ -539,20 +539,19 @@ export default async function MoneyPage({
       openingMonth < OPENING_MONTH ? OPENING_MONTH :
       openingMonth > currentMonth ? currentMonth :
       openingMonth
-    // Wave C Task 5: explodeForCategories (lib/ledgerSplits.ts) — the SAME
-    // single helper app/money/budget/page.tsx's own txn assembly calls —
-    // runs over this SAME paged `allTxns` before it feeds buildBudget, so a
-    // split parent's line is suppressed in favor of its legs and a pending
-    // row (entered_at null) drops out entirely. `legsByTxnId` is already
-    // built above (Task 4, for the register's own Split (N) display) — Task
-    // 5's own instruction is to reuse it here rather than double-fetch.
+    // explodeForCategories (lib/ledgerSplits.ts) — the SAME single helper
+    // app/money/budget/page.tsx's own txn assembly calls — runs over this
+    // SAME paged `allTxns` before it feeds buildBudget, so a split parent's
+    // line is suppressed in favor of its legs. Every row counts, reviewed
+    // or not (2026-08-25): entered_at is not read here at all any more.
+    // `legsByTxnId` is already built above (for the register's own Split (N)
+    // display) and is reused here rather than double-fetched.
     const explodableTxns: TxnForExplode[] = allTxns
       .filter((t) => t.date >= `${FIRST_BUDGET_MONTH}-01`)
       .map((t) => ({
         month: t.date.slice(0, 7),
         categoryId: t.category_id,
         amountCents: t.amount_cents,
-        enteredAt: t.entered_at,
         legs: legsByTxnId.get(t.id),
       }))
     const budgetTxns: BudgetTxn[] = [

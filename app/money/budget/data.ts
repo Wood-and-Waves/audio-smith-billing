@@ -307,21 +307,20 @@ export async function assembleBudget(
     openingMonth < OPENING_MONTH ? OPENING_MONTH :
     openingMonth > last ? last :
     openingMonth
-  // Wave C Task 5: rawTxns goes through explodeForCategories (lib/
-  // ledgerSplits.ts) — the ONE helper every category-reading consumer
-  // calls — before buildBudget ever sees it. A split parent's own line is
-  // suppressed in favor of its legs (the $400 case: an owner_pay leg plus a
-  // Temporary Transfer expense leg, each landing in its own category's
-  // activity); a pending row (entered_at null, migration 0042's OFX import
-  // axis) yields nothing at all, matching Dan's own semantics — pending
-  // counts in the register's balances but nothing category-shaped until
-  // entered. The opening-balance line is NOT a transaction (see its own
-  // comment above) and is injected after explosion, unchanged.
+  // rawTxns goes through explodeForCategories (lib/ledgerSplits.ts) — the
+  // ONE helper every category-reading consumer calls — before buildBudget
+  // ever sees it. A split parent's own line is suppressed in favor of its
+  // legs (the $400 case: an owner_pay leg plus a Temporary Transfer expense
+  // leg, each landing in its own category's activity). Every row counts,
+  // reviewed or not: an imported row (entered_at null, migration 0042's OFX
+  // import axis) hits the budget the moment it lands, Dan's 2026-08-25
+  // decision — entered_at means only "I have looked at this" and is not
+  // read on this path at all. The opening-balance line is NOT a transaction
+  // (see its own comment above) and is injected after explosion, unchanged.
   const explodableTxns: TxnForExplode[] = rawTxns.map((t) => ({
     month: t.date.slice(0, 7),
     categoryId: t.category_id,
     amountCents: t.amount_cents,
-    enteredAt: t.entered_at,
     legs: legsByTxnId.get(t.id),
   }))
   const txns: BudgetTxn[] = [
