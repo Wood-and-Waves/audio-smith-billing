@@ -482,7 +482,10 @@ actually fires, and BOTH are on his devices, not in our code:
   Thursday for a Saturday trip may never deliver its 24-hour alarm. Set the
   subscription to refresh daily or hourly, or the feature is unreliable by
   construction rather than by bug.
-Check both before concluding a missing alarm is our defect.
+**Dan verified both on 2026-08-26: refresh is 1 hour, Remove alerts is
+OFF.** So nothing on the client side blocks this — it is buildable as
+specified, and a missing alarm after shipping would be our defect, not a
+settings problem. Re-check only if he changes devices or re-subscribes.
 
 **If his client strips alarms**, the fallback that definitely works is the
 app's own reminder cron (`app/api/cron/reminders/route.ts`, with the
