@@ -478,8 +478,15 @@ export default function MoneyRegister({
    * Raw descriptors he has already confirmed a name for, NORMALIZED (the
    * form `ledger_payee_aliases.raw_payee` stores). A row whose payee is in
    * here gets no chip: he has already named it.
+   *
+   * `null` means the alias read FAILED (app/money/page.tsx) — not that the
+   * list is empty. The two must not collapse into each other: an unknown
+   * read as "nothing aliased yet" would put a rename chip back on every
+   * payee he has already confirmed, inviting him to re-confirm names that
+   * are in fact already saved. While this is null NO row is offered a
+   * rename chip, which is the honest reading of "we don't know."
    */
-  aliasedRawPayees: string[]
+  aliasedRawPayees: string[] | null
   /**
    * Set from `?filter=uncategorized` (app/money/page.tsx). Balances above
    * are never touched by this — only which rows the list below shows, and
@@ -499,7 +506,6 @@ export default function MoneyRegister({
   const router = useRouter()
   const [pending, start] = useTransition()
   const [error, setError] = useState<string | null>(null)
-
   // The add row's own state. Declared unconditionally, ABOVE the first-run
   // early return below, so the hook order never changes between "no account
   // yet" and "account just created" renders.
@@ -574,6 +580,18 @@ export default function MoneyRegister({
   const [appliedNotice, setAppliedNotice] = useState<{ rowId: string; count: number } | null>(null)
   const appliedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => () => { if (appliedTimeoutRef.current) clearTimeout(appliedTimeoutRef.current) }, [])
+
+  // The rename's own twin of appliedNotice, and deliberately the SAME idiom
+  // (count, text-good line under the register, self-clearing timeout, unmount
+  // guard) rather than the shared `error` state: confirming a payee name also
+  // rewrites the payee on every row that shared it — 18, on the Starbucks
+  // case — and setPayeeAlias has always returned that count while saveEdit
+  // threw it away, so the largest effect of the save was the one thing he was
+  // never told about. It is good news, not a failure, and `error` renders in
+  // text-danger at every one of its sites, so it cannot go there.
+  const [renamedNotice, setRenamedNotice] = useState<number | null>(null)
+  const renamedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (renamedTimeoutRef.current) clearTimeout(renamedTimeoutRef.current) }, [])
 
   // Tapping the receipt icon (view) opens the ENHANCED copy in a lightbox —
   // same component ExpenseLog shares, ported unchanged.
@@ -956,6 +974,7 @@ export default function MoneyRegister({
     setError(null)
     setApplyPrompt(null)
     setAppliedNotice(null)
+    setRenamedNotice(null)
     setEditingId(row.id)
     setEditDate(row.date)
     setEditPayee(row.payee)
@@ -1091,10 +1110,23 @@ export default function MoneyRegister({
       // The rename he confirmed, remembered for next month's import. Failing
       // here must not read as "the edit failed" — the row itself already
       // saved — so it surfaces as a note, not an error.
+      //
+      // The success side gets said out loud too, through `note` (not `error`,
+      // which renders red everywhere): setPayeeAlias rewrites the payee on
+      // EVERY row sharing this one's — 18 of them, on the Starbucks case this
+      // feature was built for — and it has always counted them, and this call
+      // has always thrown that count away. That left the biggest thing the
+      // save just did completely invisible: he retitles one row and seventeen
+      // others silently change behind him. Reporting it is the other half of
+      // the checkbox above now naming both of its effects.
       if (rememberPayee && input.payee !== row.payee) {
         const aliased = await setPayeeAlias(row.payee, input.payee)
         if ('error' in aliased) {
           setError(`Saved — but the name wasn't remembered: ${aliased.error}`)
+        } else if (aliased.renamed > 0) {
+          setRenamedNotice(aliased.renamed)
+          if (renamedTimeoutRef.current) clearTimeout(renamedTimeoutRef.current)
+          renamedTimeoutRef.current = setTimeout(() => setRenamedNotice(null), 4000)
         }
       }
       setEditingId(null)
@@ -1497,9 +1529,12 @@ export default function MoneyRegister({
 
     // Offer a rename only when this payee has never been confirmed and the
     // suggestion actually differs from what is there — no chip on a row he
-    // has already named, and none that suggests what it already says.
+    // has already named, and none that suggests what it already says. A null
+    // `aliasedRawPayees` (the read failed — see that prop's own comment)
+    // counts as "already aliased" here on purpose: not knowing must suppress
+    // the chip, never fabricate one.
     const rawNormalized = normalizePayee(t.payee)
-    const alreadyAliased = aliasedRawPayees.includes(rawNormalized)
+    const alreadyAliased = aliasedRawPayees === null || aliasedRawPayees.includes(rawNormalized)
     const suggestion = alreadyAliased ? null : suggestDisplayName(t.payee, knownPayees)
     const offerRename = suggestion !== null && suggestion !== t.payee && suggestion !== editPayee
 
@@ -1628,7 +1663,7 @@ export default function MoneyRegister({
               onChange={(e) => setRememberPayee(e.target.checked)}
               disabled={pending}
             />
-            Remember this name for future imports
+            Remember this name, and rename matching rows
           </label>
         )}
         <button
@@ -2484,6 +2519,11 @@ export default function MoneyRegister({
       {appliedNotice && (
         <p className="mb-3 text-xs text-good border-l-2 border-line pl-4 py-1.5">
           Applied to {appliedNotice.count} more row{appliedNotice.count === 1 ? '' : 's'}.
+        </p>
+      )}
+      {renamedNotice !== null && (
+        <p className="mb-3 text-xs text-good border-l-2 border-line pl-4 py-1.5">
+          Renamed {renamedNotice} row{renamedNotice === 1 ? '' : 's'}.
         </p>
       )}
 

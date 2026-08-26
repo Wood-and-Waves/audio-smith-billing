@@ -1752,9 +1752,12 @@ export async function rejectTransaction(
   if (!existing) return { error: 'That transaction no longer exists.' }
   // Reconcile locks a row on `cleared` alone (0029's RPC never reads
   // entered_at), so since the pending-block refusal was removed a row can be
-  // BOTH reconciled and unreviewed. Every other mutator honours that lock;
-  // without this one, rejecting such a row would delete it out of a closed
-  // reconciliation, leaving the cleared balance short with no adjustment.
+  // BOTH reconciled and unreviewed. Every mutator that touches the money —
+  // amount, date, kind, or the row's existence — honours that lock; the
+  // carve-outs (categorization, linking, and setPayeeAlias's bulk rename)
+  // only ever write display or audit text. Without this one, rejecting such a
+  // row would delete it out of a closed reconciliation, leaving the cleared
+  // balance short with no adjustment.
   if (existing.cleared === 'reconciled') return { error: 'Reconciled transactions are locked.' }
   if (existing.entered_at !== null) return { error: 'Only a pending transaction can be rejected.' }
   if (existing.source !== 'import' || !existing.import_id) {
@@ -2046,6 +2049,27 @@ export async function importOfx(
  *
  * Upsert, not insert: confirming a different name for the same descriptor
  * later must correct the alias rather than fail on the unique constraint.
+ *
+ * The correction trap, and why there are two branches below. After the first
+ * confirmation the rows on screen no longer carry the bank descriptor — they
+ * carry the NAME. So the SECOND time he renames that payee, what arrives here
+ * as `rawPayee` is `Starbucks`, not `STARBUCKS 8007827282 800-782-728`.
+ * Upserting THAT would key a brand-new alias on `starbucks` and leave the
+ * first one — the only alias an import's descriptor can ever match — still
+ * saying `Starbucks`. Aliases are applied once and never chained
+ * (lib/payeeName), so the new one would never fire: next month's row would
+ * import as `Starbucks` while every row in the register reads `Starbucks
+ * Coffee`, payee memory would look up a name no row carries any more, miss,
+ * and the row would land UNCATEGORIZED — the exact state this feature exists
+ * to prevent — with no rename chip offered to fix it, because that descriptor
+ * already counts as aliased. So a `rawPayee` that is itself the display_name
+ * of an alias he has already confirmed is a CORRECTION, not a new alias:
+ * rewrite that alias's display_name in place and KEEP its raw_payee, which is
+ * the real descriptor imports actually match on. Only a `rawPayee` that is
+ * NOT an existing display name is a first confirmation, and only that one
+ * upserts on the normalized descriptor. Both branches then run the same row
+ * rename below, which matches on `rawPayee` — the un-normalized string the
+ * rows themselves actually carry — so the books get cleaned up either way.
  */
 export async function setPayeeAlias(
   rawPayee: string,
@@ -2060,16 +2084,52 @@ export async function setPayeeAlias(
   if (raw === '') return { error: 'That payee is empty.' }
   if (name === '') return { error: 'Give the payee a name.' }
 
-  const { error: upsertError } = await supabase
+  // Correction branch first (see the doc comment's "correction trap"): if
+  // `rawPayee` is the display_name of an alias he already confirmed, this
+  // edit is fixing THAT alias, so its own raw_payee — the descriptor — has to
+  // survive. Written as an update-and-count rather than a read-then-branch so
+  // one statement both decides the branch and covers the case where several
+  // descriptors were all confirmed to the same name (two Starbucks
+  // descriptors, both named `Starbucks`): every row on screen reading that
+  // name came from one of them, so every one of them gets corrected. An error
+  // here returns instead of falling through, the fail-closed direction every
+  // guard read in this file takes: reading a failure as "no such display
+  // name" would drop us into the upsert and write the very orphan alias this
+  // branch exists to prevent.
+  const { data: correctedAliases, error: correctionError } = await supabase
     .from('ledger_payee_aliases')
-    .upsert(
-      { owner_id: user.id, raw_payee: raw, display_name: name },
-      { onConflict: 'owner_id,raw_payee' },
-    )
-  if (upsertError) return { error: upsertError.message }
+    .update({ display_name: name })
+    .eq('owner_id', user.id)
+    .eq('display_name', rawPayee.trim())
+    .select('id')
+  if (correctionError) return { error: correctionError.message }
+
+  if ((correctedAliases ?? []).length === 0) {
+    // Not a correction, so this is the first confirmation for a real bank
+    // descriptor: key the alias on the NORMALIZED descriptor, which is what
+    // an import's lookup will hand it.
+    const { error: upsertError } = await supabase
+      .from('ledger_payee_aliases')
+      .upsert(
+        { owner_id: user.id, raw_payee: raw, display_name: name },
+        { onConflict: 'owner_id,raw_payee' },
+      )
+    if (upsertError) return { error: upsertError.message }
+  }
 
   // Rename what is already in the books. Owner-scoped explicitly, not just
   // by RLS, because this is a bulk write keyed on a caller-supplied string.
+  //
+  // NO `cleared` filter, deliberately — a documented carve-out from the
+  // reconciled lock, the same kind categorization (setTransactionCategory)
+  // and linking (unlinkTransaction) already are. A payee rename moves no
+  // money: it touches neither amount_cents nor date nor kind, the fields
+  // reconcileAccount's cleared-balance math actually reads, so a reconciled
+  // row renamed here still reconciles to the same statement it always did.
+  // It is display text. And skipping reconciled rows would defeat the whole
+  // point of renaming backwards: the OLDEST rows are exactly the ones already
+  // reconciled, so the ugly descriptor would survive on the bulk of his
+  // history — the mess this feature exists to clear.
   const { data: renamedRows, error: renameError } = await supabase
     .from('ledger_transactions')
     .update({ payee: name })

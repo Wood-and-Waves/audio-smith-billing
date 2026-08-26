@@ -753,9 +753,24 @@ export default async function MoneyPage({
   // The suggestion's raw material: payees he already uses, and the aliases he
   // has already confirmed. Both are small — a few hundred rows at most — and
   // the register needs them to decide whether to offer a rename at all.
-  const { data: aliasRows } = await supabase
-    .from('ledger_payee_aliases').select('raw_payee')
-  const aliasedRaw: string[] = ((aliasRows ?? []) as { raw_payee: string }[]).map((a) => a.raw_payee)
+  //
+  // Owner-scoped explicitly, not left to RLS alone, the same doctrine
+  // setPayeeAlias states for its own reads and writes. And the error is kept,
+  // not swallowed: `?? []` on a FAILED read would say "he has aliased nothing
+  // yet" — which is not an absence of aliases, it is an absence of knowledge —
+  // and the register would sprout a rename chip on every payee he already
+  // named. `null` carries that unknown through to the register, which offers
+  // no chip at all while it holds. The page still renders: a chip he cannot
+  // see is a smaller loss than the whole ledger going behind an error screen.
+  const { data: { user: aliasUser } } = await supabase.auth.getUser()
+  let aliasedRaw: string[] | null = null
+  if (aliasUser) {
+    const { data: aliasRows, error: aliasError } = await supabase
+      .from('ledger_payee_aliases').select('raw_payee').eq('owner_id', aliasUser.id)
+    if (!aliasError) {
+      aliasedRaw = ((aliasRows ?? []) as { raw_payee: string }[]).map((a) => a.raw_payee)
+    }
+  }
   const knownPayees: string[] = [...new Set(
     allTxns.filter((t) => t.category_id !== null && t.payee.trim() !== '').map((t) => t.payee),
   )]
