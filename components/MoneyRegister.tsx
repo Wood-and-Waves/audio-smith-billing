@@ -68,7 +68,9 @@ export type LedgerTxnRow = {
   payee: string
   memo: string | null
   cleared: 'uncleared' | 'cleared' | 'reconciled'
-  /** null = pending (migration 0042) — the Pending section's own axis.
+  /** null = UNREVIEWED (migration 0042) — he has not looked at this row
+   *  yet. NOT the bank's axis: `cleared` is that, and the register's
+   *  "Pending" group means uncleared.
    *  Never read directly for anything category-shaped (that's
    *  explodeForCategories' job, Task 5) — the register only ever asks
    *  "is this row pending," never "what month did it enter." */
@@ -1143,7 +1145,7 @@ export default function MoneyRegister({
     router.refresh()
   }
 
-  /** Enter Now (one id) and Enter All (the whole pending queue) share the
+  /** Enter Now (one id) and Enter All (every unreviewed row) share the
    *  one enterTransactions action, same as the server side does — see its
    *  own doc comment for why there is no separate code path per Dan's
    *  naming. */
@@ -1792,7 +1794,7 @@ export default function MoneyRegister({
     const showUnlink = !editable && (t.invoiceNumbers.length > 0 || t.expenseLinked)
     // Unreviewed: entered_at null. Marked bold + a rail dot below (Dan's
     // decision: no chip). Never a fade — see the wrapper's own comment.
-    const isPending = t.entered_at === null
+    const isUnreviewed = t.entered_at === null
 
     return (
       <div
@@ -1807,14 +1809,14 @@ export default function MoneyRegister({
              row that contains a popover. */
           `grid items-center gap-x-3 pl-3 -ml-3 pr-3 py-2 border-b border-line ${
             editable ? 'cursor-pointer hover:bg-surface' : ''
-          } ${isPending ? 'font-semibold' : ''}`
+          } ${isUnreviewed ? 'font-semibold' : ''}`
         }
       >
         <span className="relative flex items-center justify-center">
           <ReceiptControl row={t} pending={pending} onView={openReceipt} onAttach={openAttach} />
           {/* Unreviewed marker (Dan's decision: no chip). Paired with the
               bold row above; both clear the moment he enters the row. */}
-          {isPending && (
+          {isUnreviewed && (
             <span
               aria-hidden
               className="absolute -left-1 h-1.5 w-1.5 rounded-full bg-accent"
@@ -1823,9 +1825,11 @@ export default function MoneyRegister({
         </span>
         <span className="tabular text-xs text-muted">{formatDateShort(t.date)}</span>
         <span className="min-w-0 flex items-center gap-2">
-          <span className="truncate font-medium">{t.payee || '—'}</span>
+          <span className={`truncate ${isUnreviewed ? 'font-semibold' : 'font-medium'}`}>
+            {t.payee || '—'}
+          </span>
           {/* Screen readers get the state from text, not the dot. */}
-          {isPending && <span className="sr-only"> (to review)</span>}
+          {isUnreviewed && <span className="sr-only"> (to review)</span>}
           {t.invoiceNumbers.length > 0 && (
             <span className="text-[11px] font-bold uppercase tracking-wider text-muted
                              bg-surface-2 rounded-field px-1.5 py-0.5 shrink-0">
@@ -1861,9 +1865,9 @@ export default function MoneyRegister({
         </div>
         <div className="min-w-0">
           <span className="block truncate text-xs text-muted">{t.memo}</span>
-          {(showReceiptLinks || showUnlink || isPending) && (
+          {(showReceiptLinks || showUnlink || isUnreviewed) && (
             <div className="flex items-center gap-x-3">
-              {isPending && (
+              {isUnreviewed && (
                 rejectConfirmId === t.id ? (
                   <>
                     <button
@@ -1969,7 +1973,7 @@ export default function MoneyRegister({
       && t.receipt_original !== null && t.receipt_path !== null && !t.receipt_original.endsWith('.pdf')
     const showUnlink = !editable && (t.invoiceNumbers.length > 0 || t.expenseLinked)
     // Same unreviewed flag as renderDesktopRow's own — see its comment.
-    const isPending = t.entered_at === null
+    const isUnreviewed = t.entered_at === null
 
     return (
       <li
@@ -1978,13 +1982,19 @@ export default function MoneyRegister({
         className={
           /* Bold, never faded — see renderDesktopRow's own comment for why
              opacity here broke the category menu. */
-          `border-b border-line py-3 ${editable ? 'cursor-pointer' : ''} ${isPending ? 'font-semibold' : ''}`
+          `border-b border-line py-3 ${editable ? 'cursor-pointer' : ''} ${isUnreviewed ? 'font-semibold' : ''}`
         }
       >
         <div className="flex items-baseline gap-2">
+          {/* The same unreviewed marker desktop puts in its rail. Phone has no
+              rail, so it leads the payee — the row's own bold does little here
+              because the payee and amount are already semibold. */}
+          {isUnreviewed && (
+            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent shrink-0 self-center" />
+          )}
           <span className="font-semibold flex-1 min-w-0 truncate">
             {t.payee || '—'}
-            {isPending && <span className="sr-only"> (to review)</span>}
+            {isUnreviewed && <span className="sr-only"> (to review)</span>}
           </span>
           <span className="tabular font-semibold shrink-0">
             {/* A zero-cent txn (transfer carries no sign constraint) would
@@ -2034,7 +2044,7 @@ export default function MoneyRegister({
             </span>
           )}
           <ReceiptControl row={t} pending={pending} onView={openReceipt} onAttach={openAttach} />
-          {isPending && (
+          {isUnreviewed && (
             rejectConfirmId === t.id ? (
               <>
                 <button
