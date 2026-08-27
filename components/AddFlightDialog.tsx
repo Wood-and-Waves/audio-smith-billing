@@ -6,6 +6,7 @@ import { isPlainDate } from '@/lib/dates'
 import { wallToInstant, instantToWall } from '@/lib/zonedTime'
 import { timezoneShortLabel } from '@/lib/timezones'
 import { lookupFlight, saveFlight, updateFlight } from '@/app/calendar/actions'
+import { legChoiceLabel, type CandidateLeg } from '@/lib/flightLookup'
 import { FIELD_FULL } from '@/components/ui/field'
 
 export type FlightForEdit = {
@@ -95,6 +96,11 @@ export default function AddFlightDialog({
   const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState<Form>(() =>
     mode === 'edit' && flight ? formFromFlight(flight) : emptyForm(defaultDate ?? ''))
+  // Non-null only while a lookup came back with MORE THAN ONE leg and Dan
+  // hasn't chosen yet. A single result never sets this — it fills the form
+  // outright, exactly as before — so the picker appears only when there is
+  // a real ambiguity to resolve.
+  const [choices, setChoices] = useState<CandidateLeg[] | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const busy = pending || looking
 
@@ -106,27 +112,43 @@ export default function AddFlightDialog({
 
   function openDialog() {
     setError(null)
+    setChoices(null)
     setForm(mode === 'edit' && flight ? formFromFlight(flight) : emptyForm(defaultDate ?? ''))
     setOpen(true)
   }
 
+  /** One chosen leg -> the form's airport/date/time/zone fields. Shared by
+   *  the single-result path and the picker, so a leg Dan taps lands in the
+   *  form through exactly the same code as a leg that arrived alone. */
+  function applyLeg(leg: CandidateLeg) {
+    const dep = leg.depAt ? instantToWall(leg.depAt, leg.depTz ?? 'America/Chicago') : null
+    const arr = leg.arrAt ? instantToWall(leg.arrAt, leg.arrTz ?? 'America/Chicago') : null
+    setChoices(null)
+    setForm((f) => ({
+      ...f,
+      depAirport: leg.depAirport ?? '', arrAirport: leg.arrAirport ?? '',
+      depDate: dep?.date ?? '', depTime: dep?.time ?? '',
+      arrDate: arr?.date ?? '', arrTime: arr?.time ?? '',
+      depTz: leg.depTz, arrTz: leg.arrTz,
+    }))
+  }
+
   function lookup() {
     setError(null)
+    setChoices(null)
     startLookup(async () => {
       if (!isPlainDate(form.date)) { setError('Enter a valid flight date.'); return }
       const result = await lookupFlight({ flightNo: form.flightNo, date: form.date })
       if ('error' in result) { setError(result.error); return }
-      const leg = result.candidates[0]
-      if (!leg) { setError('No flight found for that number and date.'); return }
-      const dep = leg.depAt ? instantToWall(leg.depAt, leg.depTz ?? 'America/Chicago') : null
-      const arr = leg.arrAt ? instantToWall(leg.arrAt, leg.arrTz ?? 'America/Chicago') : null
-      setForm((f) => ({
-        ...f,
-        depAirport: leg.depAirport ?? '', arrAirport: leg.arrAirport ?? '',
-        depDate: dep?.date ?? '', depTime: dep?.time ?? '',
-        arrDate: arr?.date ?? '', arrTime: arr?.time ?? '',
-        depTz: leg.depTz, arrTz: leg.arrTz,
-      }))
+      const [first, ...rest] = result.candidates
+      if (!first) { setError('No flight found for that number and date.'); return }
+      // A flight number can fly the same date twice (Dan, 2026-08-27:
+      // UA1382 on 8/28). Taking candidates[0] silently handed him the
+      // earlier one with nothing on screen admitting the later one existed
+      // — and no way to reach it. More than one leg now asks instead of
+      // guessing; exactly one still fills the form outright.
+      if (rest.length > 0) { setChoices(result.candidates); return }
+      applyLeg(first)
     })
   }
 
@@ -188,7 +210,10 @@ export default function AddFlightDialog({
             className="w-full max-w-sm bg-bg border border-line rounded-field p-5 outline-none max-h-[85vh] overflow-y-auto"
             onKeyDown={(e) => {
               if (e.key === 'Escape' && !busy) setOpen(false)
-              if (e.key === 'Enter' && !busy) { e.preventDefault(); save() }
+              // Enter is deliberately inert while the picker is up: the form
+              // still holds whatever the previous lookup left in it, so
+              // saving here would store a flight Dan never chose.
+              if (e.key === 'Enter' && !busy && !choices) { e.preventDefault(); save() }
             }}
           >
             <h2 className="eyebrow mb-4">{mode === 'edit' ? 'Edit flight' : 'Add flight'}</h2>
@@ -199,7 +224,11 @@ export default function AddFlightDialog({
                 <input
                   id="flight-no" type="text" className={FIELD_FULL} value={form.flightNo}
                   disabled={busy} placeholder="AA1234"
-                  onChange={(e) => setForm((f) => ({ ...f, flightNo: e.target.value }))}
+                  /* Editing either half of the query drops a pending pick:
+                     the list belongs to the number and date it was looked
+                     up with, and tapping a leg from the previous query
+                     would fill the form with the wrong flight. */
+                  onChange={(e) => { setChoices(null); setForm((f) => ({ ...f, flightNo: e.target.value })) }}
                 />
               </div>
               <div>
@@ -207,7 +236,7 @@ export default function AddFlightDialog({
                 <input
                   id="flight-date" type="date" className={FIELD_FULL} value={form.date}
                   disabled={busy}
-                  onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+                  onChange={(e) => { setChoices(null); setForm((f) => ({ ...f, date: e.target.value })) }}
                 />
               </div>
             </div>
@@ -219,6 +248,35 @@ export default function AddFlightDialog({
             >
               {looking ? 'Looking up…' : 'Look up'}
             </button>
+
+            {choices && (
+              <div className="mb-4 border border-line rounded-field p-3">
+                <p className="eyebrow mb-2">
+                  {choices.length} flights that day — which one?
+                </p>
+                <div className="flex flex-col gap-1.5">
+                  {choices.map((leg, i) => {
+                    const { route, when } = legChoiceLabel(leg)
+                    return (
+                      <button
+                        /* Index as key: the provider gives legs no id, and
+                           this list is replaced wholesale by the next lookup
+                           rather than reordered or spliced. */
+                        key={i}
+                        type="button"
+                        onClick={() => applyLeg(leg)}
+                        disabled={busy}
+                        className="text-left px-3 py-2 rounded-field border border-line
+                                   hover:border-accent disabled:opacity-40"
+                      >
+                        <span className="block text-sm font-semibold">{route}</span>
+                        <span className="block text-xs text-muted tabular">{when}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-3 mb-3">
               <div>

@@ -1,10 +1,10 @@
 // AeroDataBox is one flight-lookup provider among several that could serve
 // crew flight info — parsing lives here, isolated, so a future provider
-// swap touches this file alone and never the calendar UI. Dan has no
-// AeroDataBox key yet, so this parser is pinned against canned JSON
-// fixtures (scripts/test/flightLookup.test.ts) instead of a live call; the
-// real response shape gets verified by doing, the same rule CLAUDE.md
-// already applies to Vercel's encrypted env vars, once the key exists.
+// swap touches this file alone and never the calendar UI. The key has been
+// live in Vercel since 2026-08-22 (UA1016 came back SAN->ORD with both
+// times and both zones), but it lives only in the deployed environment, so
+// this parser stays pinned against canned JSON fixtures
+// (scripts/test/flightLookup.test.ts) rather than a live call.
 //
 // This function receives arbitrary JSON from an external service and must
 // NEVER throw. Nothing about the input is assumed — every field, at every
@@ -12,6 +12,9 @@
 // trusted to exist or to be the right type. A missing or malformed field
 // becomes null; an unrecognizable top-level shape becomes an error result.
 // No try/catch: the guards make one unnecessary.
+
+import { instantToWall, friendlyTime } from './zonedTime.ts'
+import { timezoneShortLabel } from './timezones.ts'
 
 /** One flight leg. Every field is independently optional on the wire. */
 export type CandidateLeg = {
@@ -111,4 +114,42 @@ export function normalizeFlightNo(raw: string): string | null {
   if (typeof raw !== 'string') return null
   const cleaned = raw.toUpperCase().replace(/\s+/g, '')
   return /^[A-Z0-9]{2,8}$/.test(cleaned) ? cleaned : null
+}
+
+
+/**
+ * How one candidate leg reads in the disambiguation list, when a flight
+ * number flies more than once on the same date (Dan, 2026-08-27: UA1382 on
+ * 8/28 is two different flights, and the dialog was silently taking the
+ * first). Route and clock times are the only things that tell the two
+ * apart, so both are built here rather than in the component — and both
+ * degrade instead of throwing, because every field on a CandidateLeg is
+ * independently nullable.
+ *
+ * Times are each airport's OWN local time, never converted to one zone: a
+ * traveller reads the departure board at the airport they are standing in.
+ * The zone label appears only when the provider actually supplied a zone —
+ * the same honesty rule CalendarMonth's FlightTime already follows, since
+ * asserting "Central" over a time we never placed in a zone would be a
+ * guess dressed as a fact.
+ */
+export function legChoiceLabel(leg: CandidateLeg): { route: string; when: string } {
+  const route = `${leg.depAirport ?? '—'} → ${leg.arrAirport ?? '—'}`
+
+  const side = (at: string | null, tz: string | null): string | null => {
+    if (!at) return null
+    const wall = instantToWall(at, tz ?? 'America/Chicago')
+    return `${friendlyTime(wall.time)}${tz ? ` ${timezoneShortLabel(tz)}` : ''}`
+  }
+
+  const dep = side(leg.depAt, leg.depTz)
+  const arr = side(leg.arrAt, leg.arrTz)
+
+  // A leg with no departure time can't be told apart by time at all, so it
+  // says so plainly instead of rendering an empty line that looks like a
+  // rendering bug. An arrival-only leg still shows what it has.
+  if (!dep && !arr) return { route, when: 'No times given' }
+  if (!dep) return { route, when: `arrives ${arr}` }
+  if (!arr) return { route, when: dep }
+  return { route, when: `${dep} → ${arr}` }
 }

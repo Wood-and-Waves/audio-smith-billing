@@ -6,7 +6,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseAeroDataBox, normalizeFlightNo } from '../../lib/flightLookup.ts'
+import { parseAeroDataBox, normalizeFlightNo, legChoiceLabel } from '../../lib/flightLookup.ts'
 
 const legFixture = (over: Partial<Record<string, unknown>> = {}): Record<string, unknown> => ({
   departure: {
@@ -126,4 +126,57 @@ test('normalizeFlightNo rejects a string shorter than two characters', () => {
 
 test('normalizeFlightNo rejects punctuation, including slash-injection-shaped input', () => {
   assert.equal(normalizeFlightNo('AA/12'), null)
+})
+
+// legChoiceLabel — the line Dan reads when one flight number flies twice on
+// one date. Every field on a CandidateLeg is independently nullable, so the
+// degraded shapes matter as much as the happy one.
+
+const legOf = (over: Partial<Parameters<typeof legChoiceLabel>[0]> = {}) => ({
+  depAirport: 'ORD', arrAirport: 'LAX',
+  depAt: '2026-08-28T14:30:00Z', arrAt: '2026-08-28T17:00:00Z',
+  depTz: 'America/Chicago', arrTz: 'America/Los_Angeles',
+  ...over,
+})
+
+test('legChoiceLabel reads each airport in its OWN local time, never one zone', () => {
+  // 14:30Z is 9:30 AM in Chicago; 17:00Z is 10:00 AM in Los Angeles. Both
+  // are morning local times even though the flight crosses two zones —
+  // converting either one to the other's zone is the bug this pins.
+  assert.deepEqual(legChoiceLabel(legOf()), {
+    route: 'ORD → LAX',
+    when: '9:30 AM Central → 10:00 AM Pacific',
+  })
+})
+
+test('legChoiceLabel tells two same-numbered legs apart by time', () => {
+  const morning = legChoiceLabel(legOf())
+  const evening = legChoiceLabel(legOf({ depAt: '2026-08-29T01:15:00Z', arrAt: '2026-08-29T03:45:00Z' }))
+  assert.notEqual(morning.when, evening.when)
+  assert.equal(evening.when, '8:15 PM Central → 8:45 PM Pacific')
+})
+
+test('legChoiceLabel omits the zone label when the provider gave no zone', () => {
+  // CalendarMonth's FlightTime rule: a bare time is honest, a guessed zone
+  // label is not. The time still falls back to Chicago for the conversion.
+  assert.equal(legChoiceLabel(legOf({ depTz: null, arrTz: null })).when, '9:30 AM → 12:00 PM')
+})
+
+test('legChoiceLabel degrades a missing airport to a dash, not "null"', () => {
+  assert.equal(legChoiceLabel(legOf({ arrAirport: null })).route, 'ORD → —')
+})
+
+test('legChoiceLabel says so plainly when a leg carries no times at all', () => {
+  assert.deepEqual(legChoiceLabel(legOf({ depAt: null, arrAt: null })), {
+    route: 'ORD → LAX',
+    when: 'No times given',
+  })
+})
+
+test('legChoiceLabel still shows an arrival-only leg what it has', () => {
+  assert.equal(legChoiceLabel(legOf({ depAt: null })).when, 'arrives 10:00 AM Pacific')
+})
+
+test('legChoiceLabel shows a departure-only leg without a trailing arrow', () => {
+  assert.equal(legChoiceLabel(legOf({ arrAt: null })).when, '9:30 AM Central')
 })
