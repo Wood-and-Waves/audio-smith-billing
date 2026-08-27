@@ -427,6 +427,15 @@ had no times stored at all, because `FLIGHT_API_KEY` was not yet set. Both
 halves are now resolved — Dan added the key (verified: UA1016 came back
 SAN→ORD with both times and both zones), and the display was fixed to show
 elapsed time, honest zone labels, and a visible "No times yet" state.
+Also fixed 2026-08-27: **a flight number that flies twice in one day.**
+Dan: *"There are 2 flights with that number that day. It is pulling the
+first and not the second which is the one I need."* (UA1382 on 8/28.) The
+lookup had always returned every leg — `parseAeroDataBox` builds an array
+and `lookupFlight` passes all of it through — but `AddFlightDialog` read
+`candidates[0]` and dropped the rest silently. Now >1 candidate renders a
+picker (`legChoiceLabel` in `lib/flightLookup.ts`, 7 tests); exactly 1 still
+auto-fills. Shipped 1884fdb, no migration.
+
 Still open:
 - **Hand-entered flights have no way to say which zone the times are in.**
   They are assumed Chicago and stored as Chicago wall time, so a time typed
