@@ -773,6 +773,16 @@ design and so can sit above an empty filtered body.
   it isn't. Note detection also runs at `DETECT_MAX_EDGE = 400`, so saturation
   should be sampled on the same downscaled copy, not the full-resolution one.
 
+  **Dan's acceptance line for this work (2026-08-27), which is the right
+  one:** a miss on a WHITE table is expected and fine — white laminate and
+  white receipt paper are the same material to any threshold, colour included,
+  and no amount of work makes that case reliable. A miss on WOOD is not
+  acceptable, because wood is "a very different color" and the detector should
+  never have been in a position to confuse them. So the target isn't a global
+  hit-rate number: it's that a saturated surface — wood, carpet, a coloured
+  tablecloth, a bar top — stops producing misses at all. Test on those, not
+  on a white desk, and don't count a white-table miss as a regression.
+
   Not a correctness bug — the UI offered Use these corners / drag / Use full
   photo, and Dan adjusted by hand. This is hit rate. Dan is not asking for it
   now.
