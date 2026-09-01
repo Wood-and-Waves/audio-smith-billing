@@ -739,6 +739,44 @@ design and so can sit above an empty filtered body.
   alone deliberately rather than reconciled. Decide which is right if it ever
   comes up in a real show.
 
+- Corner detection grabs the whole TABLE on a warm-lit wood surface
+  (2026-08-27, Dan: *"The corner tool is pretty good, but this does happen
+  more than I like."*). Evidence photo: a Hyatt Market receipt on a wooden
+  hotel-room table, one lamp, iPhone. The proposed quad enclosed the entire
+  frame except a dark strip down the left edge — it was not the receipt plus
+  a neighbouring object, it was the tabletop.
+
+  **Root cause: Otsu split the photo into "lit" vs "shadowed", not "paper"
+  vs "table."** Warm wood under tungsten light sits at nearly the same
+  LUMINANCE as white receipt paper, so the flood fill returned one blob
+  containing wood, receipt, stapler and a card, and `maxAreaQuad` wrapped it
+  correctly. `MIN_FILL_RATIO = 0.8` cannot catch this: it asks whether the
+  blob is compact within its own hull, and a solid rectangle of tabletop
+  scores near 1.0. The guard is aimed at L-shapes and merged split blobs,
+  not at a blob that is the wrong object entirely.
+
+  **The fix with the most leverage: stop discarding colour.**
+  `grayFromBitmap` (`components/receiptCapture.ts:108`) collapses the photo
+  to Rec. 601 luma before `detectReceiptQuad` ever sees it, throwing away
+  the one channel that separates these two materials decisively — receipt
+  paper is near-neutral by definition, and a wood table is heavily saturated.
+  Thresholding on "bright AND low-saturation" (max(r,g,b) - min(r,g,b) below
+  some cap) would have reduced that blob to the receipt alone. It changes the
+  detector's INPUT, not its pipeline: downscale -> blur -> Otsu -> flood fill
+  -> hull -> max-area quad all stay, and every existing test still holds
+  because a synthetic grayscale image has zero saturation everywhere.
+
+  Weaker alternatives, if colour proves not enough on its own: threshold at a
+  high percentile rather than Otsu's two-class split (paper is usually the
+  brightest thing in frame); or add a post-check that the chosen quad's
+  interior is uniformly bright AND low-saturation, rejecting to manual when
+  it isn't. Note detection also runs at `DETECT_MAX_EDGE = 400`, so saturation
+  should be sampled on the same downscaled copy, not the full-resolution one.
+
+  Not a correctness bug — the UI offered Use these corners / drag / Use full
+  photo, and Dan adjusted by hand. This is hit rate. Dan is not asking for it
+  now.
+
 - Matches queue hides the expense's own amount (2026-08-27, Dan: *"I need to
   see the transaction amount for both sides of the transaction. How do I know
   if it is the same?"* — a $5.74 TST*HIGH FLYING FOODS charge proposed against
