@@ -783,6 +783,22 @@ design and so can sit above an empty filtered body.
   tablecloth, a bar top — stops producing misses at all. Test on those, not
   on a white desk, and don't count a white-table miss as a regression.
 
+  **CONSTRAINT — do not regress the two-receipt scan.** Dan photographs a
+  restaurant bill as TWO slips side by side: the itemized food check, and the
+  signed card slip carrying the hand-written tip and grand total. He reported
+  this working well on 2026-08-26 ("the scanning did great at reading my
+  handwriting and knowing that it was the real total" — that is the
+  `receiptExtraction.ts:47` instruction to prefer a hand-written tip over the
+  printed pre-tip total, doing its job). Note what the CORNER half had to do
+  there: wrap BOTH sheets, at two different sizes, in one quad. That is the
+  correct outcome, and it is the opposite direction from the wood-table fix
+  above, which tightens the blob toward a single sheet. A saturation gate
+  keeps both cases right — two white slips on a wood table are both
+  low-saturation and stay in the same blob, while the table drops out — but a
+  fix that instead assumes "one receipt per photo", or picks the single
+  largest paper-coloured component and discards the rest, would fix wood and
+  break this. Test the side-by-side case before and after.
+
   Not a correctness bug — the UI offered Use these corners / drag / Use full
   photo, and Dan adjusted by hand. This is hit rate. Dan is not asking for it
   now.
