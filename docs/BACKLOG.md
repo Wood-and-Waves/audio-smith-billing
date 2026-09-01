@@ -739,6 +739,25 @@ design and so can sit above an empty filtered body.
   alone deliberately rather than reconciled. Decide which is right if it ever
   comes up in a real show.
 
+- Matches queue hides the expense's own amount (2026-08-27, Dan: *"I need to
+  see the transaction amount for both sides of the transaction. How do I know
+  if it is the same?"* — a $5.74 TST*HIGH FLYING FOODS charge proposed against
+  Pannikin Coffee & Tea, dated a day apart, with different payee text). The
+  two halves of the queue are asymmetric: the Deposits side prints each
+  invoice's total (`components/MatchQueue.tsx:279` — `#N · client · $X · sent
+  date`), while the Charges side prints `whereSpent · showName · spentOn` and
+  no money at all (`:334`). So the one field that would prove the pairing is
+  the one field missing, and on a single-row card there is no evidence line
+  either — `evidenceLine` returns null below two parts, by design, because a
+  summed card was assumed to be the only case needing arithmetic shown.
+  **The data is already on the card**: `ExpenseCard.expense.amountCents`
+  (`:20`). This is a render change, not plumbing — no query, no migration.
+  Worth noting when it's built: for an exact SINGLE the matcher already
+  guarantees the amounts are equal (`proposalsForExpense` filters
+  `-row.amount_cents === expense.amount_cents`), so what's really missing is
+  that nothing on screen SAYS so; for a combo the amounts genuinely differ
+  per row and the sum is the thing to show. Dan doesn't want this fixed yet.
+
 - Bridge accepted trade-offs (2026-08-21 final review): dismissals are a
   one-way door (no UI lists or deletes `ledger_match_dismissals`; dismissing
   a sum also suppresses future singles on the same pair); a bank row whose
