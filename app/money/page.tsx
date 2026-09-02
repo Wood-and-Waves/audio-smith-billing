@@ -17,6 +17,7 @@ import MoneyRegister, {
 } from '@/components/MoneyRegister'
 import LedgerImportReconcile from '@/components/LedgerImportReconcile'
 import { ensureDefaultCategories } from '@/app/money/actions'
+import { perfTimer } from '@/lib/perfLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -399,6 +400,7 @@ export default async function MoneyPage({
   const uncategorizedOnly = params.filter === 'uncategorized'
 
   const supabase = await createClient()
+  const perf = perfTimer('/money')
 
   // The one open checking account this ledger runs from — "first" by when it
   // was created, same tie-break the rest of the app uses when a query could
@@ -414,6 +416,7 @@ export default async function MoneyPage({
     .limit(1)
     .maybeSingle()
   if (accountError) return <LoadError message={accountError.message} />
+  perf.mark('account')
 
   // Seeds the S-Corp starter chart the first time this owner ever opens the
   // ledger — a no-op every load after that (see the doc comment on the
@@ -421,6 +424,7 @@ export default async function MoneyPage({
   // categories are already there the moment the first-run card creates one.
   const seedResult = await ensureDefaultCategories()
   if ('error' in seedResult) return <LoadError message={seedResult.error} />
+  perf.mark('seedCategories')
 
   const { data: categoryRows, error: categoryError } = await supabase
     .from('ledger_categories')
@@ -480,6 +484,7 @@ export default async function MoneyPage({
 
   const { rows: allTxns, error: txnError } = await fetchAllTransactions(supabase, accountRow.id)
   if (txnError) return <LoadError message={txnError} />
+  perf.mark('transactions')
 
   // Split legs (Wave C Task 4) — owner-wide, bucketed by transaction_id
   // below; a transaction absent from this map is simply unsplit (the
@@ -490,6 +495,7 @@ export default async function MoneyPage({
   // transactions ever look themselves up in it below.
   const { rows: splitLegRows, error: splitLegError } = await fetchAllSplitLegs(supabase)
   if (splitLegError) return <LoadError message={splitLegError} />
+  perf.mark('splitLegs')
   const legsByTxnId = new Map<string, SplitLegRow[]>()
   for (const l of splitLegRows) {
     const list = legsByTxnId.get(l.transaction_id) ?? []
@@ -524,6 +530,7 @@ export default async function MoneyPage({
   // rendered message.
   const { rows: budgetCategoryRows, error: budgetCategoryError } = await fetchAllCategoriesForBudget(supabase)
   const { rows: moveRows, error: moveError } = await fetchAllBudgetMoves(supabase)
+  perf.mark('budget')
 
   const categoryBalanceCents: Record<string, number> = {}
   if (!budgetCategoryError && !moveError) {
@@ -596,6 +603,7 @@ export default async function MoneyPage({
 
   const { rows: candidateExpenseRows, error: candidateExpensesError } = await fetchAllCandidateExpenses(supabase)
   if (candidateExpensesError) return <LoadError message={candidateExpensesError} />
+  perf.mark('linksAndCandidates')
 
   // The three fields LedgerTxnRow adds for the register (components/
   // MoneyRegister.tsx) — a txn can carry more than one invoice link (a
@@ -788,6 +796,8 @@ export default async function MoneyPage({
     allTxns.filter((t) => t.category_id !== null && t.payee.trim() !== '').map((t) => t.payee),
   )]
 
+  perf.mark('aliases')
+  perf.done()
   return (
     <AppShell current="money" wide>
       <MoneyRegister
