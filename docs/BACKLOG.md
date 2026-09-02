@@ -710,6 +710,94 @@ design and so can sit above an empty filtered body.
   groups); percent-style targets/goals per envelope; envelope auto-funding
   rules.
 
+## IDEA — sharing this with friends, and/or a native Mac app (2026-09-02)
+
+**Status: an idea, not a plan. Nothing is scheduled and nothing is committed.**
+Dan raised it while the app is still changing weekly, and his own instinct —
+hone it first — is the right one: anything added now would have to be built
+twice under either option below. Recorded so the research does not have to be
+redone. The full write-up with the blocker table lives in the session's plan
+file; this is the short version.
+
+He asked how the web app could become a Mac or iPhone app, with two motives
+tangled together: packaging (should it be native?) and sharing (20-50 friends
+want it, and he does not want to pay to host them). **They are independent.**
+A native wrapper around the current app still talks to the same Supabase and
+the same 65 server actions — same bill, plus $99/yr. Only a genuinely local
+app removes hosting, and that is a rewrite.
+
+**Three findings.** (1) The iPhone app already exists: `app/manifest.ts` ships
+`display: standalone` with Apple touch icons, and `app/globals.css:210` says
+it is used installed on a phone on show sites. Offline is the only gap, and
+this file already records that as a deliberate refusal. (2) **Some of his
+friends are on Windows and Android** — which is what settles it. (3) The
+DATABASE is already multi-tenant (owner_id + RLS on all 29 tables, anon
+revoked, per-user storage folders); it is the APPLICATION that is not.
+
+**Path A — friends on the hosted app.** Nine located blockers. The structural
+one: `settings` carries `check (id = 1)` (`0001_initial_schema.sql:36`), so a
+second user cannot have a settings row at all, which in turn blocks
+`allocate_invoice_number()` (`0002:21`) and the Settings page. There is also a
+**latent security hole**: `public_invoice()` is SECURITY DEFINER, granted to
+`anon`, and reads `settings where s.id = 1` (`0014:79`) — the moment a second
+row exists, every public invoice link prints whoever owns row 1. Safe today
+only because the singleton makes it impossible. Not optional to fix. The rest:
+no settings-insert path anywhere, no signup, the nightly cron pins to one
+owner (`app/api/cron/reminders/route.ts:134`), `todayInChicago()` across 66
+call sites, seven `?? 'Smith Audio, LLC'` fallbacks that reach CLIENT-FACING
+PDFs and email, and single global Dropbox/sender credentials.
+
+**Path B — a real local Apple app** (SwiftUI + SwiftData + CloudKit, no
+server). Genuinely better in places: EventKit writes calendar events directly
+(closing the flight-alarm item AND the his-wife-gets-them problem), invoices
+go out through each user's own Mail from their own address, offline by
+default, CloudKit sync free, $99/yr total. But: Windows/Android friends are
+locked out permanently, the nightly cron dies with the server, the public
+`/i/[token]` link dies, OCR still costs money, and it is 3-6 months with no
+web features during it. The ~950 tests transfer as an executable
+specification, not as code.
+
+**Where it landed:** Path A if and when he wants friends on it — decided by
+the Windows/Android fact, not by cost or effort. Path B stays legitimate as a
+personal upgrade (the offline and calendar wins are real) but must never be
+justified as the way to share.
+
+### Cost curve for Path A, measured 2026-09-02
+
+Real prod figures: 64 receipt objects = 103 MB (**~3.2 MB per receipt**, two
+objects each), 30 expenses in ~3 months (**~10 receipts/month/user**), whole
+database 13 MB for 109 invoices and 354 transactions.
+
+| Users | Vercel | Supabase | OCR | Email | Total/mo |
+|---|---|---|---|---|---|
+| 5 | $20 | free | ~$0.50 | free | ~$21 |
+| 20 | $20 | $25 | ~$2 | free | ~$47 |
+| 50 | $20 | $25 | ~$5 | $20 | ~$70 |
+| 100 | $20 | $25+ | ~$10 | $20 | ~$80-90 |
+
+Provider prices are from memory and MUST be re-checked; Vercel Hobby is also
+non-commercial, which is why Pro appears even at 5 users.
+
+**Storage is not the constraint** — 50 users is ~19 GB/year against Pro's
+100 GB. **The constraint is one code path.**
+`app/invoices/[id]/page.tsx:281` re-downloads and base64-encodes every receipt
+on EVERY page load (`force-dynamic`, no caching). A 16-receipt invoice pulls
+~25 MB out of Storage per view. Free for one person; at 50 people casually
+browsing it approaches Pro's 250 GB included egress by itself, and overage is
+unpredictable, which is worse than expensive. **If Path A ever happens, fix
+this BEFORE the first friend, not after a bill.** Not worth fixing otherwise —
+it costs nothing at one user beyond a slow page.
+
+Two smaller non-scalers: the Dropbox archive is one personal account and one
+refresh token (drop that stage and receipt ORIGINALS stop being reclaimed,
+roughly doubling storage growth), and AeroDataBox's free tier is 600
+lookups/month shared across everyone.
+
+**Cheap things to check before committing to anything:** ask three friends
+what they run (one Windows user settles it); re-read Vercel's commercial-use
+terms; on DEV, create a second auth user and watch `/settings` and invoice
+creation fail — ten minutes, and it makes the blockers concrete.
+
 ## Small / cosmetic
 
 - Import error message can't tell a broken download from a wrong format
