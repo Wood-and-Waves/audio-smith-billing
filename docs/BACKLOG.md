@@ -739,6 +739,37 @@ design and so can sit above an empty filtered body.
   alone deliberately rather than reconciled. Decide which is right if it ever
   comes up in a real show.
 
+- Finished shows sink to the bottom of the Unbilled list (2026-09-02, Dan:
+  *"When a show is over on the shows page it drops to the bottom. This makes
+  it annoying to bill. I would like all shows that are un-billed to be in date
+  order on that page."*).
+
+  **Mechanism — it is not a date sort losing to a date.** `byDateClosestFirst`
+  (`lib/showOrder.ts:49`) buckets first and sorts second: `rank = {planning: 0,
+  current: 1, past: 2}`, so ANY finished show sorts below EVERY upcoming one
+  regardless of dates. A show that ended yesterday sits under a show six months
+  out. `app/shows/page.tsx:80` runs the unbilled list through it.
+
+  **The tension to resolve before building.** That ordering was deliberate and
+  is documented as such at the top of `showOrder.ts`: the page answers "what is
+  next", and created_at was replaced precisely to make the next thing findable.
+  Billing wants the opposite emphasis — a finished show is the one with work
+  left on it. Both are true; the page currently serves only the first. Options,
+  cheapest first: (a) sort the UNBILLED list by date alone, oldest first, and
+  leave the billed list bucketed — finished-and-unbilled naturally rises to the
+  top, which is exactly what Dan is asking for; (b) keep the buckets but invert
+  the unbilled list's rank to past -> current -> planning; (c) split Unbilled
+  into "Ready to bill" and "Upcoming" as two labelled groups. Ask Dan which
+  before writing code — (a) and (b) look identical on most weeks and diverge
+  when several finished shows are waiting.
+
+  **Do not lose the planning case:** a show with NO days yet currently sorts to
+  the very top on purpose (it is being set up right now, the only reason it
+  exists in that state). Under a pure date sort it has no date to sort by, and
+  `firstDay` returns `''` — which sorts FIRST lexically, preserving the
+  behaviour by accident. Pin it with a test rather than relying on that.
+  `scripts/test/showOrder.test.ts` already names the buckets.
+
 - Corner detection grabs the whole TABLE on a warm-lit wood surface
   (2026-08-27, Dan: *"The corner tool is pretty good, but this does happen
   more than I like."*). Evidence photo: a Hyatt Market receipt on a wooden
