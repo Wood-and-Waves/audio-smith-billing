@@ -42,10 +42,16 @@ export function escapeHtml(s: string): string {
 // The PREFILL. Subject and a plain-text body Dan edits before sending. The
 // body deliberately omits the public link: its token does not exist until
 // the server mints it at send, so the link is appended by assembleInvoiceEmail
-// (below), never typed. Everything else mirrors what the email used to say —
-// amount, due date (or "Paid in full" for a receipt), the remit-to block, the
-// thank-you — so an unedited send reads exactly as before, minus the link
-// which now lands at the very bottom.
+// (below), never typed.
+//
+// Subject and body both name the JOB, from `work_for` — the invoice's "For"
+// field, frozen at bill time from the show name(s) and editable afterwards.
+// Dan was typing this in by hand on every send (2026-09-02, showing a subject
+// he'd extended to "... - PwC EU&R San Diego" and a body opening "Thanks for
+// having me on PWC EU&R"): a client with several jobs in flight cannot tell
+// which invoice this is from "Invoice #392" alone. A hand-written invoice has
+// no work_for (null) and degrades to exactly the old wording — the greeting
+// stays, the job clause and the subject suffix simply do not appear.
 //
 // remit_to only, NEVER ach_details — bank numbers on a forwarded email are
 // the same exposure as on a forwarded PDF. Withheld entirely on a receipt: a
@@ -59,13 +65,31 @@ export function buildInvoiceEmailDefaults(input: {
   const amount = formatUSD(invoice.total_cents)
   const isReceipt = status === 'paid'
 
-  const subject = isReceipt
+  // Trimmed to null so a work_for of "" or "   " — possible through the
+  // editor's own For field — reads as absent rather than producing a subject
+  // ending in a bare dash.
+  const job = invoice.work_for?.trim() || null
+
+  const headline = isReceipt
     ? `Receipt for invoice #${invoice.number} from ${business}`
     : `Invoice #${invoice.number} from ${business}`
+  const subject = job ? `${headline} - ${job}` : headline
 
   const remit = !isReceipt && (invoice.settings?.remit_to?.trim() || null)
 
-  const parts = [`Invoice #${invoice.number} from ${business}`, '']
+  // "invoice"/"receipt" tracks the document actually attached: telling a
+  // client who has already paid to find the invoice attached reads as a
+  // second demand for the same money.
+  const noun = isReceipt ? 'receipt' : 'invoice'
+  const opener = job
+    ? `Thanks for having me on ${job}. Please find the ${noun} attached.`
+    : `Please find the ${noun} attached.`
+
+  const parts = [
+    'Hello!', '',
+    opener, '',
+    `Invoice #${invoice.number} from ${business}`, '',
+  ]
   if (isReceipt) {
     parts.push(`Paid in full: ${amount}`)
   } else {

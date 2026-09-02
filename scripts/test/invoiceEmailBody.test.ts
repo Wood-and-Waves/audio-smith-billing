@@ -96,6 +96,72 @@ test('bank details can never reach the default body', () => {
   assert.ok(!body.includes('1234567890'), 'no account number')
 })
 
+// The JOB name in the subject and the opener. Dan was typing this in by hand
+// on every send (2026-09-02): "Invoice #392" alone does not tell a client with
+// several jobs in flight which one this is. Source is `work_for`, the
+// invoice's own "For" field. The INVOICE fixture above deliberately has none,
+// so every test that predates this still exercises the degraded path.
+
+const FOR_JOB: DocumentData = { ...INVOICE, number: 392, work_for: 'PwC ALC EU&R' }
+
+test('the subject names the job after the invoice and the business', () => {
+  const { subject } = buildInvoiceEmailDefaults({ invoice: FOR_JOB, status: 'sent' })
+  assert.equal(subject, 'Invoice #392 from Smith Audio, LLC - PwC ALC EU&R')
+})
+
+test('the body opens by thanking the client for that job by name', () => {
+  const { body } = buildInvoiceEmailDefaults({ invoice: FOR_JOB, status: 'sent' })
+  assert.ok(body.startsWith('Hello!\n\nThanks for having me on PwC ALC EU&R. ' +
+    'Please find the invoice attached.'), body.slice(0, 120))
+})
+
+test('the whole default body reads in the order Dan wants it', () => {
+  // A golden test, not a set of includes: the ORDER is the thing he asked
+  // for, and an includes-only test would pass with the greeting at the end.
+  const { body } = buildInvoiceEmailDefaults({ invoice: FOR_JOB, status: 'sent' })
+  assert.equal(body, [
+    'Hello!',
+    '',
+    'Thanks for having me on PwC ALC EU&R. Please find the invoice attached.',
+    '',
+    'Invoice #392 from Smith Audio, LLC',
+    '',
+    'Amount due: $500.00',
+    'Due: 9/6/2026',
+    '',
+    'Payment',
+    'Smith Audio, LLC\n2610 Melbourne Lane',
+    '',
+    'Thank you for your business!',
+  ].join('\n'))
+})
+
+test('a hand-written invoice with no job degrades to the old wording', () => {
+  // #387 in prod has work_for null. No dangling dash in the subject, and no
+  // sentence about a job that does not exist — the greeting still stands.
+  const { subject, body } = buildInvoiceEmailDefaults({ invoice: INVOICE, status: 'sent' })
+  assert.equal(subject, 'Invoice #386 from Smith Audio, LLC')
+  assert.ok(!subject.includes(' - '), 'no trailing dash with nothing after it')
+  assert.ok(body.startsWith('Hello!\n\nPlease find the invoice attached.'), body.slice(0, 80))
+  assert.ok(!body.includes('Thanks for having me on'), 'no thanks for an unnamed job')
+})
+
+test('a whitespace-only For field counts as no job, not an empty one', () => {
+  const blank: DocumentData = { ...INVOICE, work_for: '   ' }
+  const { subject, body } = buildInvoiceEmailDefaults({ invoice: blank, status: 'sent' })
+  assert.equal(subject, 'Invoice #386 from Smith Audio, LLC')
+  assert.ok(!body.includes('Thanks for having me on'))
+})
+
+test('a receipt says the RECEIPT is attached, never the invoice', () => {
+  // Telling someone who has already paid to find the invoice attached reads
+  // as a second demand for the same money.
+  const { subject, body } = buildInvoiceEmailDefaults({ invoice: FOR_JOB, status: 'paid' })
+  assert.equal(subject, 'Receipt for invoice #392 from Smith Audio, LLC - PwC ALC EU&R')
+  assert.ok(body.includes('Please find the receipt attached.'))
+  assert.ok(!body.includes('invoice attached'), 'never asks for money already paid')
+})
+
 test('assemble appends the link footer to the text and a real anchor to the html', () => {
   const { subject, text, html } = assembleInvoiceEmail({
     subject: 'Invoice #386 from Smith Audio, LLC',
