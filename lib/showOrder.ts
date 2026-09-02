@@ -63,3 +63,31 @@ export function byDateClosestFirst<T extends DatedShow>(shows: T[], today: strin
     return 0
   })
 }
+
+/**
+ * Plain chronological, earliest first — the order the UNBILLED list uses.
+ *
+ * `byDateClosestFirst` above buckets past/current/planning before it looks at
+ * a date, so a show that finished yesterday sorts below one six months out.
+ * That is right for "what is next" and wrong for billing, which is the only
+ * thing the unbilled list is for: a finished show is precisely the one with
+ * work left on it (Dan, 2026-09-02 — *"When a show is over on the shows page
+ * it drops to the bottom. This makes it annoying to bill."*).
+ *
+ * Nothing here marks which show is current, and nothing needs to: the row
+ * renderer computes `inProgress` from the dates themselves and paints it in
+ * the accent colour, independent of position. That highlight is why a plain
+ * date order stays readable — Dan's own reasoning for choosing it.
+ *
+ * A show with NO days still sorts to the very top, same as the other order:
+ * it is being set up right now, which is the only reason it exists in that
+ * state. That falls out of `firstDay` returning `''`, which sorts before any
+ * real date lexically — pinned by a test rather than left to luck.
+ *
+ * Ties on the first day fall back to the last, so a one-day show sorts above
+ * a week-long one starting the same morning.
+ */
+export function byDateEarliestFirst<T extends DatedShow>(shows: T[]): T[] {
+  return [...shows].sort((a, b) =>
+    firstDay(a).localeCompare(firstDay(b)) || lastDay(a).localeCompare(lastDay(b)))
+}

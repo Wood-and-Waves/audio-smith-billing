@@ -3,7 +3,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { byDateClosestFirst, whenIs } from '../../lib/showOrder.ts'
+import { byDateClosestFirst, byDateEarliestFirst, whenIs } from '../../lib/showOrder.ts'
 
 const TODAY = '2026-08-15'
 const show = (name: string, from: string, to: string) => {
@@ -91,4 +91,75 @@ test('days in any order still sort correctly', () => {
     order([show('Later', '2026-08-24', '2026-08-24'), scrambled]),
     ['Scrambled', 'Later'],
   )
+})
+
+
+// byDateEarliestFirst — the UNBILLED list's order. Plain chronological, no
+// past/current/planning bucket, because a finished show is the one Dan still
+// has to bill and burying it under next month's work is what he complained
+// about. TODAY is deliberately unused here: this order does not read a clock
+// at all, which is the whole difference from byDateClosestFirst.
+
+const billingOrder = (shows: { name: string; dates: string[] }[]) =>
+  byDateEarliestFirst(shows).map((s) => s.name)
+
+test('a finished show sorts ABOVE an upcoming one — the whole point', () => {
+  // byDateClosestFirst puts Orlando first (past ranks last); this must not.
+  assert.deepEqual(
+    billingOrder([
+      show('Orlando', '2026-08-28', '2026-09-03'),
+      show('Chicago', '2026-08-01', '2026-08-04'),
+    ]),
+    ['Chicago', 'Orlando'],
+  )
+})
+
+test('the same list under both orders is genuinely different', () => {
+  // Pins the two functions apart: if someone ever points the unbilled list
+  // back at byDateClosestFirst, this fails instead of silently regressing.
+  const shows = [
+    show('Orlando', '2026-08-28', '2026-09-03'),
+    show('Chicago', '2026-08-01', '2026-08-04'),
+  ]
+  assert.notDeepEqual(order(shows), billingOrder(shows))
+})
+
+test('earliest to latest, straight through past, current and future', () => {
+  assert.deepEqual(
+    billingOrder([
+      show('September', '2026-09-10', '2026-09-12'),
+      show('July', '2026-07-02', '2026-07-03'),
+      show('Running now', '2026-08-14', '2026-08-17'),
+      show('August', '2026-08-01', '2026-08-04'),
+    ]),
+    ['July', 'August', 'Running now', 'September'],
+  )
+})
+
+test('a show with no days yet still sits at the very top', () => {
+  assert.deepEqual(
+    billingOrder([
+      show('Chicago', '2026-08-01', '2026-08-04'),
+      { name: 'Being set up', dates: [] },
+    ]),
+    ['Being set up', 'Chicago'],
+  )
+})
+
+test('same start day: the shorter show sorts first', () => {
+  assert.deepEqual(
+    billingOrder([
+      show('Week long', '2026-08-01', '2026-08-07'),
+      show('One day', '2026-08-01', '2026-08-01'),
+    ]),
+    ['One day', 'Week long'],
+  )
+})
+
+test('days in any order still sort correctly, and the input is not mutated', () => {
+  const scrambled = { name: 'Scrambled', dates: ['2026-08-04', '2026-08-01', '2026-08-03'] }
+  const input = [show('Later', '2026-08-20', '2026-08-21'), scrambled]
+  const snapshot = [...input]
+  assert.deepEqual(billingOrder(input), ['Scrambled', 'Later'])
+  assert.deepEqual(input, snapshot, 'sorted a copy, not the caller\'s array')
 })

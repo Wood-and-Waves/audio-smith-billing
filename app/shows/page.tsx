@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { isUnfinishedDay } from '@/lib/chronology'
 import { formatDateShort, todayInChicago } from '@/lib/dates'
-import { byDateClosestFirst } from '@/lib/showOrder'
+import { byDateClosestFirst, byDateEarliestFirst } from '@/lib/showOrder'
 import { lineTotal } from '@/lib/money'
 import { computeShowLines, rulesetAndRatesFor, type PmEntryLike } from '@/lib/showBuckets'
 import type { ShowDayLike } from '@/lib/payroll'
@@ -62,23 +62,33 @@ export default async function ShowsPage() {
   }
 
   const rows = (data ?? []) as unknown as Row[]
-  // Closest first, not created_at — the order Dan happened to type shows in
-  // tells him nothing a month later, and what he scans this page for is what
-  // is next. A show still running outranks one that has not started; finished
-  // ones follow, most recent first, because a trip just back from is the one
-  // still being billed.
+  // The two lists are ordered by two different questions, because they are
+  // read for two different reasons.
+  //
+  // UNBILLED is a work queue: every row on it is something Dan still has to
+  // bill, and a show that just finished is the likeliest candidate. Bucketing
+  // it past-last (which is what byDateClosestFirst does) buried exactly those
+  // rows under next month's travel — Dan, 2026-09-02: "When a show is over on
+  // the shows page it drops to the bottom. This makes it annoying to bill."
+  // So it reads straight through, earliest to latest, with no bucket at all.
+  // Nothing is lost by dropping the "what is next" emphasis here: the row
+  // renderer paints the in-progress show in the accent colour from its own
+  // dates, so the current show is findable by colour rather than by position.
+  //
+  // BILLED is history, and keeps closest-first: most recently finished at the
+  // top, because a trip just back from is the one still being chased for
+  // payment.
   //
   // Sorted here rather than in the query: the key is the earliest show_days
   // date, which is not a column on shows. Chicago is fine for the bucket — a
   // list ordering does not need each show's own zone the way a highlighted
   // "today" row does.
   const today = todayInChicago()
-  const byDate = <T extends { show_days: { date: string }[] }>(list: T[]) =>
-    byDateClosestFirst(
-      list.map((r) => ({ ...r, dates: r.show_days.map((d) => d.date) })), today)
+  const withDates = <T extends { show_days: { date: string }[] }>(list: T[]) =>
+    list.map((r) => ({ ...r, dates: r.show_days.map((d) => d.date) }))
 
-  const unbilled = byDate(rows.filter((r) => r.status === 'open'))
-  const billed = byDate(rows.filter((r) => r.status === 'billed'))
+  const unbilled = byDateEarliestFirst(withDates(rows.filter((r) => r.status === 'open')))
+  const billed = byDateClosestFirst(withDates(rows.filter((r) => r.status === 'billed')), today)
 
   // Money lives here, on the server, in integer cents — never in the client
   // component. Each unbilled show gets its own computeShowLines pass, built
