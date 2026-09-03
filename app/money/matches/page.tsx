@@ -305,17 +305,33 @@ const BackLink = () => (
 export default async function MoneyMatchesPage() {
   const supabase = await createClient()
 
-  // Same single-account model as /money/budget: the one open checking
-  // account this ledger runs from. Matches are drawn from THIS account's own
-  // bank rows against every invoice/expense the owner has, so with no
-  // account there is nothing to propose.
-  const { data: accountRow, error: accountError } = await supabase
-    .from('ledger_accounts')
-    .select('id')
-    .eq('closed', false)
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle()
+  // One wave, not six trips in a line — same fix and reason as
+  // app/money/page.tsx. Guards keep their original order below.
+  const [
+    accountRes, invoiceLinksRes, expenseLinksRes,
+    dismissalsRes, candidateInvoicesRes, candidateExpensesRes,
+  ] = await Promise.all([
+    // Same single-account model as /money/budget: the one open checking
+    // account this ledger runs from. Matches are drawn from THIS account's
+    // own bank rows against every invoice/expense the owner has, so with no
+    // account there is nothing to propose.
+    supabase.from('ledger_accounts')
+      .select('id')
+      .eq('closed', false)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+    fetchAllInvoiceLinks(supabase),
+    fetchAllExpenseLinks(supabase),
+    fetchAllDismissals(supabase),
+    fetchAllCandidateInvoices(supabase),
+    fetchAllCandidateExpenses(supabase),
+  ])
+  const { data: accountRow, error: accountError } = accountRes
+  // The one read that needs an id from that wave.
+  const txnsRes = accountRow
+    ? await fetchAllLedgerTxns(supabase, accountRow.id)
+    : { rows: [], error: null } as Awaited<ReturnType<typeof fetchAllLedgerTxns>>
   if (accountError) return <LoadError message={accountError.message} />
 
   if (!accountRow) {
@@ -334,22 +350,22 @@ export default async function MoneyMatchesPage() {
     )
   }
 
-  const { rows: txnRows, error: txnError } = await fetchAllLedgerTxns(supabase, accountRow.id)
+  const { rows: txnRows, error: txnError } = txnsRes
   if (txnError) return <LoadError message={txnError} />
 
-  const { rows: invoiceLinkRows, error: invoiceLinkError } = await fetchAllInvoiceLinks(supabase)
+  const { rows: invoiceLinkRows, error: invoiceLinkError } = invoiceLinksRes
   if (invoiceLinkError) return <LoadError message={invoiceLinkError} />
 
-  const { rows: expenseLinkRows, error: expenseLinkError } = await fetchAllExpenseLinks(supabase)
+  const { rows: expenseLinkRows, error: expenseLinkError } = expenseLinksRes
   if (expenseLinkError) return <LoadError message={expenseLinkError} />
 
-  const { rows: dismissalRows, error: dismissalError } = await fetchAllDismissals(supabase)
+  const { rows: dismissalRows, error: dismissalError } = dismissalsRes
   if (dismissalError) return <LoadError message={dismissalError} />
 
-  const { rows: invoiceRows, error: invoicesError } = await fetchAllCandidateInvoices(supabase)
+  const { rows: invoiceRows, error: invoicesError } = candidateInvoicesRes
   if (invoicesError) return <LoadError message={invoicesError} />
 
-  const { rows: expenseRows, error: expensesError } = await fetchAllCandidateExpenses(supabase)
+  const { rows: expenseRows, error: expensesError } = candidateExpensesRes
   if (expensesError) return <LoadError message={expensesError} />
 
   // "linked" = named by ANY row in either link table — a bank row can only
@@ -469,11 +485,19 @@ export default async function MoneyMatchesPage() {
     dismissalRows.map((d) => d.expense_id).filter((id): id is string => id !== null && !expenseDisplayById.has(id)),
   )]
 
-  const { rows: missingTxns, error: missingTxnsError } = await fetchMissingTxns(supabase, missingTxnIds)
+  // These three backfill the display names for dismissals whose far side is
+  // no longer in the candidate sets. They depend on the ids computed just
+  // above but not on each other, so they go together.
+  const [missingTxnsRes, missingInvoicesRes, missingExpensesRes] = await Promise.all([
+    fetchMissingTxns(supabase, missingTxnIds),
+    fetchMissingInvoices(supabase, missingInvoiceIds),
+    fetchMissingExpenses(supabase, missingExpenseIds),
+  ])
+  const { rows: missingTxns, error: missingTxnsError } = missingTxnsRes
   if (missingTxnsError) return <LoadError message={missingTxnsError} />
-  const { rows: missingInvoices, error: missingInvoicesError } = await fetchMissingInvoices(supabase, missingInvoiceIds)
+  const { rows: missingInvoices, error: missingInvoicesError } = missingInvoicesRes
   if (missingInvoicesError) return <LoadError message={missingInvoicesError} />
-  const { rows: missingExpenses, error: missingExpensesError } = await fetchMissingExpenses(supabase, missingExpenseIds)
+  const { rows: missingExpenses, error: missingExpensesError } = missingExpensesRes
   if (missingExpensesError) return <LoadError message={missingExpensesError} />
 
   for (const t of missingTxns) txnDisplayById.set(t.id, { date: t.date, payee: t.payee, amountCents: t.amount_cents })

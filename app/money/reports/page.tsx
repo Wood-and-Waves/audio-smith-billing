@@ -154,16 +154,33 @@ export default async function MoneyReportsPage({
 
   const supabase = await createClient()
 
-  // Same single-account model as the register: the one open checking account
-  // this ledger runs from, "first" by creation, same tie-break the rest of
-  // the app uses.
-  const { data: accountRow, error: accountError } = await supabase
-    .from('ledger_accounts')
-    .select('id')
-    .eq('closed', false)
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle()
+  // One wave, not four trips in a line — same fix and reason as
+  // app/money/page.tsx. Guards keep their original order below.
+  const [accountRes, categoriesRes, splitLegsRes] = await Promise.all([
+    // Same single-account model as the register: the one open checking
+    // account this ledger runs from, "first" by creation, same tie-break the
+    // rest of the app uses.
+    supabase.from('ledger_accounts')
+      .select('id')
+      .eq('closed', false)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+    // Every category, including hidden ones — a hidden category's history
+    // still counts toward this year's (or any year's) spend, unlike the
+    // register's own category query, which only needs live options to offer
+    // in a picker.
+    supabase.from('ledger_categories')
+      .select('id, name, grp, sort, deductible')
+      .order('grp', { ascending: true })
+      .order('sort', { ascending: true }),
+    fetchAllReportSplitLegs(supabase),
+  ])
+  const { data: accountRow, error: accountError } = accountRes
+  // The one read that needs an id from that wave.
+  const txnsRes = accountRow
+    ? await fetchAllReportTxns(supabase, accountRow.id)
+    : { rows: [], error: null } as Awaited<ReturnType<typeof fetchAllReportTxns>>
   if (accountError) return <LoadError message={accountError.message} />
 
   if (!accountRow) {
@@ -183,19 +200,11 @@ export default async function MoneyReportsPage({
     )
   }
 
-  // Every category, including hidden ones — a hidden category's history
-  // still counts toward this year's (or any year's) spend, unlike the
-  // register's own category query, which only needs live options to offer
-  // in a picker.
-  const { data: categoryRows, error: categoryError } = await supabase
-    .from('ledger_categories')
-    .select('id, name, grp, sort, deductible')
-    .order('grp', { ascending: true })
-    .order('sort', { ascending: true })
+  const { data: categoryRows, error: categoryError } = categoriesRes
   if (categoryError) return <LoadError message={categoryError.message} />
   const categories: ReportCategory[] = categoryRows ?? []
 
-  const { rows: rawTxns, error: txnError } = await fetchAllReportTxns(supabase, accountRow.id)
+  const { rows: rawTxns, error: txnError } = txnsRes
   if (txnError) return <LoadError message={txnError} />
 
   // Split legs (Wave C Task 5) — owner-wide, bucketed by transaction_id;
@@ -203,7 +212,7 @@ export default async function MoneyReportsPage({
   // fix just past it (a split parent's own category_id is forced null too,
   // same as an ordinary uncategorized row — this map is what tells the two
   // apart, same reasoning as app/money/page.tsx's own legsByTxnId).
-  const { rows: splitLegRows, error: splitLegError } = await fetchAllReportSplitLegs(supabase)
+  const { rows: splitLegRows, error: splitLegError } = splitLegsRes
   if (splitLegError) return <LoadError message={splitLegError} />
   const legsByTxnId = new Map<string, { categoryId: string | null; amountCents: number; kind: string }[]>()
   for (const l of splitLegRows) {

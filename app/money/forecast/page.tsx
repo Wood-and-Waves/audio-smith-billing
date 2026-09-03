@@ -377,7 +377,50 @@ function BookedShowRow({ sp, lastRenderedMonth }: { sp: ShowProjection; lastRend
 
 export default async function MoneyForecastPage() {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+
+  // One wave, not eight trips in a line — same fix and same reason as
+  // app/money/page.tsx (measured 2026-09-02: the cost of these pages is round
+  // trips, not query work). Every guard below keeps its original position and
+  // order, so the first failure shown is unchanged.
+  const [
+    userRes, accountRes, splitLegsRes, movesRes,
+    showsRes, invoicesRes, voidRes, clientsRes,
+  ] = await Promise.all([
+    supabase.auth.getUser(),
+    // Same single-account model as the rest of /money: the one open checking
+    // account this ledger runs from, "first" by creation.
+    supabase.from('ledger_accounts')
+      .select('id, opening_balance_cents')
+      .eq('closed', false)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+    fetchAllForecastSplitLegs(supabase),
+    fetchAllForecastMoves(supabase),
+    fetchAllForecastShows(supabase),
+    fetchAllForecastInvoices(supabase),
+    fetchAllVoidInvoiceIds(supabase),
+    fetchAllForecastClients(supabase),
+  ])
+  const { data: { user } } = userRes
+  const { data: accountRow, error: accountError } = accountRes
+
+  // Wave two: the only two reads that genuinely need wave one's ids.
+  const [txnsRes, settingsRes] = await Promise.all([
+    accountRow
+      ? fetchAllForecastTxns(supabase, accountRow.id)
+      : Promise.resolve({ rows: [], error: null } as
+          Awaited<ReturnType<typeof fetchAllForecastTxns>>),
+    user
+      ? supabase.from('settings')
+          // Explicit columns, never '*' — this screen has no business reading
+          // remit_to/ach_details/etc, and a widened select would hand more of
+          // the settings row to this page than the forecast has any use for.
+          .select('monthly_take_home_cents, monthly_overhead_cents, billing_lag_days, tax_setaside_bp, home_state')
+          .eq('owner_id', user.id)
+          .maybeSingle()
+      : Promise.resolve(null),
+  ])
 
   // proxy.ts redirects an unauthenticated request before it reaches here —
   // belt and braces, same guard app/settings/page.tsx uses before its own
@@ -392,15 +435,6 @@ export default async function MoneyForecastPage() {
     )
   }
 
-  // Same single-account model as the rest of /money: the one open checking
-  // account this ledger runs from, "first" by creation.
-  const { data: accountRow, error: accountError } = await supabase
-    .from('ledger_accounts')
-    .select('id, opening_balance_cents')
-    .eq('closed', false)
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle()
   if (accountError) return <LoadError message={accountError.message} />
 
   if (!accountRow) {
@@ -419,13 +453,13 @@ export default async function MoneyForecastPage() {
     )
   }
 
-  const { rows: txnRows, error: txnError } = await fetchAllForecastTxns(supabase, accountRow.id)
+  const { rows: txnRows, error: txnError } = txnsRes
   if (txnError) return <LoadError message={txnError} />
 
   // Split legs (Wave C Task 5) — feeds computeOverheadCents' own kind-shaped
   // read below; workingBalance never consults this map (see RawTxnRow's own
   // comment for why the two reads on this page deliberately disagree).
-  const { rows: splitLegRows, error: splitLegError } = await fetchAllForecastSplitLegs(supabase)
+  const { rows: splitLegRows, error: splitLegError } = splitLegsRes
   if (splitLegError) return <LoadError message={splitLegError} />
   const legsByTxnId = new Map<string, { categoryId: string | null; amountCents: number; kind: string }[]>()
   for (const l of splitLegRows) {
@@ -434,29 +468,25 @@ export default async function MoneyForecastPage() {
     legsByTxnId.set(l.transaction_id, list)
   }
 
-  const { rows: moveRows, error: moveError } = await fetchAllForecastMoves(supabase)
+  const { rows: moveRows, error: moveError } = movesRes
   if (moveError) return <LoadError message={moveError} />
 
-  const { rows: showRows, error: showError } = await fetchAllForecastShows(supabase)
+  const { rows: showRows, error: showError } = showsRes
   if (showError) return <LoadError message={showError} />
 
-  const { rows: invoiceRows, error: invoiceError } = await fetchAllForecastInvoices(supabase)
+  const { rows: invoiceRows, error: invoiceError } = invoicesRes
   if (invoiceError) return <LoadError message={invoiceError} />
 
-  const { ids: voidInvoiceIds, error: voidError } = await fetchAllVoidInvoiceIds(supabase)
+  const { ids: voidInvoiceIds, error: voidError } = voidRes
   if (voidError) return <LoadError message={voidError} />
 
-  const { rows: clientRows, error: clientError } = await fetchAllForecastClients(supabase)
+  const { rows: clientRows, error: clientError } = clientsRes
   if (clientError) return <LoadError message={clientError} />
 
-  const { data: settingsRow, error: settingsError } = await supabase
-    .from('settings')
-    // Explicit columns, never '*' — this screen has no business reading
-    // remit_to/ach_details/etc, and a widened select would hand more of the
-    // settings row to this page than the forecast has any use for.
-    .select('monthly_take_home_cents, monthly_overhead_cents, billing_lag_days, tax_setaside_bp, home_state')
-    .eq('owner_id', user.id)
-    .maybeSingle()
+  // settingsRes is null only when there is no user, and that path returned
+  // above — so this reads as the same { data, error } it always did.
+  const settingsRow = settingsRes?.data ?? null
+  const settingsError = settingsRes?.error ?? null
   if (settingsError) return <LoadError message={settingsError.message} />
 
   const today = todayInChicago()

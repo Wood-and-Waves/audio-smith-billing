@@ -17,7 +17,6 @@ import MoneyRegister, {
 } from '@/components/MoneyRegister'
 import LedgerImportReconcile from '@/components/LedgerImportReconcile'
 import { ensureDefaultCategories } from '@/app/money/actions'
-import { perfTimer } from '@/lib/perfLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -400,7 +399,6 @@ export default async function MoneyPage({
   const uncategorizedOnly = params.filter === 'uncategorized'
 
   const supabase = await createClient()
-  const perf = perfTimer('/money')
 
   // ONE WAVE, not fifteen trips in a line.
   //
@@ -414,9 +412,8 @@ export default async function MoneyPage({
   // Promise.all does run every fetch even when one fails, which is fine for
   // reads: nothing here writes, and the guards still short-circuit the render.
   //
-  // Only two things genuinely depend on this wave, and they follow it:
-  // the category list (ensureDefaultCategories has to have seeded first) and
-  // the transactions (they need the account's id).
+  // Only the two reads that need an id from this wave follow it: the
+  // transactions (the account's) and the payee aliases (the user's).
   const [
     accountRes, categoriesRes0, showsRes, splitLegsRes,
     budgetCategoriesRes, movesRes,
@@ -426,34 +423,33 @@ export default async function MoneyPage({
     // opening_date rides along for the budget seed's own clamp below
     // (mirroring app/money/budget/page.tsx's own openingMonth/seedMonth
     // logic) — nothing else on this page needed it before now.
-    perf.track('account', supabase.from('ledger_accounts')
+    supabase.from('ledger_accounts')
       .select('id, name, opening_balance_cents, opening_date, last_reconciled_at')
       .eq('closed', false)
       .order('created_at', { ascending: true })
       .limit(1)
-      .maybeSingle()),
-    perf.track('categories', supabase.from('ledger_categories')
+      .maybeSingle(),
+    supabase.from('ledger_categories')
       .select('id, name, grp, sort, budget_role')
       .eq('hidden', false)
       .order('grp', { ascending: true })
-      .order('sort', { ascending: true })),
-    perf.track('shows', supabase.from('shows')
+      .order('sort', { ascending: true }),
+    supabase.from('shows')
       .select('id, name, show_days(date)')
       .order('created_at', { ascending: false })
-      .limit(25)),
-    perf.track('splitLegs', fetchAllSplitLegs(supabase)),
-    perf.track('budgetCats', fetchAllCategoriesForBudget(supabase)),
-    perf.track('budgetMoves', fetchAllBudgetMoves(supabase)),
-    perf.track('invLinks', fetchAllInvoiceLinks(supabase)),
-    perf.track('expLinks', fetchAllExpenseLinks(supabase)),
-    perf.track('dismissals', fetchAllDismissals(supabase)),
-    perf.track('candInv', fetchAllCandidateInvoices(supabase)),
-    perf.track('candExp', fetchAllCandidateExpenses(supabase)),
-    perf.track('getUser', supabase.auth.getUser()),
+      .limit(25),
+    fetchAllSplitLegs(supabase),
+    fetchAllCategoriesForBudget(supabase),
+    fetchAllBudgetMoves(supabase),
+    fetchAllInvoiceLinks(supabase),
+    fetchAllExpenseLinks(supabase),
+    fetchAllDismissals(supabase),
+    fetchAllCandidateInvoices(supabase),
+    fetchAllCandidateExpenses(supabase),
+    supabase.auth.getUser(),
   ])
   const { data: accountRow, error: accountError } = accountRes
   const { data: { user: aliasUser } } = aliasUserRes
-  perf.mark('wave1')
 
   // The one open checking account this ledger runs from — "first" by when it
   // was created, same tie-break the rest of the app uses when a query could
@@ -491,7 +487,6 @@ export default async function MoneyPage({
       ? supabase.from('ledger_payee_aliases').select('raw_payee').eq('owner_id', aliasUser.id)
       : Promise.resolve(null),
   ])
-  perf.mark('wave2')
 
   const { data: categoryRows, error: categoryError } = categoriesRes
   if (categoryError) return <LoadError message={categoryError.message} />
@@ -845,7 +840,6 @@ export default async function MoneyPage({
     allTxns.filter((t) => t.category_id !== null && t.payee.trim() !== '').map((t) => t.payee),
   )]
 
-  perf.done()
   return (
     <AppShell current="money" wide>
       <MoneyRegister
