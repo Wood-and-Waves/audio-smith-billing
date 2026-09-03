@@ -1952,7 +1952,17 @@ export default function MoneyRegister({
     // reason as transfer: category_id is null here too, but the row is
     // never "uncategorized" — see the isSplit branch in the category cell
     // below.
-    const inlineCategory = !isSplit && t.category_id === null
+    // The category is the field Dan changes most (2026-09-02: "The one thing I
+    // would want to adjust the most on the ledger is the category. I can't
+    // click it and have it do anything"). It used to render as an inline
+    // picker ONLY while uncategorized and as dead text once set — and that
+    // text sits inside the stopPropagation wrapper below, so the one cell he
+    // most wanted to change was the only one that swallowed its own click.
+    // Now every editable non-split row gets the picker, seeded with whatever
+    // it already holds. An uncategorized row still gets one whether or not it
+    // is editable, exactly as before; a reconciled row that already has a
+    // category stays text, because it is locked.
+    const inlineCategory = !isSplit && (t.category_id === null || editable)
       && (t.kind === 'income' || t.kind === 'expense' || t.kind === 'owner_pay')
     const outflowCents = t.amount_cents < 0 ? -t.amount_cents : 0
     const inflowCents = t.amount_cents > 0 ? t.amount_cents : 0
@@ -2031,7 +2041,7 @@ export default function MoneyRegister({
             <CategoryPicker
               size="sm"
               ariaLabel={`Category for ${t.payee || 'this transaction'}`}
-              value=""
+              value={t.category_id ?? ''}
               disabled={pending}
               onChange={(v) => setRowCategory(t, v)}
               options={categoryPickerOptions}
@@ -2140,7 +2150,17 @@ export default function MoneyRegister({
     // see that comment for both the owner_pay-included and
     // transfer/split-excluded halves.
     const isSplit = t.legs.length > 0
-    const inlineCategory = !isSplit && t.category_id === null
+    // The category is the field Dan changes most (2026-09-02: "The one thing I
+    // would want to adjust the most on the ledger is the category. I can't
+    // click it and have it do anything"). It used to render as an inline
+    // picker ONLY while uncategorized and as dead text once set — and that
+    // text sits inside the stopPropagation wrapper below, so the one cell he
+    // most wanted to change was the only one that swallowed its own click.
+    // Now every editable non-split row gets the picker, seeded with whatever
+    // it already holds. An uncategorized row still gets one whether or not it
+    // is editable, exactly as before; a reconciled row that already has a
+    // category stays text, because it is locked.
+    const inlineCategory = !isSplit && (t.category_id === null || editable)
       && (t.kind === 'income' || t.kind === 'expense' || t.kind === 'owner_pay')
     const outflowCents = t.amount_cents < 0 ? -t.amount_cents : 0
     const inflowCents = t.amount_cents > 0 ? t.amount_cents : 0
@@ -2202,7 +2222,7 @@ export default function MoneyRegister({
                 size="sm"
                 className="w-40"
                 ariaLabel={`Category for ${t.payee || 'this transaction'}`}
-                value=""
+                value={t.category_id ?? ''}
                 disabled={pending}
                 onChange={(v) => setRowCategory(t, v)}
                 options={categoryPickerOptions}
