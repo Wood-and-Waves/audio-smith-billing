@@ -418,7 +418,7 @@ export default async function MoneyPage({
   // the category list (ensureDefaultCategories has to have seeded first) and
   // the transactions (they need the account's id).
   const [
-    accountRes, seedResult, showsRes, splitLegsRes,
+    accountRes, categoriesRes0, showsRes, splitLegsRes,
     budgetCategoriesRes, movesRes,
     invoiceLinksRes, expenseLinksRes, dismissalsRes,
     candidateInvoicesRes, candidateExpensesRes, aliasUserRes,
@@ -432,7 +432,11 @@ export default async function MoneyPage({
       .order('created_at', { ascending: true })
       .limit(1)
       .maybeSingle()),
-    perf.track('seed', ensureDefaultCategories()),
+    perf.track('categories', supabase.from('ledger_categories')
+      .select('id, name, grp, sort, budget_role')
+      .eq('hidden', false)
+      .order('grp', { ascending: true })
+      .order('sort', { ascending: true })),
     perf.track('shows', supabase.from('shows')
       .select('id, name, show_days(date)')
       .order('created_at', { ascending: false })
@@ -451,16 +455,34 @@ export default async function MoneyPage({
   const { data: { user: aliasUser } } = aliasUserRes
   perf.mark('wave1')
 
-  // Wave two: the three reads that could not be in wave one. Transactions and
-  // aliases degrade to an empty resolved value rather than being skipped, so
-  // this stays one Promise.all in every case instead of branching into a
-  // second serial trip.
-  const [categoriesRes, txnsRes, aliasRowsRes] = await Promise.all([
-    supabase.from('ledger_categories')
+  // The one open checking account this ledger runs from — "first" by when it
+  // was created, same tie-break the rest of the app uses when a query could
+  // in principle return more than one row. Guarded here, ahead of the seed
+  // below, so the first failure Dan sees is still this one.
+  if (accountError) return <LoadError message={accountError.message} />
+
+  // FIRST RUN ONLY. ensureDefaultCategories() seeds the S-Corp starter chart
+  // for an owner who has never opened the ledger, and is a no-op every load
+  // after that — but it was the slowest call in wave one on EVERY render
+  // (measured 187ms warm, 370ms cold, 317ms on Dan's phone), and it is the
+  // one write on a page that otherwise only reads. So it now runs only when
+  // the category read actually came back empty, which is once per owner
+  // ever. The re-read after it is what the register renders from.
+  let categoriesRes = categoriesRes0
+  if (!categoriesRes.error && (categoriesRes.data ?? []).length === 0) {
+    const seedResult = await ensureDefaultCategories()
+    if ('error' in seedResult) return <LoadError message={seedResult.error} />
+    categoriesRes = await supabase.from('ledger_categories')
       .select('id, name, grp, sort, budget_role')
       .eq('hidden', false)
       .order('grp', { ascending: true })
-      .order('sort', { ascending: true }),
+      .order('sort', { ascending: true })
+  }
+
+  // Wave two: the two reads that genuinely need wave one's ids. Both degrade
+  // to an empty resolved value rather than being skipped, so this stays one
+  // Promise.all in every case instead of branching into a second serial trip.
+  const [txnsRes, aliasRowsRes] = await Promise.all([
     accountRow
       ? fetchAllTransactions(supabase, accountRow.id)
       : Promise.resolve({ rows: [], error: null } as
@@ -470,17 +492,6 @@ export default async function MoneyPage({
       : Promise.resolve(null),
   ])
   perf.mark('wave2')
-
-  // The one open checking account this ledger runs from — "first" by when it
-  // was created, same tie-break the rest of the app uses when a query could
-  // in principle return more than one row.
-  if (accountError) return <LoadError message={accountError.message} />
-
-  // Seeds the S-Corp starter chart the first time this owner ever opens the
-  // ledger — a no-op every load after that (see the doc comment on the
-  // action itself). Runs whether or not an account exists yet, so the
-  // categories are already there the moment the first-run card creates one.
-  if ('error' in seedResult) return <LoadError message={seedResult.error} />
 
   const { data: categoryRows, error: categoryError } = categoriesRes
   if (categoryError) return <LoadError message={categoryError.message} />
