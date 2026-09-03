@@ -835,12 +835,25 @@ deliberately so it takes effect the moment the project moves to Pro (which the
 sharing IDEA above would require anyway); it is inert until then. Verify with
 the `x-vercel-id` header, never by assuming the config applied.
 
-**Still open, in value order:** optimistic UI in the register so edits feel
-instant regardless of server time; the same `Promise.all` treatment for
-`/money/matches` (20 awaits), `/money/forecast` (18) and `/money/reports` (8),
-none of which have been touched; and the invoice page re-downloading every
-receipt on every load. Instrumentation (`lib/perfLog.ts` + `perf.track` calls
-in `app/money/page.tsx`) is STILL DEPLOYED and must be removed or gated.
+**All shipped 2026-09-02.** Optimistic UI in the register (`f4a2e66`) — the
+category and cleared flips paint immediately and reconcile on the action's
+return; scoped to those two deliberately, since React drops optimistic state
+when the transition ends and a silent snap-back would misrepresent a delete or
+a split save. The same two-wave treatment for `/money/forecast`,
+`/money/matches` and `/money/reports` (`6d8c872`), none of which were measured
+individually — the mechanism was already proven on `/money` and instrumenting
+each would have cost more page loads than it was worth. Instrumentation
+removed in the same commit; `b0efdaa..7b3c46d` carry the timers if they are
+ever wanted again.
+
+**Left undone on purpose:** the invoice page re-downloading every receipt on
+every load (`app/invoices/[id]/page.tsx:277`) — a bandwidth and memory problem
+rather than a latency one for a single user, and it matters at the scale the
+sharing IDEA describes, not here. The register still renders every row; paging
+or virtualisation was considered and passed over again (354 rows is not enough
+DOM to matter, and `totalCount`/`truncated` remain wired for it). Cold renders
+are ~460-780ms and no query work reaches that — it is TLS and connection setup
+on a fresh function instance.
 
 ## Small / cosmetic
 
