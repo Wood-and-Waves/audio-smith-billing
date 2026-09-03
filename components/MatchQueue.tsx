@@ -330,8 +330,18 @@ export default function MatchQueue({ income, expense, dismissed }: {
                       </div>
                       <div className="mt-1 flex flex-wrap items-baseline gap-x-2 text-sm text-muted">
                         <span aria-hidden="true">→</span>
+                        {/* The expense's own AMOUNT, which this line used to
+                            omit while the Deposits section above printed each
+                            invoice's total — so the one field that proves the
+                            pairing was the one field missing (Dan, 2026-08-27:
+                            "I need to see the transaction amount for both
+                            sides of the transaction. How do I know if it is
+                            the same?"). Same order as the invoice line above:
+                            who · what · how much · when. */}
                         <span className="truncate">
-                          {card.expense.whereSpent} · {card.expense.showName} · {formatDateShort(card.expense.spentOn)}
+                          {card.expense.whereSpent} · {card.expense.showName}
+                          {' · '}{formatUSD(card.expense.amountCents)}
+                          {' · '}{formatDateShort(card.expense.spentOn)}
                         </span>
                       </div>
                       {evidence && <p className="mt-1 text-xs text-muted">{evidence}</p>}

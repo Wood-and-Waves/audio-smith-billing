@@ -72,7 +72,15 @@ test('floating-point amounts round to exact cents', () => {
 })
 
 test('not an OFX file throws the friendly error', () => {
-  assert.throws(() => parseOfx('Date,Payee,Amount\n...'), /Not an OFX file\./)
+  // Fixture grown past the size floor on 2026-09-03. It used to be the
+  // 21-byte 'Date,Payee,Amount\n...', which now reads as a failed download —
+  // correctly, since nothing real is 21 bytes (Chase's actual CSV export is
+  // ~3.6KB). The behaviour under test is unchanged: a file that ARRIVED and
+  // is not OFX blames the format.
+  const csv = 'Date,Payee,Amount,Balance\n'
+    + '08/25/2026,STARBUCKS 8007827282,-25.00,1234.56\n'
+    + '08/24/2026,WAL-MART #5023,-41.32,1259.56\n'
+  assert.throws(() => parseOfx(csv), /Not an OFX file\./)
 })
 
 test('a missing DTPOSTED throws, naming the date', () => {
@@ -98,4 +106,46 @@ test('no LEDGERBAL block: the balance is null even when AVAILBAL exists', () => 
     '<LEDGERBAL><BALAMT>1234.56<DTASOF>20260812</LEDGERBAL>',
     '<AVAILBAL><BALAMT>999.00<DTASOF>20260812</AVAILBAL>')
   assert.equal(parseOfx(availOnly).ledgerBalanceCents, null)
+})
+
+// A FAILED DOWNLOAD vs a WRONG FILE TYPE. Chase handed Dan a .qfx holding
+// nine bytes — the literal text "undefined" — and the old message ("Not an
+// OFX file.") sent him to check the format instead of re-downloading.
+
+test('a download that returned the literal text "undefined" says so, and says how big it was', () => {
+  assert.throws(
+    () => parseOfx('undefined'),
+    (err: Error) => {
+      assert.match(err.message, /didn't download correctly/)
+      assert.match(err.message, /9 bytes/, 'the size is what makes it obvious')
+      assert.doesNotMatch(err.message, /Not an OFX file/, 'never blames the format')
+      return true
+    },
+  )
+})
+
+test('an empty file reports zero bytes rather than a format problem', () => {
+  assert.throws(() => parseOfx(''), /didn't download correctly \(0 bytes\)/)
+})
+
+test('a whitespace-only file is a failed download too', () => {
+  assert.throws(() => parseOfx('   \r\n  \r\n'), /didn't download correctly/)
+})
+
+test('one byte is reported in the singular', () => {
+  assert.throws(() => parseOfx('x'), /\(1 byte\)/)
+})
+
+test('a real file of the WRONG type still blames the format, not the download', () => {
+  // A CSV export: big enough to have arrived intact, and genuinely not OFX.
+  const csv = 'Details,Posting Date,Description,Amount,Type,Balance\n'
+    + 'DEBIT,08/25/2026,STARBUCKS 8007827282,-25.00,DEBIT_CARD,1234.56\n'
+    + 'DEBIT,08/24/2026,WAL-MART #5023,-41.32,DEBIT_CARD,1259.56\n'
+  assert.ok(csv.length > 64, 'the fixture clears the size floor, so the format check is what fires')
+  assert.throws(() => parseOfx(csv), /Not an OFX file/)
+})
+
+test('a real statement is untouched by the new guard', () => {
+  const parsed = parseOfx(SGML)
+  assert.ok(parsed.transactions.length > 0, 'still parses exactly as before')
 })

@@ -43,10 +43,37 @@ function toCents(raw: string | null): number {
   return roundCents(parseFloat(raw ?? '0') * 100)
 }
 
+/**
+ * Below this, a file cannot be a bank statement — the OFX header block alone
+ * is ~200 bytes before a single transaction. Set well under that so no real
+ * statement can ever trip it; its job is to catch a download that returned
+ * nothing, not to police small files.
+ */
+export const MIN_PLAUSIBLE_OFX_BYTES = 64
+
 export function parseOfx(text: string): ParsedOfx {
+  // A FAILED DOWNLOAD is not a wrong file type, and saying so saves Dan
+  // looking in the wrong place. Chase handed him a .qfx containing nine bytes
+  // — the literal text "undefined" — and "Not an OFX file." sent him to check
+  // the format and the app rather than to re-download (2026-08-26).
+  //
+  // SIZE ALONE decides this, deliberately. An earlier version also treated
+  // "contains no angle bracket" as a failed download, which is wrong: a CSV
+  // arrives perfectly intact and contains none, and it deserves the format
+  // error below, not a "re-download it". The test suite caught that.
+  const trimmed = text.trim()
+  if (trimmed.length < MIN_PLAUSIBLE_OFX_BYTES) {
+    throw new Error(
+      `That file is empty or didn't download correctly (${text.length} ` +
+      `${text.length === 1 ? 'byte' : 'bytes'}). Try downloading it again.`,
+    )
+  }
+
   // A real statement has one of the two structural markers. A CSV or a
   // stray text file has neither, and that's a clearer error for Dan than
-  // silently returning zero transactions.
+  // silently returning zero transactions. Reached only once the file is big
+  // enough to be a real download, so this now means what it says: the file
+  // arrived, and it is not OFX.
   if (!/<OFX[\s>]/i.test(text) && !/<STMTTRN[\s>]/i.test(text)) {
     throw new Error('Not an OFX file.')
   }
