@@ -445,7 +445,13 @@ Still open:
   make elapsed time work without a lookup at all. Matters whenever the API
   misses a flight — a charter, a codeshare, a very new schedule.
 
-## Flight check-in alarm, 24 hours out (2026-08-26, Dan)
+## Flight check-in alarm, 24 hours out — SHIPPED 2026-09-03 (`03b44e7`)
+
+Verified against the LIVE feed, not just tests: 9 flight events, 8 VALARMs —
+the one without is UA660, an all-day event with no departure time, which is
+exactly the case designed to stay silent. Original spec below.
+
+### As originally filed (2026-08-26, Dan)
 
 Dan: *"I would [like] my flights in the calendar to have an alarm 24 hours
 before the flight so I can check in on time."*
@@ -857,8 +863,10 @@ on a fresh function instance.
 
 ## Small / cosmetic
 
-- Import error message can't tell a broken download from a wrong format
-  (2026-08-26, Dan). He tried to import a QFX Chase had just handed him and
+- Import error message couldn't tell a broken download from a wrong format —
+  FIXED 2026-09-03 (`04ba3fe`). Size alone decides it: a first pass also
+  treated "no angle bracket" as a failed download, which misclassified a CSV,
+  and the tests caught it. Original report (2026-08-26, Dan). He tried to import a QFX Chase had just handed him and
   got "Not an OFX file." The file was **9 bytes containing the literal text
   `undefined`** — Chase's download had failed and written a JavaScript
   `undefined` to disk. The message was accurate but pointed him at the format
@@ -969,7 +977,9 @@ on a fresh function instance.
   photo, and Dan adjusted by hand. This is hit rate. Dan is not asking for it
   now.
 
-- Matches queue hides the expense's own amount (2026-08-27, Dan: *"I need to
+- Matches queue hid the expense's own amount — FIXED 2026-09-03 (`04ba3fe`;
+  the Charges line now reads who · what · how much · when, matching the
+  Deposits side). Original report (2026-08-27, Dan: *"I need to
   see the transaction amount for both sides of the transaction. How do I know
   if it is the same?"* — a $5.74 TST*HIGH FLYING FOODS charge proposed against
   Pannikin Coffee & Tea, dated a day apart, with different payee text). The
