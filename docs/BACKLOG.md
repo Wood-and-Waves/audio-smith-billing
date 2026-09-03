@@ -798,6 +798,50 @@ what they run (one Windows user settles it); re-read Vercel's commercial-use
 terms; on DEV, create a second auth user and watch `/settings` and invoice
 creation fail — ten minutes, and it makes the blockers concrete.
 
+## Register speed — FIXED 2026-09-02 (with one dead end)
+
+Dan: *"It is a bit slow. Clicking buttons have a delay, entering data in the
+ledger has a delay. I can't really ship it like that."*
+
+**The database was never the problem.** `pg_stat_statements` on production:
+every application query 1-22ms, ~25s of database time across the app's whole
+life. Not the client bundle either (`@react-pdf` and `pdfjs` are already
+lazy-imported on click), not missing indexes (seq scans dominate, but on
+15-109 row tables a seq scan IS the fast plan), not the network (140ms TTFB,
+75ms of it TLS).
+
+**It was round trips.** `app/money/page.tsx` awaited ~15 independent fetches
+one at a time with no `Promise.all` anywhere on the page, and
+`app/money/actions.ts` calls `revalidatePath('/money')` 27 times — so every
+ledger edit replayed the whole waterfall before the UI moved.
+
+Fixed by issuing them in two waves (`14dfea4`), and by taking
+`ensureDefaultCategories()` off the hot path (`7b3c46d`) — it was the slowest
+call in wave one on every render and a no-op for any owner past their first
+load. **Measured, warm, same device: 318ms -> 265ms after the seed change; the
+parallelisation itself is proven independently — in one warm run twelve calls
+totalling 1,611ms of work completed in 187ms wall.** Cold renders are still
+~460-780ms; that is TLS and connection setup on a fresh function instance, not
+query time.
+
+**DEAD END — do not retry: pinning the Vercel region does nothing on Hobby.**
+Supabase is us-east-2 and Vercel defaults to iad1 (us-east-1), so `"regions":
+["cle1"]` was added to `vercel.json` (cle1 IS us-east-2, confirmed in Vercel's
+region table). It changed nothing: wave one measured 187ms before and 188ms
+after, and `curl -sI ... | grep x-vercel-id` still reports `iad1::`. **Region
+selection is not available on the Hobby plan and the setting is ignored
+silently** — the deploy succeeds and lies. The line is left in `vercel.json`
+deliberately so it takes effect the moment the project moves to Pro (which the
+sharing IDEA above would require anyway); it is inert until then. Verify with
+the `x-vercel-id` header, never by assuming the config applied.
+
+**Still open, in value order:** optimistic UI in the register so edits feel
+instant regardless of server time; the same `Promise.all` treatment for
+`/money/matches` (20 awaits), `/money/forecast` (18) and `/money/reports` (8),
+none of which have been touched; and the invoice page re-downloading every
+receipt on every load. Instrumentation (`lib/perfLog.ts` + `perf.track` calls
+in `app/money/page.tsx`) is STILL DEPLOYED and must be removed or gated.
+
 ## Small / cosmetic
 
 - Import error message can't tell a broken download from a wrong format
