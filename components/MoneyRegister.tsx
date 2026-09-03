@@ -554,7 +554,6 @@ export default function MoneyRegister({
   const [outflowAmount, setOutflowAmount] = useState('')
   const [inflowAmount, setInflowAmount] = useState('')
   const [categoryId, setCategoryId] = useState('')
-  const [showId, setShowId] = useState('')
   const [memo, setMemo] = useState('')
 
   // The inline edit form's own state — one row editable at a time (a single
@@ -831,6 +830,23 @@ export default function MoneyRegister({
   const categoryPickerOptions: CategoryPickerOption[] = categories.map((c) => ({
     id: c.id, name: c.name, grp: c.grp, availableCents: categoryBalanceCents[c.id],
   }))
+  /**
+   * Enter anywhere in the add row saves it (Dan, 2026-09-03) — typing a run
+   * of cash expenses should not need a trip to the button between each one.
+   *
+   * Scoped to real <input> targets on purpose. CategoryPicker is a listbox
+   * with its own Enter handling (Enter picks the highlighted option); firing
+   * this as well would both choose a category AND submit the row on one
+   * keypress, which is exactly the kind of half-filled save this guard
+   * exists to prevent.
+   */
+  function addOnEnter(e: React.KeyboardEvent) {
+    if (e.key !== 'Enter' || pending) return
+    if (!(e.target instanceof HTMLInputElement)) return
+    e.preventDefault()
+    add()
+  }
+
   const showOptions = [
     { value: '', label: '—' },
     ...shows.map((s) => ({ value: s.id, label: s.label })),
@@ -901,7 +917,10 @@ export default function MoneyRegister({
         // explicitly rather than relying on `kind === 'transfer'` to imply
         // it, so this stays correct even if deriveKind's own rules change.
         categoryId: categoryId === TRANSFER_SENTINEL ? null : (categoryId || null),
-        showId: showId || null,
+        // Always null now: the add row no longer offers a Show picker (see
+        // the desktop add row's own comment). A match fills it in, or the
+        // edit row sets it by hand.
+        showId: null,
         payee,
         memo,
       })
@@ -914,7 +933,6 @@ export default function MoneyRegister({
       setOutflowAmount('')
       setInflowAmount('')
       setMemo('')
-      setShowId('')
       router.refresh()
     })
   }
@@ -2461,7 +2479,7 @@ export default function MoneyRegister({
           `style` attribute always wins over a class, at every viewport, so
           the resizable template can't share a block with the phone's 2-col
           stack). Category picker, Show and the state they share (categoryId,
-          showId, ...) live above with the rest of the add row's own state —
+          ...) live above with the rest of the add row's own state —
           kind isn't state at all anymore (Wave B Task 5): add() derives it
           from categoryId and whichever box below carries the amount. */}
       <div className="mb-3">
@@ -2474,7 +2492,8 @@ export default function MoneyRegister({
               wrapper, but nothing wraps the add row that way, so it needs its
               own copy here for the columns to land at the identical x
               positions). */}
-          <div className="grid items-center gap-x-3 pl-3 -ml-3 pr-3" style={{ gridTemplateColumns: gridTemplate }}>
+          <div className="grid items-center gap-x-3 pl-3 -ml-3 pr-3"
+               onKeyDown={addOnEnter} style={{ gridTemplateColumns: gridTemplate }}>
             <span aria-hidden />
             <input aria-label="Date" type="date" className={FIELD_FULL} value={date} disabled={pending}
                    onChange={(e) => setDate(e.target.value)} />
@@ -2504,24 +2523,26 @@ export default function MoneyRegister({
                    className={`${FIELD_FULL} tabular text-right`} value={inflowAmount} disabled={pending}
                    onChange={(e) => onInflowChange(e.target.value)} />
             {/* Balance: a not-yet-saved row has none — left empty rather than
-                guessing ahead of the server's own running total. */}
+                guessing ahead of the server's own running total. So the two
+                trailing balance columns are free, and + Add lives in them
+                instead of on a second line. Dan, 2026-09-03: "A row returned
+                one lower for a single line feels like a mistake or a late add
+                on." It was — Show and + Add had no column in the register's
+                own grid and spilled below it. Now the add row is exactly one
+                line, aligned with every transaction under it.
+
+                The Show picker is gone from here deliberately, not for space
+                alone: `show_id` auto-fills on ANY match (an expense link
+                always, an invoice link when it resolves to exactly one show),
+                and the edit row keeps its own picker for the rows nothing
+                will ever match. Setting it at creation time was the rarest
+                path and the one costing a whole line. */}
             <span aria-hidden />
-            <span aria-hidden />
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-3 sm:pl-9">
-            <Select
-              ariaLabel="Show"
-              className="w-36"
-              value={showId}
-              disabled={pending}
-              onChange={setShowId}
-              options={showOptions}
-            />
             <button
               type="button"
               onClick={add}
               disabled={pending}
-              className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
+              className="px-3 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
                          border border-line text-muted hover:text-ink disabled:opacity-40"
             >
               {pending ? 'Saving…' : '+ Add'}
@@ -2542,7 +2563,7 @@ export default function MoneyRegister({
             beneath — same idiom the edit row's phone copy uses. Kept in step
             with the desktop copy above (same CategoryPicker pinnedOptions,
             same removed Kind Select) — see that copy's own comments. */}
-        <div className="sm:hidden">
+        <div className="sm:hidden" onKeyDown={addOnEnter}>
           <div className="grid gap-2 grid-cols-2 items-center">
             <input aria-label="Date" type="date" className={FIELD_FULL} value={date} disabled={pending}
                    onChange={(e) => setDate(e.target.value)} />
@@ -2565,15 +2586,11 @@ export default function MoneyRegister({
                    className={`${FIELD_FULL} tabular text-right`} value={inflowAmount} disabled={pending}
                    onChange={(e) => onInflowChange(e.target.value)} />
           </div>
+          {/* Phone keeps its own action line — the stacked 2-col layout has
+              no trailing column to borrow, unlike desktop. Show is dropped
+              here too, for the same reason and to keep the two layouts
+              offering the same fields. */}
           <div className="mt-2 flex flex-wrap items-center gap-3">
-            <Select
-              ariaLabel="Show"
-              className="w-36"
-              value={showId}
-              disabled={pending}
-              onChange={setShowId}
-              options={showOptions}
-            />
             <button
               type="button"
               onClick={add}
