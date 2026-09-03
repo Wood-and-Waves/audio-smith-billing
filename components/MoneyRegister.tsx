@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, useTransition } from 'react'
+import { useEffect, useOptimistic, useRef, useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
@@ -517,6 +517,26 @@ export default function MoneyRegister({
 }) {
   const router = useRouter()
   const [pending, start] = useTransition()
+
+  /**
+   * Optimistic rows. The server render is fast now (measured 265ms warm,
+   * 2026-09-02), but an edit still costs a round trip plus a full
+   * revalidatePath re-render before anything moves on screen — and the two
+   * fields Dan changes constantly, the category and the cleared flag, are
+   * single-value flips whose outcome is known the instant he picks. So they
+   * paint immediately and reconcile when the action returns.
+   *
+   * React discards these the moment the transition ends, so a REFUSAL needs
+   * no undo path: the row snaps back to the server's truth on its own and
+   * the existing `error` banner says why. That is also why only genuinely
+   * reversible single-field edits belong here — a delete or a split save has
+   * consequences a silent snap-back would misrepresent.
+   */
+  const [rows, patchRow] = useOptimistic(
+    transactions,
+    (state: LedgerTxnRow[], patch: { id: string } & Partial<LedgerTxnRow>) =>
+      state.map((t) => (t.id === patch.id ? { ...t, ...patch } : t)),
+  )
   const [error, setError] = useState<string | null>(null)
   // The add row's own state. Declared unconditionally, ABOVE the first-run
   // early return below, so the hook order never changes between "no account
@@ -903,6 +923,7 @@ export default function MoneyRegister({
     setError(null)
     start(async () => {
       const next = row.cleared === 'cleared' ? 'uncleared' : 'cleared'
+      patchRow({ id: row.id, cleared: next })
       const result = await setTransactionCleared(row.id, next)
       if ('error' in result) { setError(result.error); return }
       router.refresh()
@@ -937,6 +958,7 @@ export default function MoneyRegister({
     setError(null)
     setApplyPrompt(null)
     start(async () => {
+      patchRow({ id: row.id, category_id: newCategoryId || null })
       const result = await setTransactionCategory(row.id, newCategoryId || null)
       if ('error' in result) { setError(result.error); return }
       const key = normalizePayee(row.payee)
@@ -2331,8 +2353,10 @@ export default function MoneyRegister({
   // (a filter over an already-sorted array preserves order) — same-date rows
   // are always contiguous once the interleaved uncleared ones are pulled
   // out, so this never needs to re-sort.
-  const unclearedRows = transactions.filter((t) => t.cleared === 'uncleared')
-  const clearedRows = transactions.filter((t) => t.cleared !== 'uncleared')
+  // `rows`, not `transactions` — this is the one place the optimistic layer
+  // has to be read, because both layouts render from these two lists.
+  const unclearedRows = rows.filter((t) => t.cleared === 'uncleared')
+  const clearedRows = rows.filter((t) => t.cleared !== 'uncleared')
   const dateGroups: { date: string; rows: LedgerTxnRow[] }[] = []
   for (const t of clearedRows) {
     const open = dateGroups[dateGroups.length - 1]
