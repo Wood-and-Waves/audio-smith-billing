@@ -402,36 +402,87 @@ export default async function MoneyPage({
   const supabase = await createClient()
   const perf = perfTimer('/money')
 
-  // The one open checking account this ledger runs from — "first" by when it
-  // was created, same tie-break the rest of the app uses when a query could
-  // in principle return more than one row.
-  const { data: accountRow, error: accountError } = await supabase
-    .from('ledger_accounts')
+  // ONE WAVE, not fifteen trips in a line.
+  //
+  // Measured on production 2026-09-02: this page spent 1,350ms awaiting these
+  // fetches one after another, while pg_stat_statements showed the database
+  // doing 1-22ms of work per query. The cost was round trips, not work — so
+  // they are issued together here.
+  //
+  // The error guards below are UNCHANGED and stay in their original order, so
+  // the first failure Dan sees is the same one he would have seen before.
+  // Promise.all does run every fetch even when one fails, which is fine for
+  // reads: nothing here writes, and the guards still short-circuit the render.
+  //
+  // Only two things genuinely depend on this wave, and they follow it:
+  // the category list (ensureDefaultCategories has to have seeded first) and
+  // the transactions (they need the account's id).
+  const [
+    accountRes, seedResult, showsRes, splitLegsRes,
+    budgetCategoriesRes, movesRes,
+    invoiceLinksRes, expenseLinksRes, dismissalsRes,
+    candidateInvoicesRes, candidateExpensesRes, aliasUserRes,
+  ] = await Promise.all([
     // opening_date rides along for the budget seed's own clamp below
     // (mirroring app/money/budget/page.tsx's own openingMonth/seedMonth
     // logic) — nothing else on this page needed it before now.
-    .select('id, name, opening_balance_cents, opening_date, last_reconciled_at')
-    .eq('closed', false)
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle()
+    supabase.from('ledger_accounts')
+      .select('id, name, opening_balance_cents, opening_date, last_reconciled_at')
+      .eq('closed', false)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+    ensureDefaultCategories(),
+    supabase.from('shows')
+      .select('id, name, show_days(date)')
+      .order('created_at', { ascending: false })
+      .limit(25),
+    fetchAllSplitLegs(supabase),
+    fetchAllCategoriesForBudget(supabase),
+    fetchAllBudgetMoves(supabase),
+    fetchAllInvoiceLinks(supabase),
+    fetchAllExpenseLinks(supabase),
+    fetchAllDismissals(supabase),
+    fetchAllCandidateInvoices(supabase),
+    fetchAllCandidateExpenses(supabase),
+    supabase.auth.getUser(),
+  ])
+  const { data: accountRow, error: accountError } = accountRes
+  const { data: { user: aliasUser } } = aliasUserRes
+  perf.mark('wave1')
+
+  // Wave two: the three reads that could not be in wave one. Transactions and
+  // aliases degrade to an empty resolved value rather than being skipped, so
+  // this stays one Promise.all in every case instead of branching into a
+  // second serial trip.
+  const [categoriesRes, txnsRes, aliasRowsRes] = await Promise.all([
+    supabase.from('ledger_categories')
+      .select('id, name, grp, sort, budget_role')
+      .eq('hidden', false)
+      .order('grp', { ascending: true })
+      .order('sort', { ascending: true }),
+    accountRow
+      ? fetchAllTransactions(supabase, accountRow.id)
+      : Promise.resolve({ rows: [], error: null } as
+          Awaited<ReturnType<typeof fetchAllTransactions>>),
+    aliasUser
+      ? supabase.from('ledger_payee_aliases').select('raw_payee').eq('owner_id', aliasUser.id)
+      : Promise.resolve(null),
+  ])
+  perf.mark('wave2')
+
+  // The one open checking account this ledger runs from — "first" by when it
+  // was created, same tie-break the rest of the app uses when a query could
+  // in principle return more than one row.
   if (accountError) return <LoadError message={accountError.message} />
-  perf.mark('account')
 
   // Seeds the S-Corp starter chart the first time this owner ever opens the
   // ledger — a no-op every load after that (see the doc comment on the
   // action itself). Runs whether or not an account exists yet, so the
   // categories are already there the moment the first-run card creates one.
-  const seedResult = await ensureDefaultCategories()
   if ('error' in seedResult) return <LoadError message={seedResult.error} />
-  perf.mark('seedCategories')
 
-  const { data: categoryRows, error: categoryError } = await supabase
-    .from('ledger_categories')
-    .select('id, name, grp, sort, budget_role')
-    .eq('hidden', false)
-    .order('grp', { ascending: true })
-    .order('sort', { ascending: true })
+  const { data: categoryRows, error: categoryError } = categoriesRes
   if (categoryError) return <LoadError message={categoryError.message} />
 
   // grp rides along for MoneyRegister's "Group: Name" category cell; both it
@@ -446,11 +497,7 @@ export default async function MoneyPage({
   // recently the show was created, not by its own dates. A transaction tagged
   // to a show outside this list still displays correctly (see RawTxnRow's
   // `show` join above); this list only has to be good enough to tag NEW ones.
-  const { data: showRows, error: showError } = await supabase
-    .from('shows')
-    .select('id, name, show_days(date)')
-    .order('created_at', { ascending: false })
-    .limit(25)
+  const { data: showRows, error: showError } = showsRes
   if (showError) return <LoadError message={showError.message} />
 
   const shows: ShowOption[] = ((showRows ?? []) as unknown as
@@ -482,9 +529,8 @@ export default async function MoneyPage({
     )
   }
 
-  const { rows: allTxns, error: txnError } = await fetchAllTransactions(supabase, accountRow.id)
+  const { rows: allTxns, error: txnError } = txnsRes
   if (txnError) return <LoadError message={txnError} />
-  perf.mark('transactions')
 
   // Split legs (Wave C Task 4) — owner-wide, bucketed by transaction_id
   // below; a transaction absent from this map is simply unsplit (the
@@ -493,9 +539,8 @@ export default async function MoneyPage({
   // this page (fetchAllInvoiceLinks, fetchAllExpenseLinks, ...) — RLS
   // already scopes it to the caller's own rows, and only THIS account's
   // transactions ever look themselves up in it below.
-  const { rows: splitLegRows, error: splitLegError } = await fetchAllSplitLegs(supabase)
+  const { rows: splitLegRows, error: splitLegError } = splitLegsRes
   if (splitLegError) return <LoadError message={splitLegError} />
-  perf.mark('splitLegs')
   const legsByTxnId = new Map<string, SplitLegRow[]>()
   for (const l of splitLegRows) {
     const list = legsByTxnId.get(l.transaction_id) ?? []
@@ -528,9 +573,8 @@ export default async function MoneyPage({
   // transaction. Nothing sensitive is logged — the error text itself is
   // simply dropped, the same as it would have been inside LoadError's own
   // rendered message.
-  const { rows: budgetCategoryRows, error: budgetCategoryError } = await fetchAllCategoriesForBudget(supabase)
-  const { rows: moveRows, error: moveError } = await fetchAllBudgetMoves(supabase)
-  perf.mark('budget')
+  const { rows: budgetCategoryRows, error: budgetCategoryError } = budgetCategoriesRes
+  const { rows: moveRows, error: moveError } = movesRes
 
   const categoryBalanceCents: Record<string, number> = {}
   if (!budgetCategoryError && !moveError) {
@@ -589,21 +633,20 @@ export default async function MoneyPage({
   // these (this one and app/money/matches/page.tsx) page past 1000 rows for
   // the same reason fetchAllTransactions above does: a plain unranged select
   // would silently drop a link or a dismissal past PostgREST's cap.
-  const { rows: invoiceLinkRows, error: invoiceLinkError } = await fetchAllInvoiceLinks(supabase)
+  const { rows: invoiceLinkRows, error: invoiceLinkError } = invoiceLinksRes
   if (invoiceLinkError) return <LoadError message={invoiceLinkError} />
 
-  const { rows: expenseLinkRows, error: expenseLinkError } = await fetchAllExpenseLinks(supabase)
+  const { rows: expenseLinkRows, error: expenseLinkError } = expenseLinksRes
   if (expenseLinkError) return <LoadError message={expenseLinkError} />
 
-  const { rows: dismissalRows, error: dismissalError } = await fetchAllDismissals(supabase)
+  const { rows: dismissalRows, error: dismissalError } = dismissalsRes
   if (dismissalError) return <LoadError message={dismissalError} />
 
-  const { rows: candidateInvoiceRows, error: candidateInvoicesError } = await fetchAllCandidateInvoices(supabase)
+  const { rows: candidateInvoiceRows, error: candidateInvoicesError } = candidateInvoicesRes
   if (candidateInvoicesError) return <LoadError message={candidateInvoicesError} />
 
-  const { rows: candidateExpenseRows, error: candidateExpensesError } = await fetchAllCandidateExpenses(supabase)
+  const { rows: candidateExpenseRows, error: candidateExpensesError } = candidateExpensesRes
   if (candidateExpensesError) return <LoadError message={candidateExpensesError} />
-  perf.mark('linksAndCandidates')
 
   // The three fields LedgerTxnRow adds for the register (components/
   // MoneyRegister.tsx) — a txn can carry more than one invoice link (a
@@ -783,20 +826,14 @@ export default async function MoneyPage({
   // named. `null` carries that unknown through to the register, which offers
   // no chip at all while it holds. The page still renders: a chip he cannot
   // see is a smaller loss than the whole ledger going behind an error screen.
-  const { data: { user: aliasUser } } = await supabase.auth.getUser()
   let aliasedRaw: string[] | null = null
-  if (aliasUser) {
-    const { data: aliasRows, error: aliasError } = await supabase
-      .from('ledger_payee_aliases').select('raw_payee').eq('owner_id', aliasUser.id)
-    if (!aliasError) {
-      aliasedRaw = ((aliasRows ?? []) as { raw_payee: string }[]).map((a) => a.raw_payee)
-    }
+  if (aliasRowsRes && !aliasRowsRes.error) {
+    aliasedRaw = ((aliasRowsRes.data ?? []) as { raw_payee: string }[]).map((a) => a.raw_payee)
   }
   const knownPayees: string[] = [...new Set(
     allTxns.filter((t) => t.category_id !== null && t.payee.trim() !== '').map((t) => t.payee),
   )]
 
-  perf.mark('aliases')
   perf.done()
   return (
     <AppShell current="money" wide>
