@@ -806,10 +806,13 @@ export default function MoneyRegister({
         // -top-0.5/-bottom-2 stretch the divider from just above the label
         // down through the header's padding to its underline, so it reads as
         // a real column boundary level with the text — not a floating tick.
-        // Centered in the 12px gutter (offset = half gutter + half own width),
-        // so the bar floats midway between the two labels instead of hugging
-        // the word to its right.
-        className={`group absolute ${side === 'right' ? '-right-3' : '-left-3'} -top-0.5 -bottom-2 w-3
+        // Centered in the gutter (offset = half gutter + half own width), so
+        // the bar floats midway between the two labels instead of hugging the
+        // word to its right. The gutter went 12px -> 16px on 2026-09-03: at
+        // 12px a right-aligned label like OUTFLOW ended ~5px from the bar and
+        // read as jammed against it (Dan: "the headers snugged up against the
+        // dividers"). This width and the grid's gap-x-4 must move together.
+        className={`group absolute ${side === 'right' ? '-right-4' : '-left-4'} -top-0.5 -bottom-2 w-4
                    cursor-col-resize touch-none flex justify-center`}
       >
         <span className="h-full w-[2px] rounded-pill bg-line group-hover:w-[3px] group-hover:bg-accent" />
@@ -1881,7 +1884,7 @@ export default function MoneyRegister({
     if (desktop) {
       return (
         <>
-          <div className="grid items-center gap-x-3" style={{ gridTemplateColumns: gridTemplate }}>
+          <div className="grid items-center gap-x-4" style={{ gridTemplateColumns: gridTemplate }}>
             <span aria-hidden />
             <input aria-label="Date" type="date" className={FIELD_FULL} value={editDate} disabled={pending}
                    onChange={(e) => setEditDate(e.target.value)} />
@@ -2034,7 +2037,7 @@ export default function MoneyRegister({
              and trapped it beneath the sticky header despite its higher
              z-index. Never put opacity (or transform/filter/isolation) on a
              row that contains a popover. */
-          `grid items-center gap-x-3 pl-3 -ml-3 pr-3 py-2 border-b border-line ${
+          `grid items-center gap-x-4 pl-3 -ml-3 pr-3 py-2 border-b border-line ${
             editable ? 'cursor-pointer hover:bg-surface' : ''
           } ${isUnreviewed ? 'font-semibold' : ''}`
         }
@@ -2093,7 +2096,7 @@ export default function MoneyRegister({
         <div className="min-w-0">
           <span className="block truncate text-xs text-muted">{t.memo}</span>
           {(showReceiptLinks || showUnlink || isUnreviewed) && (
-            <div className="flex items-center gap-x-3">
+            <div className="flex items-center gap-x-4">
               {isUnreviewed && (
                 rejectConfirmId === t.id ? (
                   <>
@@ -2492,7 +2495,7 @@ export default function MoneyRegister({
               wrapper, but nothing wraps the add row that way, so it needs its
               own copy here for the columns to land at the identical x
               positions). */}
-          <div className="grid items-center gap-x-3 pl-3 -ml-3 pr-3"
+          <div className="grid items-center gap-x-4 pl-3 -ml-3 pr-3"
                onKeyDown={addOnEnter} style={{ gridTemplateColumns: gridTemplate }}>
             <span aria-hidden />
             <input aria-label="Date" type="date" className={FIELD_FULL} value={date} disabled={pending}
@@ -2537,16 +2540,22 @@ export default function MoneyRegister({
                 and the edit row keeps its own picker for the rows nothing
                 will ever match. Setting it at creation time was the rarest
                 path and the one costing a whole line. */}
-            <span aria-hidden />
+            {/* The BALANCE column, not the narrow action column after it —
+                that one is sized for an icon and wrapped "+ ADD" onto two
+                lines. Balance holds a money figure, so it fits on one.
+                whitespace-nowrap makes that a guarantee rather than a
+                coincidence of the current column width, which Dan can drag. */}
             <button
               type="button"
               onClick={add}
               disabled={pending}
-              className="px-3 py-2 text-xs font-semibold uppercase tracking-wider rounded-field
-                         border border-line text-muted hover:text-ink disabled:opacity-40"
+              className="justify-self-end whitespace-nowrap px-3 py-2 text-xs font-semibold
+                         uppercase tracking-wider rounded-field border border-line
+                         text-muted hover:text-ink disabled:opacity-40"
             >
               {pending ? 'Saving…' : '+ Add'}
             </button>
+            <span aria-hidden />
           </div>
           {/* M2 (Wave B final review): a second, live copy of the shared
               `error` state, right under the row whose deriveKind refusal
@@ -2692,7 +2701,7 @@ export default function MoneyRegister({
           <div className="hidden sm:block">
             <div
               style={{ gridTemplateColumns: gridTemplate }}
-              className="grid gap-x-3 pl-3 -ml-3 pr-3 pt-3 pb-2 mb-1 border-b border-line select-none
+              className="grid gap-x-4 pl-3 -ml-3 pr-3 pt-3 pb-2 mb-1 border-b border-line select-none
                          sticky top-16 z-10 bg-bg"
             >
               <span aria-hidden />
