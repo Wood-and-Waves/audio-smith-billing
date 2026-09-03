@@ -183,6 +183,36 @@ function flightEvent(flight: FeedFlight, stamp: string): string[] {
   }
 
   lines.push(`SUMMARY:${escapeText(summary)}`)
+
+  // A 24-hour check-in alarm, but ONLY on a flight whose departure time we
+  // actually know (Dan, 2026-08-26: "I would like my flights in the calendar
+  // to have an alarm 24 hours before the flight so I can check in on time").
+  //
+  // The depAt guard is the whole design. With a real instant, -PT24H fires
+  // exactly 24 hours before wheels-up, which is when check-in opens. Without
+  // one the event is all-day, and most clients read a -PT24H trigger off an
+  // all-day start as midnight the day before — an alarm at a useless hour,
+  // for a departure time the app does not know. Silence is the honest answer
+  // there; a hand-entered flight with no times simply gets no alarm.
+  //
+  // Client-side caveats, both verified on Dan's devices and neither fixable
+  // here: Apple Calendar honours VALARM on a subscribed feed (Google ignores
+  // alarms on ICS subscriptions outright), the subscription's "Remove alerts"
+  // setting must be OFF or every alarm is stripped on arrival, and the
+  // refresh interval bounds how late a flight can be added and still alarm.
+  //
+  // Note this feed is shared — his wife subscribes to it too, so she gets
+  // these alarms as well. Accepted deliberately over a per-viewer feed.
+  if (flight.depAt) {
+    lines.push(
+      'BEGIN:VALARM',
+      'TRIGGER:-PT24H',
+      'ACTION:DISPLAY',
+      `DESCRIPTION:${escapeText(`Check in for ${flight.flightNo}`)}`,
+      'END:VALARM',
+    )
+  }
+
   lines.push('END:VEVENT')
   return lines
 }

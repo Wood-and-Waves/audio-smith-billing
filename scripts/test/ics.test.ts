@@ -82,7 +82,8 @@ test('a flight with both times builds a timed VEVENT with DTSTART and DTEND in U
   const block = eventLines(feed, 'UID:flight-f1@theaudiosmith.com')
   assert.deepEqual(
     block.map((l) => l.split(/[:;]/)[0]),
-    ['BEGIN', 'UID', 'DTSTAMP', 'DTSTART', 'DTEND', 'SUMMARY', 'END'],
+    ['BEGIN', 'UID', 'DTSTAMP', 'DTSTART', 'DTEND', 'SUMMARY',
+     'BEGIN', 'TRIGGER', 'ACTION', 'DESCRIPTION', 'END', 'END'],
   )
   assert.deepEqual(block, [
     'BEGIN:VEVENT',
@@ -91,6 +92,11 @@ test('a flight with both times builds a timed VEVENT with DTSTART and DTEND in U
     'DTSTART:20260810T143000Z',
     'DTEND:20260810T174500Z',
     'SUMMARY:✈ AA123 → LAX',
+    'BEGIN:VALARM',
+    'TRIGGER:-PT24H',
+    'ACTION:DISPLAY',
+    'DESCRIPTION:Check in for AA123',
+    'END:VALARM',
     'END:VEVENT',
   ])
 })
@@ -112,6 +118,11 @@ test('a flight with a departure time but no arrival time is timed with no DTEND'
     'DTSTAMP:20260821T230000Z',
     'DTSTART:20260810T143000Z',
     'SUMMARY:✈ AA123 → LAX',
+    'BEGIN:VALARM',
+    'TRIGGER:-PT24H',
+    'ACTION:DISPLAY',
+    'DESCRIPTION:Check in for AA123',
+    'END:VALARM',
     'END:VEVENT',
   ])
   assert.ok(!block.some((l) => l.startsWith('DTEND')))
@@ -340,4 +351,63 @@ test('the run keeps the show details on its event', () => {
   // the LOCATION content line carries a literal backslash before it.
   assert.match(ics, /LOCATION:Hyatt · Chicago\\, IL/)
   assert.match(ics, /DESCRIPTION:PwC/)
+})
+
+
+// The 24-hour check-in alarm. Its whole design is the depAt guard: an alarm
+// is only meaningful when the feed knows when the plane actually leaves.
+
+test('a flight with a known departure carries a 24-hour check-in alarm', () => {
+  const feed = buildCalendarFeed({ days: [], flights: [flight()], nowIso: NOW })
+  const block = eventLines(feed, 'UID:flight-f1@theaudiosmith.com')
+  assert.ok(block.includes('BEGIN:VALARM'), 'the alarm is present')
+  assert.ok(block.includes('TRIGGER:-PT24H'), 'and fires 24 hours before DTSTART')
+  assert.ok(block.includes('DESCRIPTION:Check in for AA123'), 'naming the flight')
+})
+
+test('the alarm is nested INSIDE the event, not a sibling of it', () => {
+  // A VALARM outside its VEVENT is not a calendar entry with an alarm, it is
+  // malformed iCalendar — so position is the assertion, not mere presence.
+  const block = eventLines(
+    buildCalendarFeed({ days: [], flights: [flight()], nowIso: NOW }),
+    'UID:flight-f1@theaudiosmith.com',
+  )
+  const alarmStart = block.indexOf('BEGIN:VALARM')
+  const alarmEnd = block.indexOf('END:VALARM')
+  assert.ok(alarmStart > 0 && alarmEnd > alarmStart, 'opens and closes in order')
+  assert.equal(block[block.length - 1], 'END:VEVENT', 'the event closes last')
+  assert.ok(alarmEnd < block.length - 1, 'and the alarm closes before it')
+})
+
+test('a flight with NO departure time gets no alarm at all', () => {
+  // All-day event: most clients read -PT24H off an all-day DTSTART as
+  // midnight the day before, which would fire at a useless hour for a
+  // departure the app does not know. Silence is the honest answer.
+  const block = eventLines(
+    buildCalendarFeed({ days: [], flights: [flight({ depAt: null, arrAt: null })], nowIso: NOW }),
+    'UID:flight-f1@theaudiosmith.com',
+  )
+  assert.ok(block.some((l) => l.startsWith('DTSTART;VALUE=DATE')), 'it is an all-day event')
+  assert.ok(!block.includes('BEGIN:VALARM'), 'and carries no alarm')
+})
+
+test('an arrival-only flight gets no alarm either — arrAt never anchors one', () => {
+  const block = eventLines(
+    buildCalendarFeed({ days: [], flights: [flight({ depAt: null })], nowIso: NOW }),
+    'UID:flight-f1@theaudiosmith.com',
+  )
+  assert.ok(!block.includes('BEGIN:VALARM'))
+})
+
+test('a departure-only flight DOES alarm — the departure is all it needs', () => {
+  const block = eventLines(
+    buildCalendarFeed({ days: [], flights: [flight({ arrAt: null })], nowIso: NOW }),
+    'UID:flight-f1@theaudiosmith.com',
+  )
+  assert.ok(block.includes('TRIGGER:-PT24H'))
+})
+
+test('show days never carry an alarm — this is a flight-only feature', () => {
+  const feed = buildCalendarFeed({ days: [day()], flights: [], nowIso: NOW })
+  assert.ok(!feed.includes('VALARM'), 'no alarm anywhere in a flightless feed')
 })
