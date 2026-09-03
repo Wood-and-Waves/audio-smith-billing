@@ -26,5 +26,19 @@ export function perfTimer(label: string) {
     done() {
       console.log(`[perf] ${label} TOTAL=${Date.now() - t0}ms | ${marks.join(' ')}`)
     },
+    /**
+     * Wraps one promise inside a Promise.all so its INDIVIDUAL duration is
+     * recorded. Twelve genuinely parallel calls should all report roughly the
+     * same elapsed time (they start together and the wave ends when the
+     * slowest finishes); if instead they report a staircase, something is
+     * serialising them and the wave is parallel in name only.
+     */
+    track<T>(name: string, p: PromiseLike<T>): Promise<T> {
+      const start = Date.now()
+      return Promise.resolve(p).then((v) => {
+        marks.push(`${name}@${start - t0}+${Date.now() - start}`)
+        return v
+      })
+    },
   }
 }

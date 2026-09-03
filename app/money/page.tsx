@@ -426,26 +426,26 @@ export default async function MoneyPage({
     // opening_date rides along for the budget seed's own clamp below
     // (mirroring app/money/budget/page.tsx's own openingMonth/seedMonth
     // logic) — nothing else on this page needed it before now.
-    supabase.from('ledger_accounts')
+    perf.track('account', supabase.from('ledger_accounts')
       .select('id, name, opening_balance_cents, opening_date, last_reconciled_at')
       .eq('closed', false)
       .order('created_at', { ascending: true })
       .limit(1)
-      .maybeSingle(),
-    ensureDefaultCategories(),
-    supabase.from('shows')
+      .maybeSingle()),
+    perf.track('seed', ensureDefaultCategories()),
+    perf.track('shows', supabase.from('shows')
       .select('id, name, show_days(date)')
       .order('created_at', { ascending: false })
-      .limit(25),
-    fetchAllSplitLegs(supabase),
-    fetchAllCategoriesForBudget(supabase),
-    fetchAllBudgetMoves(supabase),
-    fetchAllInvoiceLinks(supabase),
-    fetchAllExpenseLinks(supabase),
-    fetchAllDismissals(supabase),
-    fetchAllCandidateInvoices(supabase),
-    fetchAllCandidateExpenses(supabase),
-    supabase.auth.getUser(),
+      .limit(25)),
+    perf.track('splitLegs', fetchAllSplitLegs(supabase)),
+    perf.track('budgetCats', fetchAllCategoriesForBudget(supabase)),
+    perf.track('budgetMoves', fetchAllBudgetMoves(supabase)),
+    perf.track('invLinks', fetchAllInvoiceLinks(supabase)),
+    perf.track('expLinks', fetchAllExpenseLinks(supabase)),
+    perf.track('dismissals', fetchAllDismissals(supabase)),
+    perf.track('candInv', fetchAllCandidateInvoices(supabase)),
+    perf.track('candExp', fetchAllCandidateExpenses(supabase)),
+    perf.track('getUser', supabase.auth.getUser()),
   ])
   const { data: accountRow, error: accountError } = accountRes
   const { data: { user: aliasUser } } = aliasUserRes
