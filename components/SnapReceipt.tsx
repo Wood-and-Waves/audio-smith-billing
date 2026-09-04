@@ -136,7 +136,17 @@ export default function SnapReceipt({ shows, today }: { shows: PickableShow[]; t
   // mounted at a time, so one ref is enough. Same idiom as CornerAdjuster /
   // AddFlightDialog: focus lands on the panel on open so Escape reaches it.
   const panelRef = useRef<HTMLDivElement>(null)
-  useEffect(() => { if (screen) panelRef.current?.focus() }, [screen])
+  // Depends on the screen's KIND, not the screen object.
+  //
+  // `screen` is rebuilt on every keystroke (updateFields spreads a new object),
+  // so watching it re-ran this effect per character and pulled focus out of
+  // whatever input Dan was typing in. On iOS, focus leaving an input dismisses
+  // the keyboard — so entering a merchant name by hand meant tapping the field
+  // again after every single letter (2026-09-04). The intent was always "when a
+  // panel opens, put focus in it", which is a kind-level event: picker ->
+  // adjust -> working -> confirm. AddFlightDialog's copy of this idiom depends
+  // on a boolean and never had the problem.
+  useEffect(() => { if (screen) panelRef.current?.focus() }, [screen?.kind])
 
   function openFlow() {
     if (screen) return // already mid-flow; the button is disabled too, belt-and-suspenders
