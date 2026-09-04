@@ -947,6 +947,35 @@ on a fresh function instance.
   it isn't. Note detection also runs at `DETECT_MAX_EDGE = 400`, so saturation
   should be sampled on the same downscaled copy, not the full-resolution one.
 
+  **MEASURED BASELINE, 2026-09-04 — 20 real photos, ~5 pass.** Dan supplied a
+  test folder (`~/Desktop/receipt-tests`, his own receipts incl. the current
+  show's). A harness runs `detectReceiptQuad` over them in Node — sharp
+  decodes, resizes to `DETECT_MAX_EDGE`, converts to Rec.601 luma exactly as
+  `grayFromBitmap` does — and DRAWS the chosen quad back onto each photo, so
+  the result can be looked at rather than inferred from numbers. Copy kept at
+  the session scratchpad as `corner-harness.mjs`; it must live in the repo root
+  to resolve `sharp` and `./lib/receiptCorners.ts`, and must not be committed.
+
+  Results: ~5 tight and correct, **11 OVERGRABBED** (quad swallows the table),
+  2 returned no quad at all, 1 took one receipt of two. Every success is a
+  DARK, low-saturation background (dark glass, dark tile); every overgrab is
+  wood, tan stone or light laminate. That is the luminance collision, now
+  confirmed on 20 photos rather than one screenshot.
+
+  **There are TWO independent failures, not one.**
+  1. *Overgrab (11).* The saturation gate described above is the fix: wood is
+     heavily saturated, receipt paper is neutral by definition.
+  2. *Separated receipts (2026-09-04 GastroPub).* Two slips with a gap between
+     them, on a DARK table — no luminance problem at all. They are separate
+     blobs and `maxAreaQuad` takes the larger, so the right-hand receipt is
+     simply lost. Saturation does nothing here. The fix is to consider the
+     UNION of paper-coloured blobs rather than only the largest — which is
+     also what protects the side-by-side case below, so the two must be
+     designed together, not sequenced.
+
+  Re-run the harness after each change: 5/20 is the number to beat, and the
+  annotated images show immediately if something that worked stops working.
+
   **Dan's acceptance line for this work (2026-08-27), which is the right
   one:** a miss on a WHITE table is expected and fine — white laminate and
   white receipt paper are the same material to any threshold, colour included,
