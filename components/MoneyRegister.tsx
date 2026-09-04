@@ -517,6 +517,18 @@ export default function MoneyRegister({
 }) {
   const router = useRouter()
   const [pending, start] = useTransition()
+  /**
+   * A SECOND transition, for the two optimistic single-field edits only.
+   *
+   * `pending` gates `disabled` on 61 controls, and the register renders every
+   * transaction — so flipping it re-renders every control on hundreds of rows
+   * twice, which Dan felt as a freeze ("when selected the page freezes for a
+   * second or so") on a change that had already painted optimistically. These
+   * two writes need a transition for useOptimistic to hold its value, but
+   * they do not need to lock the whole register: they are single-field, they
+   * are idempotent, and a refusal reverts the row on its own.
+   */
+  const [, startRowEdit] = useTransition()
 
   /**
    * Optimistic rows. The server render is fast now (measured 265ms warm,
@@ -837,15 +849,19 @@ export default function MoneyRegister({
    * Enter anywhere in the add row saves it (Dan, 2026-09-03) — typing a run
    * of cash expenses should not need a trip to the button between each one.
    *
-   * Scoped to real <input> targets on purpose. CategoryPicker is a listbox
-   * with its own Enter handling (Enter picks the highlighted option); firing
-   * this as well would both choose a category AND submit the row on one
-   * keypress, which is exactly the kind of half-filled save this guard
-   * exists to prevent.
+   * Scoped to real text inputs, and explicitly NOT to the category picker.
+   *
+   * The first version of this tested `instanceof HTMLInputElement` alone,
+   * which does not exclude the picker at all: CategoryPicker's focusable
+   * element is itself an `<input role="combobox">`. Dan found it immediately
+   * — tab to the category, arrow down, Enter, and the row tried to save as
+   * well as pick. The role is what tells the two apart.
    */
   function addOnEnter(e: React.KeyboardEvent) {
     if (e.key !== 'Enter' || pending) return
-    if (!(e.target instanceof HTMLInputElement)) return
+    const el = e.target
+    if (!(el instanceof HTMLInputElement)) return
+    if (el.getAttribute('role') === 'combobox') return
     e.preventDefault()
     add()
   }
@@ -942,7 +958,7 @@ export default function MoneyRegister({
 
   function toggleCleared(row: LedgerTxnRow) {
     setError(null)
-    start(async () => {
+    startRowEdit(async () => {
       const next = row.cleared === 'cleared' ? 'uncleared' : 'cleared'
       patchRow({ id: row.id, cleared: next })
       const result = await setTransactionCleared(row.id, next)
@@ -978,7 +994,7 @@ export default function MoneyRegister({
   function setRowCategory(row: LedgerTxnRow, newCategoryId: string) {
     setError(null)
     setApplyPrompt(null)
-    start(async () => {
+    startRowEdit(async () => {
       patchRow({ id: row.id, category_id: newCategoryId || null })
       const result = await setTransactionCategory(row.id, newCategoryId || null)
       if ('error' in result) { setError(result.error); return }
@@ -2549,9 +2565,13 @@ export default function MoneyRegister({
               type="button"
               onClick={add}
               disabled={pending}
-              className="justify-self-end whitespace-nowrap px-3 py-2 text-xs font-semibold
-                         uppercase tracking-wider rounded-field border border-line
-                         text-muted hover:text-ink disabled:opacity-40"
+              /* leading-5 matches FIELD's text-sm line box (20px) — without it
+                 text-xs gives a 16px one and the button sits 4px shorter than
+                 every input beside it (Dan: "it is shorter than the other
+                 boxes"). py-2 and the border already match. */
+              className="justify-self-end whitespace-nowrap px-3 py-2 text-xs leading-5
+                         font-semibold uppercase tracking-wider rounded-field border
+                         border-line text-muted hover:text-ink disabled:opacity-40"
             >
               {pending ? 'Saving…' : '+ Add'}
             </button>
