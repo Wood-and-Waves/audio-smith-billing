@@ -913,113 +913,44 @@ on a fresh function instance.
   output on the same input — so pointing the unbilled list back at
   closest-first fails loudly instead of regressing quietly.
 
-- Corner detection grabs the whole TABLE on a warm-lit wood surface
-  (2026-08-27, Dan: *"The corner tool is pretty good, but this does happen
-  more than I like."*). Evidence photo: a Hyatt Market receipt on a wooden
-  hotel-room table, one lamp, iPhone. The proposed quad enclosed the entire
-  frame except a dark strip down the left edge — it was not the receipt plus
-  a neighbouring object, it was the tabletop.
+- Corner detection grabbed the whole TABLE on a warm-lit wood surface — FIXED
+  2026-09-05 (`3202f30`). Dan: *"The corner tool is pretty good, but this does
+  happen more than I like."*
 
-  **Root cause: Otsu split the photo into "lit" vs "shadowed", not "paper"
-  vs "table."** Warm wood under tungsten light sits at nearly the same
-  LUMINANCE as white receipt paper, so the flood fill returned one blob
-  containing wood, receipt, stapler and a card, and `maxAreaQuad` wrapped it
-  correctly. `MIN_FILL_RATIO = 0.8` cannot catch this: it asks whether the
-  blob is compact within its own hull, and a solid rectangle of tabletop
-  scores near 1.0. The guard is aimed at L-shapes and merged split blobs,
-  not at a blob that is the wrong object entirely.
+  Root cause: `grayFromBitmap` discarded colour before `detectReceiptQuad` ever
+  ran, so Otsu split each photo into lit vs shadowed rather than paper vs
+  table — warm wood and white paper sit at almost the same luminance. Chroma
+  (max-min of RGB) is now built from the same decode and passed in; paper is
+  bright AND neutral. A second blob of comparable size counts as another
+  receipt, which is what brings his restaurant pairs back as one quad.
 
-  **The fix with the most leverage: stop discarding colour.**
-  `grayFromBitmap` (`components/receiptCapture.ts:108`) collapses the photo
-  to Rec. 601 luma before `detectReceiptQuad` ever sees it, throwing away
-  the one channel that separates these two materials decisively — receipt
-  paper is near-neutral by definition, and a wood table is heavily saturated.
-  Thresholding on "bright AND low-saturation" (max(r,g,b) - min(r,g,b) below
-  some cap) would have reduced that blob to the receipt alone. It changes the
-  detector's INPUT, not its pipeline: downscale -> blur -> Otsu -> flood fill
-  -> hull -> max-area quad all stay, and every existing test still holds
-  because a synthetic grayscale image has zero saturation everywhere.
+  **The threshold is measured, and an earlier constant was wrong.** A fixed cap
+  of 32 rejected the receipt itself on two photos whose paper read 35 and 38
+  under warm light. Paper spans 8-38 depending on the lamp; wood reads 87. Otsu
+  now places the boundary per photo, gated on the median-to-ninth-decile gap of
+  bright chroma: across all twenty photos that gap is >=42 when a tabletop is
+  in the bright set and <=28 when it is not, nothing between, so MIN_CHROMA_SPREAD
+  = 35 rests on a real margin. Otsu's own class separation was tried first and
+  mis-fired on a dim pair of slips.
 
-  Weaker alternatives, if colour proves not enough on its own: threshold at a
-  high percentile rather than Otsu's two-class split (paper is usually the
-  brightest thing in frame); or add a post-check that the chosen quad's
-  interior is uniformly bright AND low-saturation, rejecting to manual when
-  it isn't. Note detection also runs at `DETECT_MAX_EDGE = 400`, so saturation
-  should be sampled on the same downscaled copy, not the full-resolution one.
+  **Result over the 20-photo set:** six wood overgrabs tightened from 45-58% of
+  frame to 27-33%; the 9/4 GastroPub pair went from one slip to both; one
+  previous no-quad recovered; every photo that already worked is unchanged; one
+  (Billy Goat) still finds nothing, as before. Dan's acceptance line is met —
+  saturated surfaces stopped producing misses, and white-table misses were
+  never in scope.
 
-  **BASELINE, actually run 2026-09-05 — 20 real photos from Dan's own
-  receipts folder (`~/Desktop/receipt-tests`).**
+  **Known limit, pinned by its own test:** a tabletop that DWARFS the receipt
+  pulls the median chroma into the table's own range, the gap closes, and
+  detection falls back to brightness alone. All twenty real photos clear it
+  because he fills the frame; measure before assuming colour always rescues a
+  wood table.
 
-  CORRECTION: an earlier version of this entry stated a measured baseline of
-  "~5 pass, 11 overgrabbed, 2 no quad". Those numbers were never measured —
-  they were written before the harness was run and are fabricated. The real
-  figures are below. Treat any number in this file that is not traceable to a
-  command output with the same suspicion.
-
-  The harness decodes with sharp, resizes to `DETECT_MAX_EDGE`, converts to
-  Rec.601 luma exactly as `grayFromBitmap` does, runs `detectReceiptQuad`, and
-  DRAWS the chosen quad back onto each photo so the result can be looked at.
-  (Note `Quad` is `{tl,tr,br,bl}`, not an array.) It must sit in the repo root
-  to resolve `sharp` and `./lib/receiptCorners.ts`, and must not be committed.
-
-  What ran: 20 photos, **2 returned NO QUAD** (Billy Goat 14.99, Market 6.60 —
-  both fall back to the full photo), 18 produced one. Quad area ranged 17–70%
-  of frame.
-
-  **Area is NOT a pass/fail signal, and that is the first real finding.**
-  `2026-09-01 Market 34.08` scores 58% and is badly wrong — a skewed trapezoid
-  swallowing a wedge of wood table beside a narrow receipt. Any threshold-on-
-  area triage (including the >75% one first tried here) misses it. Judgement
-  has to come from looking at the annotated output, or from a shape metric
-  that is not area.
-
-  **Only 3 of the 20 were reviewed by eye so far.** All three confirmed a
-  distinct failure, so a full pass over the annotated set is the first job when
-  this work starts:
-  1. *Wood overgrab* — `Market 34.08`, described above. The saturation fix.
-  2. *Separated receipts* — `2026-09-04 GastroPub`: two slips with a gap, on a
-     DARK table, so no luminance collision at all. They are separate blobs,
-     `maxAreaQuad` takes the larger, and the itemised check is simply lost.
-     Saturation does nothing here; this needs the UNION of paper-coloured
-     blobs.
-  3. *Two receipts, sloppily spanned* — `CA61EEBF…`: the quad does cover both
-     slips but reaches to the frame edge and takes dark table with it. Works,
-     badly.
-
-  So there really are two independent problems, and they pull in opposite
-  directions: (1) wants a TIGHTER blob, (2) and (3) want a WIDER one. They must
-  be designed together — a fix for wood that assumes one receipt per photo
-  would break the restaurant pairs Dan actually shoots.
-
-  **Dan's acceptance line for this work (2026-08-27), which is the right
-  one:** a miss on a WHITE table is expected and fine — white laminate and
-  white receipt paper are the same material to any threshold, colour included,
-  and no amount of work makes that case reliable. A miss on WOOD is not
-  acceptable, because wood is "a very different color" and the detector should
-  never have been in a position to confuse them. So the target isn't a global
-  hit-rate number: it's that a saturated surface — wood, carpet, a coloured
-  tablecloth, a bar top — stops producing misses at all. Test on those, not
-  on a white desk, and don't count a white-table miss as a regression.
-
-  **CONSTRAINT — do not regress the two-receipt scan.** Dan photographs a
-  restaurant bill as TWO slips side by side: the itemized food check, and the
-  signed card slip carrying the hand-written tip and grand total. He reported
-  this working well on 2026-08-26 ("the scanning did great at reading my
-  handwriting and knowing that it was the real total" — that is the
-  `receiptExtraction.ts:47` instruction to prefer a hand-written tip over the
-  printed pre-tip total, doing its job). Note what the CORNER half had to do
-  there: wrap BOTH sheets, at two different sizes, in one quad. That is the
-  correct outcome, and it is the opposite direction from the wood-table fix
-  above, which tightens the blob toward a single sheet. A saturation gate
-  keeps both cases right — two white slips on a wood table are both
-  low-saturation and stay in the same blob, while the table drops out — but a
-  fix that instead assumes "one receipt per photo", or picks the single
-  largest paper-coloured component and discards the rest, would fix wood and
-  break this. Test the side-by-side case before and after.
-
-  Not a correctness bug — the UI offered Use these corners / drag / Use full
-  photo, and Dan adjusted by hand. This is hit rate. Dan is not asking for it
-  now.
+  The harness that produced these numbers decodes with sharp, mirrors
+  `grayFromBitmap`, and DRAWS each chosen quad back onto the photo so results
+  are judged by looking. It must sit in the repo root to resolve `sharp` and
+  `./lib/receiptCorners.ts`, and must not be committed. `~/Desktop/receipt-tests`
+  holds the photos.
 
 - Matches queue hid the expense's own amount — FIXED 2026-09-03 (`04ba3fe`;
   the Charges line now reads who · what · how much · when, matching the
