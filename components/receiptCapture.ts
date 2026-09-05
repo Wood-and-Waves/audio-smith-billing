@@ -106,6 +106,27 @@ const WARP_SOURCE_MAX_EDGE = 2400
  * of cap.
  */
 function grayFromBitmap(bitmap: ImageBitmap, maxEdge: number): GrayImage {
+  return planesFromBitmap(bitmap, maxEdge).gray
+}
+
+/**
+ * Luma AND chroma from one decode.
+ *
+ * Detection needs both: luma to find what is bright, chroma to tell white
+ * paper from a warm tabletop at the same brightness — the collision that had
+ * the flood fill running off a receipt and across a hotel-room table. Built
+ * together because they come from the same getImageData call, and reading
+ * those pixels twice to build them separately would double the cost of the
+ * one step that touches every pixel.
+ *
+ * Chroma is max(r,g,b) - min(r,g,b): zero for any grey, large for a saturated
+ * colour, and indifferent to how brightly lit it is — which is the whole point,
+ * since the table and the paper are equally lit and that is why luma alone
+ * cannot separate them.
+ */
+function planesFromBitmap(
+  bitmap: ImageBitmap, maxEdge: number,
+): { gray: GrayImage; chroma: GrayImage } {
   const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height))
   const width = Math.max(1, Math.round(bitmap.width * scale))
   const height = Math.max(1, Math.round(bitmap.height * scale))
@@ -119,10 +140,16 @@ function grayFromBitmap(bitmap: ImageBitmap, maxEdge: number): GrayImage {
 
   const px = ctx.getImageData(0, 0, width, height).data
   const data = new Uint8ClampedArray(px.length / 4)
+  const chroma = new Uint8ClampedArray(px.length / 4)
   for (let i = 0, g = 0; i < px.length; i += 4, g++) {
-    data[g] = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000
+    const r = px[i], gr = px[i + 1], b = px[i + 2]
+    data[g] = (r * 299 + gr * 587 + b * 114) / 1000
+    chroma[g] = Math.max(r, gr, b) - Math.min(r, gr, b)
   }
-  return { data, width, height }
+  return {
+    gray: { data, width, height },
+    chroma: { data: chroma, width, height },
+  }
 }
 
 /**
@@ -168,8 +195,8 @@ function grayToJpeg(gray: GrayImage): Promise<Blob> {
 export async function detectCorners(file: File): Promise<Quad | null> {
   const bitmap = await createImageBitmap(file)
   try {
-    const gray = grayFromBitmap(bitmap, DETECT_MAX_EDGE)
-    const quad = detectReceiptQuad(gray)
+    const { gray, chroma } = planesFromBitmap(bitmap, DETECT_MAX_EDGE)
+    const quad = detectReceiptQuad(gray, chroma)
     return quad ? scaleQuad(quad, 1 / gray.width, 1 / gray.height) : null
   } finally {
     bitmap.close()
@@ -228,8 +255,9 @@ export async function enhance(file: File, quadNorm?: Quad | null): Promise<Blob>
         // Auto-detect (the batch path): run detection on THIS bitmap's own
         // downscale rather than calling detectCorners(file), which would
         // decode the file a second time for no reason.
-        const detectGray = grayFromBitmap(bitmap, DETECT_MAX_EDGE)
-        const detected = detectReceiptQuad(detectGray)
+        const { gray: detectGray, chroma: detectChroma } =
+          planesFromBitmap(bitmap, DETECT_MAX_EDGE)
+        const detected = detectReceiptQuad(detectGray, detectChroma)
         quad = detected ? scaleQuad(detected, 1 / detectGray.width, 1 / detectGray.height) : null
       } else {
         quad = quadNorm && quadUsable(quadNorm) ? quadNorm : null

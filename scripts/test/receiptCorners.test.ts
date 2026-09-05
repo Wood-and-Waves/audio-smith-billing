@@ -394,3 +394,142 @@ test('detectReceiptQuad rejects a thin sliver quad (corner-gap gate via quadSane
   fillQuad(img, sliver, RECEIPT)
   assert.equal(detectReceiptQuad(img), null)
 })
+
+// ---------------------------------------------------------------------------
+// colour: telling paper from a tabletop of the same brightness
+// ---------------------------------------------------------------------------
+//
+// The failure these cover, in Dan's words (2026-08-27): "The corner tool is
+// pretty good, but this does happen more than I like." A receipt on warm wood
+// under one lamp — Otsu on luma splits the photo into lit and shadowed, not
+// paper and table, and the flood fill runs off the receipt across the whole
+// tabletop. Measured on his own photos, the wood's chroma sits near 87 while
+// the receipt's sits near 12.
+
+/** A flat plane, `bg` everywhere, `fg` inside the rect. Used for both planes. */
+function planeWithRect(
+  w: number, h: number, bg: number, fg: number,
+  x0: number, y0: number, x1: number, y1: number,
+): GrayImage {
+  const img = makeGray(w, h, bg)
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) img.data[y * w + x] = fg
+  }
+  return img
+}
+
+function paintRect(
+  img: GrayImage, v: number, x0: number, y0: number, x1: number, y1: number,
+): void {
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) img.data[y * img.width + x] = v
+  }
+}
+
+test('a bright receipt on an EQUALLY BRIGHT but coloured table is found only with chroma', () => {
+  // Both materials at luma 210: nothing in the luma plane distinguishes them,
+  // which is exactly the hotel-table case. Chroma does — and the table's colour
+  // VARIES, as real wood grain does, because a flat value would put its median
+  // and ninth decile together and hide the second material from the spread
+  // test. Proportions mirror his real photos: the receipt is the larger share
+  // of the bright pixels, the table the rest.
+  const w = 200, h = 260
+  const gray = makeGray(w, h, 30)
+  paintRect(gray, 210, 20, 20, 180, 240)      // the "table", bright
+  paintRect(gray, 210, 45, 30, 155, 235)      // the receipt, equally bright
+
+  const chroma = makeGray(w, h, 0)
+  let seed = 12345
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff }
+  for (let y = 20; y < 240; y++) {
+    for (let x = 20; x < 180; x++) chroma.data[y * w + x] = 60 + Math.floor(rnd() * 60)
+  }
+  paintRect(chroma, 10, 45, 30, 155, 235)     // neutral paper
+
+  const withoutColour = detectReceiptQuad(gray)
+  const withColour = detectReceiptQuad(gray, chroma)
+  assert.ok(withColour, 'colour finds a quad')
+  assert.ok(withoutColour, 'and so does luma alone — it just finds the wrong thing')
+  assert.ok(
+    quadArea(withColour!) < quadArea(withoutColour!),
+    `colour should wrap the receipt, not the table (${quadArea(withColour!)} vs ${quadArea(withoutColour!)})`,
+  )
+})
+
+test('KNOWN LIMIT: a tabletop that dwarfs the receipt is not separated by colour', () => {
+  // Documented, not aspirational. The spread test compares the median of the
+  // bright pixels' chroma with their ninth decile, so it needs the receipt to
+  // be a real share of what is bright. Frame a small receipt against a huge
+  // expanse of table and the median falls inside the TABLE's own range, the
+  // gap shrinks below MIN_CHROMA_SPREAD, and detection falls back to
+  // brightness alone — which is the old behaviour, not a crash.
+  //
+  // All twenty of Dan's real photos clear this comfortably (he fills the frame
+  // with the receipt); it is recorded so the next person measures before
+  // assuming colour always rescues a wood table.
+  const w = 200, h = 260
+  const gray = makeGray(w, h, 30)
+  paintRect(gray, 210, 10, 10, 190, 250)      // table fills nearly everything
+  paintRect(gray, 210, 85, 110, 115, 160)     // a small receipt
+
+  const chroma = makeGray(w, h, 0)
+  let seed = 999
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff }
+  for (let y = 10; y < 250; y++) {
+    for (let x = 10; x < 190; x++) chroma.data[y * w + x] = 60 + Math.floor(rnd() * 60)
+  }
+  paintRect(chroma, 10, 85, 110, 115, 160)
+
+  assert.deepEqual(
+    detectReceiptQuad(gray, chroma),
+    detectReceiptQuad(gray),
+    'colour changes nothing here — the fallback is the old behaviour',
+  )
+})
+
+test('two separated receipts of similar size are spanned together', () => {
+  // His restaurant bill: itemised check and signed slip, apart on a dark
+  // table. They are two components, and taking only the larger loses one.
+  const w = 240, h = 240
+  const gray = makeGray(w, h, 20)
+  paintRect(gray, 220, 20, 30, 100, 210)
+  paintRect(gray, 220, 140, 30, 220, 210)
+  const chroma = makeGray(w, h, 0)
+
+  const quad = detectReceiptQuad(gray, chroma)
+  assert.ok(quad, 'a quad is found')
+  const pts = [quad!.tl, quad!.tr, quad!.br, quad!.bl]
+  const minX = Math.min(...pts.map((p) => p.x))
+  const maxX = Math.max(...pts.map((p) => p.x))
+  assert.ok(minX < 40, `spans the left slip (minX ${minX})`)
+  assert.ok(maxX > 200, `and the right one (maxX ${maxX})`)
+})
+
+test('a small neutral scrap beside the receipt is NOT swept in', () => {
+  // The same wood photo has a grey card beside the receipt, and grey is as
+  // neutral as paper. Size is what separates a second receipt from clutter.
+  const w = 240, h = 240
+  const gray = makeGray(w, h, 20)
+  paintRect(gray, 220, 20, 20, 120, 220)     // the receipt
+  paintRect(gray, 220, 200, 100, 230, 130)   // a small scrap, far right
+  const chroma = makeGray(w, h, 0)
+
+  const quad = detectReceiptQuad(gray, chroma)
+  assert.ok(quad, 'a quad is found')
+  const maxX = Math.max(...[quad!.tl, quad!.tr, quad!.br, quad!.bl].map((p) => p.x))
+  assert.ok(maxX < 170, `stops at the receipt, not the scrap (maxX ${maxX})`)
+})
+
+test('uniform chroma changes nothing — one material means brightness decides', () => {
+  // A receipt on a DARK table: every bright pixel is paper, there is no second
+  // class, and forcing a chroma threshold would slice the receipt in half.
+  const w = 200, h = 200
+  const gray = makeGray(w, h, 25)
+  paintRect(gray, 215, 50, 40, 150, 170)
+  const flat = makeGray(w, h, 24)   // some colour cast, but only one material
+
+  const a = detectReceiptQuad(gray)
+  const b = detectReceiptQuad(gray, flat)
+  assert.ok(a && b)
+  assert.deepEqual(b, a, 'identical to the luma-only result')
+})

@@ -51,6 +51,47 @@ export const MIN_CLASS_SEPARATION = 24
 export const MIN_FILL_RATIO = 0.8
 
 /**
+ * How separated the two chroma classes must be before colour is trusted to
+ * tell paper from table.
+ *
+ * The chroma cap is NOT a constant, and an early version of this that used one
+ * was wrong in a way worth recording: 32 looked right on three photos, and on
+ * two others the RECEIPT'S OWN median chroma was 35 and 38 — warm light casts
+ * colour onto white paper — so the cap rejected the receipt and the detector
+ * lost photos it used to get. Across Dan's twenty test shots paper ranges from
+ * 8 to 38 depending on the lamp, while the wood table that started all this
+ * sits at 87. No single number separates those.
+ *
+ * So chroma is split by Otsu, exactly as luma is, and each photo calibrates
+ * itself. This gate is the "is there really a split here?" check: on a receipt
+ * lying on a DARK table every bright pixel is paper, there are no two classes,
+ * and forcing a threshold would slice the receipt in half. Below this
+ * separation the chroma gate is skipped entirely and brightness alone decides,
+ * which is what that photo needs.
+ *
+ * The test is the UPPER TAIL, not Otsu's class separation. Separation was
+ * tried first and mis-fired: on a dim shot of two receipts it reported a solid
+ * split where there was only one material faintly tinted, cut into the paper,
+ * and returned a fragment of one slip where luma alone had found both. The
+ * gap between the median and the ninth decile says plainly whether a SECOND,
+ * markedly more colourful material is present: the wood table that started
+ * this reads 12 -> 87, while that dim pair reads 38 -> 47 and a photo on a
+ * dark table 25 -> 29. Only the first has a table in the bright set.
+ */
+export const MIN_CHROMA_SPREAD = 35
+
+export const SIBLING_AREA_RATIO = 0.5
+
+/**
+ * Fill ratio required when the quad spans more than one blob.
+ *
+ * A quad around two separated slips necessarily contains the gap between them,
+ * so it can never reach MIN_FILL_RATIO — that gate assumes one solid sheet.
+ * Kept as high as the geometry allows: his two-slip photo fills about 0.72.
+ */
+export const MIN_UNION_FILL_RATIO = 0.55
+
+/**
  * Box-averages `src` down so its long edge is at most `maxEdge`. Never
  * enlarges: if the long edge is already within the cap, returns `src`
  * unchanged. Each destination pixel is the mean of the (possibly
@@ -219,6 +260,44 @@ export function largestComponent(img: GrayImage, threshold: number): { area: num
   return { area: bestArea, mask: bestMask }
 }
 
+/**
+ * Every connected run of paper pixels, largest first.
+ *
+ * `largestComponent` above is unchanged and still used when no colour is
+ * available; this is its multi-blob sibling, working from a precomputed
+ * boolean mask so the caller decides what "paper" means (bright, or bright AND
+ * neutral) rather than baking a luma threshold in here.
+ */
+export function paperComponents(
+  mask: Uint8Array, width: number, height: number,
+): { area: number; mask: Uint8Array }[] {
+  const total = width * height
+  const visited = new Uint8Array(total)
+  const queue = new Int32Array(total)
+  const found: { area: number; mask: Uint8Array }[] = []
+
+  for (let start = 0; start < total; start++) {
+    if (visited[start] || !mask[start]) continue
+    let head = 0, tail = 0
+    visited[start] = 1
+    queue[tail++] = start
+    while (head < tail) {
+      const idx = queue[head++]
+      const x = idx % width
+      const y = (idx - x) / width
+      if (x > 0 && !visited[idx - 1] && mask[idx - 1]) { visited[idx - 1] = 1; queue[tail++] = idx - 1 }
+      if (x < width - 1 && !visited[idx + 1] && mask[idx + 1]) { visited[idx + 1] = 1; queue[tail++] = idx + 1 }
+      if (y > 0 && !visited[idx - width] && mask[idx - width]) { visited[idx - width] = 1; queue[tail++] = idx - width }
+      if (y < height - 1 && !visited[idx + width] && mask[idx + width]) { visited[idx + width] = 1; queue[tail++] = idx + width }
+    }
+    const m = new Uint8Array(total)
+    for (let i = 0; i < tail; i++) m[queue[i]] = 1
+    found.push({ area: tail, mask: m })
+  }
+
+  return found.sort((a, b) => b.area - a.area)
+}
+
 /** Twice the signed area of the turn at `b` going a -> b -> c; sign gives turn direction. */
 function cross(a: Point, b: Point, c: Point): number {
   return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
@@ -360,7 +439,12 @@ function boundaryPoints(mask: Uint8Array, width: number, height: number): Point[
 }
 
 /**
- * Finds the receipt's four corners in a full-resolution grayscale photo,
+ * Finds the receipt corners in a full-resolution photo. Pass `chroma` (per-pixel
+ * max(r,g,b)-min(r,g,b), same dimensions as `gray`) to separate paper from a
+ * coloured tabletop and to allow a second receipt in the same shot; omit it and
+ * this behaves exactly as it always did, on luma alone.
+ *
+ * Or null if nothing can be found with confidence.
  * or null if nothing can be found with confidence. Runs the whole pipeline
  * (blur, Otsu, flood fill, hull, reduce, max-area quad, sanity gates) on a
  * `DETECT_MAX_EDGE` downscale for speed, then scales the winning quad back
@@ -369,7 +453,7 @@ function boundaryPoints(mask: Uint8Array, width: number, height: number): Point[
  * a hull with a corner pinched shut, a blob that doesn't fill its quad —
  * means "nothing found," never a partial or guessed result.
  */
-export function detectReceiptQuad(gray: GrayImage): Quad | null {
+export function detectReceiptQuad(gray: GrayImage, chroma?: GrayImage | null): Quad | null {
   const small = downscaleGray(gray, DETECT_MAX_EDGE)
   const scaleX = gray.width / small.width
   const scaleY = gray.height / small.height
@@ -382,13 +466,79 @@ export function detectReceiptQuad(gray: GrayImage): Quad | null {
   const { threshold, separation } = otsu(histogram)
   if (separation < MIN_CLASS_SEPARATION) return null
 
-  const component = largestComponent(blurred, threshold)
-  if (!component) return null
-
   const frameArea = blurred.width * blurred.height
-  if (component.area < MIN_AREA_FRACTION * frameArea) return null
 
-  const boundary = boundaryPoints(component.mask, blurred.width, blurred.height)
+  // Colour is optional, and its absence is not a degraded mode — it is the
+  // ORIGINAL behaviour, kept intact so every pinned test still describes what
+  // this function does when handed luma alone. The multi-blob path is
+  // deliberately gated on having colour too: without the chroma cap a
+  // "component" is merely a bright region, and unioning bright regions on a
+  // light tabletop would enthusiastically wrap the whole table.
+  let combined: Uint8Array
+  let paperArea: number
+  let blobCount: number
+
+  if (chroma) {
+    const smallChroma = downscaleGray(chroma, DETECT_MAX_EDGE)
+
+    // Otsu the chroma of the pixels luma already called bright. Two materials
+    // in that set (neutral paper, coloured tabletop) split cleanly; one
+    // material does not split at all, and the separation check below is what
+    // tells the two situations apart.
+    const chromaHistogram = new Array(256).fill(0)
+    let brightCount = 0
+    for (let i = 0; i < smallChroma.data.length; i++) {
+      if (blurred.data[i] > threshold) { chromaHistogram[smallChroma.data[i]]++; brightCount++ }
+    }
+    // Percentiles of the bright pixels' chroma, read straight off the
+    // histogram — no sorting, and no allocation proportional to the image.
+    const nth = (fraction: number): number => {
+      let seen = 0
+      const target = brightCount * fraction
+      for (let v = 0; v < 256; v++) {
+        seen += chromaHistogram[v]
+        if (seen >= target) return v
+      }
+      return 255
+    }
+    const spread = brightCount > 0 ? nth(0.9) - nth(0.5) : 0
+
+    // A second, markedly more colourful material is in the bright set, so let
+    // Otsu place the boundary between the two. Otherwise there is one material
+    // and brightness alone decides, exactly as it always did.
+    const chromaCap = spread >= MIN_CHROMA_SPREAD ? otsu(chromaHistogram).threshold : 255
+
+    const mask = new Uint8Array(frameArea)
+    for (let i = 0; i < mask.length; i++) {
+      mask[i] = blurred.data[i] > threshold && smallChroma.data[i] <= chromaCap ? 1 : 0
+    }
+
+    const comps = paperComponents(mask, blurred.width, blurred.height)
+    if (comps.length === 0) return null
+
+    // The largest blob, plus any sibling of comparable size — another receipt
+    // in the same shot, never a scrap of neutral clutter beside it.
+    const cutoff = comps[0].area * SIBLING_AREA_RATIO
+    const kept = comps.filter((c) => c.area >= cutoff)
+
+    combined = new Uint8Array(frameArea)
+    paperArea = 0
+    for (const c of kept) {
+      paperArea += c.area
+      for (let i = 0; i < combined.length; i++) if (c.mask[i]) combined[i] = 1
+    }
+    blobCount = kept.length
+  } else {
+    const component = largestComponent(blurred, threshold)
+    if (!component) return null
+    combined = component.mask
+    paperArea = component.area
+    blobCount = 1
+  }
+
+  if (paperArea < MIN_AREA_FRACTION * frameArea) return null
+
+  const boundary = boundaryPoints(combined, blurred.width, blurred.height)
   const hull = convexHull(boundary)
   if (hull.length < 4) return null
 
@@ -397,7 +547,12 @@ export function detectReceiptQuad(gray: GrayImage): Quad | null {
   if (!quad) return null
 
   if (!quadSane(quad, blurred.width, blurred.height)) return null
-  if (component.area / quadArea(quad) < MIN_FILL_RATIO) return null
+
+  // A quad drawn around two separated slips must contain the gap between them,
+  // so it can never meet the single-sheet fill ratio. Each threshold applies
+  // only to the shape it was derived from.
+  const minFill = blobCount > 1 ? MIN_UNION_FILL_RATIO : MIN_FILL_RATIO
+  if (paperArea / quadArea(quad) < minFill) return null
 
   return scaleQuad(quad, scaleX, scaleY)
 }
