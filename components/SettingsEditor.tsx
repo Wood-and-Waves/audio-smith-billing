@@ -6,6 +6,7 @@ import { saveSettings } from '@/app/settings/actions'
 import { FIELD_FULL } from '@/components/ui/field'
 import Select, { type SelectOption } from '@/components/ui/Select'
 import CalendarSubscribe from '@/components/CalendarSubscribe'
+import W9Upload from '@/components/W9Upload'
 
 type Appearance = 'system' | 'light' | 'dark'
 
@@ -34,9 +35,13 @@ export type EditorSettings = {
 }
 
 export default function SettingsEditor({
-  initial, feedUrl = null, hasCalendarFeed = false,
+  initial, feedUrl = null, hasCalendarFeed = false, w9UploadedAt = null,
 }: {
   initial: EditorSettings
+  /** When the W-9 on file was uploaded, or null when there is none. The PATH
+   *  is deliberately not passed: this is a client component, and nothing about
+   *  where the document lives needs to reach the browser. */
+  w9UploadedAt?: string | null
   /** Full subscribe URL, or null when no feed exists OR APP_URL is unset. */
   feedUrl?: string | null
   /** A token exists — distinct from having a usable URL. See the page. */
@@ -236,6 +241,10 @@ export default function SettingsEditor({
           </p>
         </div>
       </div>
+
+      {/* Sits under Invoicing because that is what it is for — the send
+          panel's attach checkbox is the only thing that reads it. */}
+      <W9Upload uploadedAt={w9UploadedAt} />
 
       <h2 className="eyebrow mb-3">Forecast</h2>
       <div className="grid gap-4 sm:grid-cols-2 mb-8">

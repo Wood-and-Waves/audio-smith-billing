@@ -112,12 +112,20 @@ export function assembleEmail(input: {
   body: string
   publicUrl: string
   pdfAttached: boolean
+  /**
+   * True only when Dan ticked the send panel's W-9 checkbox for THIS send.
+   * The sentence and the attachment are decided together in one place
+   * (lib/invoiceEmail.ts), so the email can never claim a W-9 it did not
+   * carry, or carry one it did not mention.
+   */
+  w9Attached?: boolean
 }): { subject: string; text: string; html: string } {
-  const { subject, body, publicUrl, pdfAttached } = input
+  const { subject, body, publicUrl, pdfAttached, w9Attached = false } = input
   const trimmed = body.replace(/\s+$/, '')
 
   const footerLines = [`View it online: ${publicUrl}`]
   if (pdfAttached) footerLines.push('A PDF copy is attached.')
+  if (w9Attached) footerLines.push("I've attached my W-9 as well.")
   const footerText = footerLines.join('\n')
   const text = trimmed ? `${trimmed}\n\n${footerText}` : footerText
 
@@ -127,6 +135,7 @@ export function assembleEmail(input: {
     (trimmed ? `<div style="margin:0 0 16px">${safeBody}</div>` : '') +
     `<p style="margin:0 0 16px"><a href="${escapeHtml(publicUrl)}">View this invoice online</a></p>` +
     (pdfAttached ? `<p style="margin:0">A PDF copy is attached.</p>` : '') +
+    (w9Attached ? `<p style="margin:0">I&rsquo;ve attached my W-9 as well.</p>` : '') +
     `</div>`
   return { subject, text, html }
 }
@@ -137,6 +146,7 @@ export function assembleInvoiceEmail(input: {
   subject: string
   body: string
   publicUrl: string
+  w9Attached?: boolean
 }): { subject: string; text: string; html: string } {
   return assembleEmail({ ...input, pdfAttached: true })
 }

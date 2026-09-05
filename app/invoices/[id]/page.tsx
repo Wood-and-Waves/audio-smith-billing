@@ -28,6 +28,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   const [
     { data: invoice, error },
     { data: settings },
+    { data: w9Row },
     { data: linkedShows },
     { data: depositTxns, error: depositLinkError },
   ] = await Promise.all([
@@ -54,6 +55,11 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
       .select('business_name, legal_name, address_line1, address_line2, phone, email, remit_to')
       .eq('id', 1)
       .maybeSingle(),
+    // w9_path in its OWN query, deliberately NOT added to the settings select
+    // above. That object becomes docData.settings and is serialized into the
+    // browser payload; a path to a document carrying an EIN and a signature
+    // has no business travelling there. Only the boolean below crosses over.
+    supabase.from('settings').select('w9_path').eq('id', 1).maybeSingle(),
     // Whether ANY show was ever billed onto this invoice — shows.invoice_id
     // is the only edge back from a show to its invoice, so this is its own
     // query. Used only to tell "no shows behind this invoice" apart from "a
@@ -404,6 +410,11 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           // button that would then be refused server-side anyway.
           to={inv.clients?.billing_email?.trim() || null}
           status={inv.status}
+          // The FACT of a W-9, never the path. Blank-or-whitespace reads as
+          // "none on file", the same trim the send action applies before it
+          // tries to download one — so the checkbox cannot appear for a path
+          // the server would then refuse.
+          hasW9={Boolean((w9Row?.w9_path as string | null)?.trim())}
         />
       </div>
 

@@ -433,7 +433,7 @@ export async function deleteDraftInvoice(
  */
 export async function sendInvoice(
   invoiceId: string,
-  draft: { to: string; subject: string; body: string },
+  draft: { to: string; subject: string; body: string; attachW9?: boolean },
 ): Promise<{ error: string } | { ok: true; warning?: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -703,6 +703,38 @@ export async function sendInvoice(
     // that, unmerged, rather than losing the invoice over an appendix.
   }
 
+  // The W-9, only when Dan ticked the box for THIS send.
+  //
+  // Read in its own query rather than by widening the settings select above:
+  // that row is handed to the email builder AND becomes the document's
+  // `settings`, so a column added there travels into the PDF and the public
+  // link. That is precisely the trip ach_details is kept off, and w9_path — a
+  // path to a document carrying an EIN and a signature — belongs off it too.
+  //
+  // A failure REFUSES the send rather than quietly mailing an invoice whose
+  // footer promises a W-9 that is not attached. Same call the receipt-image
+  // guard above makes: a client reading a claim the email does not honour is
+  // worse than a send Dan can retry.
+  let w9: { filename: string; content: Buffer } | null = null
+  if (draft.attachW9) {
+    const { data: w9Row, error: w9Error } = await supabase
+      .from('settings').select('w9_path').eq('owner_id', user.id).maybeSingle()
+    if (w9Error) return { error: `The W-9 could not be read (${w9Error.message}), so nothing was sent.` }
+    const path = (w9Row?.w9_path as string | null)?.trim() || null
+    if (!path) return { error: 'There is no W-9 on file to attach. Upload one in Settings.' }
+
+    const { data: blob, error: dlError } = await supabase.storage.from('receipts').download(path)
+    if (dlError || !blob) {
+      return { error: 'The W-9 could not be attached, so the invoice was not sent. Try again.' }
+    }
+    const business = (settings?.legal_name ?? 'Smith Audio LLC')
+      .replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+    w9 = {
+      filename: business ? `W-9-${business}.pdf` : 'W-9.pdf',
+      content: Buffer.from(await blob.arrayBuffer()),
+    }
+  }
+
   const result = await sendInvoiceEmail({
     to: emails,
     subject,
@@ -714,6 +746,7 @@ export async function sendInvoice(
     // covers a settings row with no email at all.
     replyTo: settings?.email ?? 'dan@theaudiosmith.com',
     pdf,
+    w9,
   })
   if (result.error) return { error: result.error }
 

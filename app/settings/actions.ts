@@ -133,3 +133,56 @@ export async function saveSettings(input: SettingsInput): Promise<Fail | { ok: t
   revalidatePath('/settings')
   return { ok: true }
 }
+
+/**
+ * Records a freshly uploaded W-9 against the owner's settings row.
+ *
+ * The FILE is uploaded straight to Storage by the browser (same idiom as a
+ * receipt, and for the same reason: routing megabytes through a server action
+ * buys nothing). This only writes down where it landed, so the send panel can
+ * offer it. A W-9 carries an EIN and a signature, so:
+ *
+ *  - the path is owner-scoped and verified here, not trusted from the client.
+ *    A caller could otherwise hand us any path in the bucket and have the app
+ *    mail somebody else's document to their client.
+ *  - the previous file is deleted after the row points at the new one, never
+ *    before. A failed delete leaves an orphan nobody can reach; a delete-first
+ *    that then failed to update would leave the row naming a file that is gone,
+ *    and the next send would refuse with no way back.
+ */
+export async function setW9(path: string): Promise<Fail | { ok: true }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not signed in.' }
+
+  const clean = path.trim()
+  // The prefix is the owner's own id — the same first-segment convention the
+  // receipts bucket's RLS enforces. Checked here too rather than left to RLS
+  // alone, because this string is later handed to storage.download() by the
+  // send action, which runs as the owner and would happily fetch anything the
+  // policy allows.
+  if (!clean.startsWith(`${user.id}/w9/`) || !clean.toLowerCase().endsWith('.pdf')) {
+    return { error: 'That file could not be saved.' }
+  }
+
+  const { data: before, error: readError } = await supabase
+    .from('settings').select('w9_path').eq('owner_id', user.id).maybeSingle()
+  if (readError) return { error: readError.message }
+
+  const { error } = await supabase
+    .from('settings')
+    .update({ w9_path: clean, w9_uploaded_at: new Date().toISOString() })
+    .eq('owner_id', user.id)
+  if (error) return { error: error.message }
+
+  const old = (before?.w9_path as string | null)?.trim()
+  if (old && old !== clean) {
+    // Best effort. The row already points at the new file, so a failure here
+    // costs storage, not correctness.
+    await supabase.storage.from('receipts').remove([old])
+  }
+
+  revalidatePath('/settings')
+  revalidatePath('/invoices')
+  return { ok: true }
+}

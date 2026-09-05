@@ -22,13 +22,21 @@ import type { DocumentData } from '@/components/InvoiceDocument'
 // To field and is the authoritative gate.
 
 export default function SendInvoicePanel({
-  invoiceId, data, to, status,
+  invoiceId, data, to, status, hasW9 = false,
 }: {
   invoiceId: string
   data: DocumentData
   /** The client's billing email, trimmed, or null. Prefills the To field. */
   to: string | null
   status: 'draft' | 'sent' | 'paid' | 'void'
+  /**
+   * Whether a W-9 is on file (settings.w9_path). Only the FACT is passed —
+   * never the path, and never the file — because this is a client component
+   * and everything it receives ships to the browser. The checkbox is hidden
+   * entirely when false: an unusable control invites the question "why can't
+   * I tick this?", which the Settings link answers instead.
+   */
+  hasW9?: boolean
 }) {
   const router = useRouter()
   const defaults = buildInvoiceEmailDefaults({ invoice: data, status })
@@ -48,11 +56,18 @@ export default function SendInvoicePanel({
   const canSend = emails.length > 0 && subject.trim().length > 0 && invalid.length === 0
 
   const [previewBusy, setPreviewBusy] = useState(false)
+  // Unchecked by default, every time. A W-9 carries an EIN and a signature, so
+  // attaching one is always a deliberate act — never a setting that quietly
+  // stays on from the last send to a different client.
+  const [attachW9, setAttachW9] = useState(false)
   const receiptCount = data.backup?.expenses.filter((e) => e.receiptDataUri).length ?? 0
   const attachedParts = [
     'the invoice',
     ...(data.backup?.show_hours ? ['hours sheet'] : []),
     ...(receiptCount > 0 ? [`${receiptCount} receipt${receiptCount === 1 ? '' : 's'}`] : []),
+    // Listed here too, so the one line Dan reads before sending names
+    // everything the client will actually receive.
+    ...(attachW9 ? ['your W-9'] : []),
   ]
 
   /** Opens the EXACT attachment in a new tab — same builder as the send. */
@@ -88,7 +103,7 @@ export default function SendInvoicePanel({
       // the transition and hand it to the nearest error boundary, replacing
       // this whole page and losing sent/error state. Belt and braces.
       try {
-        const result = await sendInvoice(invoiceId, { to: toField, subject, body })
+        const result = await sendInvoice(invoiceId, { to: toField, subject, body, attachW9 })
         if ('error' in result) { setError(result.error); return }
         setWarning(result.warning ?? null)
         setSent(true)
@@ -144,6 +159,16 @@ export default function SendInvoicePanel({
       {/* The final check. The PDF named here is built by the same code that
           builds the attachment, so viewing it IS viewing what the client
           gets — hours, receipts, everything. */}
+      {hasW9 && (
+        <label className="flex items-center gap-2 text-xs text-muted mb-3">
+          <input
+            type="checkbox" checked={attachW9} disabled={pending}
+            onChange={(e) => setAttachW9(e.target.checked)}
+          />
+          Attach my W-9
+        </label>
+      )}
+
       <p className="text-xs text-muted mb-4 flex flex-wrap items-baseline gap-x-2">
         <span>Attached: {attachedParts.join(' · ')}.</span>
         <button

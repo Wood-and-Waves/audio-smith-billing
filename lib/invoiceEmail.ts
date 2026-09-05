@@ -30,7 +30,20 @@ export type { InvoiceEmailInput }
 export const OWNER_BCC = 'dan@theaudiosmith.com'
 
 export async function sendInvoiceEmail(
-  input: InvoiceEmailInput & { pdf: Buffer },
+  input: InvoiceEmailInput & {
+    pdf: Buffer
+    /**
+     * The W-9, present ONLY when Dan ticked the send panel's checkbox for this
+     * send. One value decides both the attachment and the sentence that
+     * announces it, so the email can never claim a W-9 it did not carry — or
+     * carry one it did not mention.
+     *
+     * A W-9 holds an EIN and a signature. It reaches exactly one place: the
+     * attachment list of an email addressed to the client being invoiced. It
+     * is never in the body, the public link, or the backup snapshot.
+     */
+    w9?: { filename: string; content: Buffer } | null
+  },
 ): Promise<{ error?: string }> {
   const key = process.env.RESEND_API_KEY
   if (!key) return { error: 'Email is not configured yet (RESEND_API_KEY is missing).' }
@@ -49,10 +62,12 @@ export async function sendInvoiceEmail(
     // an accounts-payable clerk sees in their inbox list, and it has to be the
     // one they have on file.
     const business = input.invoice.settings?.legal_name ?? 'Smith Audio, LLC'
+    const w9 = input.w9 ?? null
     const { subject, text, html } = assembleInvoiceEmail({
       subject: input.subject,
       body: input.body,
       publicUrl: input.publicUrl,
+      w9Attached: w9 !== null,
     })
 
     const { Resend } = await import('resend')
@@ -68,10 +83,12 @@ export async function sendInvoiceEmail(
       subject,
       text,
       html,
-      attachments: [{
-        filename: invoiceFilename(input.invoice),
-        content: input.pdf,
-      }],
+      attachments: [
+        { filename: invoiceFilename(input.invoice), content: input.pdf },
+        // Same `w9` const the sentence above was derived from, so the two can
+        // never disagree.
+        ...(w9 ? [{ filename: w9.filename, content: w9.content }] : []),
+      ],
     })
     if (error) return { error: error.message }
     return {}
