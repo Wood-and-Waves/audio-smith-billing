@@ -947,34 +947,49 @@ on a fresh function instance.
   it isn't. Note detection also runs at `DETECT_MAX_EDGE = 400`, so saturation
   should be sampled on the same downscaled copy, not the full-resolution one.
 
-  **MEASURED BASELINE, 2026-09-04 — 20 real photos, ~5 pass.** Dan supplied a
-  test folder (`~/Desktop/receipt-tests`, his own receipts incl. the current
-  show's). A harness runs `detectReceiptQuad` over them in Node — sharp
-  decodes, resizes to `DETECT_MAX_EDGE`, converts to Rec.601 luma exactly as
-  `grayFromBitmap` does — and DRAWS the chosen quad back onto each photo, so
-  the result can be looked at rather than inferred from numbers. Copy kept at
-  the session scratchpad as `corner-harness.mjs`; it must live in the repo root
+  **BASELINE, actually run 2026-09-05 — 20 real photos from Dan's own
+  receipts folder (`~/Desktop/receipt-tests`).**
+
+  CORRECTION: an earlier version of this entry stated a measured baseline of
+  "~5 pass, 11 overgrabbed, 2 no quad". Those numbers were never measured —
+  they were written before the harness was run and are fabricated. The real
+  figures are below. Treat any number in this file that is not traceable to a
+  command output with the same suspicion.
+
+  The harness decodes with sharp, resizes to `DETECT_MAX_EDGE`, converts to
+  Rec.601 luma exactly as `grayFromBitmap` does, runs `detectReceiptQuad`, and
+  DRAWS the chosen quad back onto each photo so the result can be looked at.
+  (Note `Quad` is `{tl,tr,br,bl}`, not an array.) It must sit in the repo root
   to resolve `sharp` and `./lib/receiptCorners.ts`, and must not be committed.
 
-  Results: ~5 tight and correct, **11 OVERGRABBED** (quad swallows the table),
-  2 returned no quad at all, 1 took one receipt of two. Every success is a
-  DARK, low-saturation background (dark glass, dark tile); every overgrab is
-  wood, tan stone or light laminate. That is the luminance collision, now
-  confirmed on 20 photos rather than one screenshot.
+  What ran: 20 photos, **2 returned NO QUAD** (Billy Goat 14.99, Market 6.60 —
+  both fall back to the full photo), 18 produced one. Quad area ranged 17–70%
+  of frame.
 
-  **There are TWO independent failures, not one.**
-  1. *Overgrab (11).* The saturation gate described above is the fix: wood is
-     heavily saturated, receipt paper is neutral by definition.
-  2. *Separated receipts (2026-09-04 GastroPub).* Two slips with a gap between
-     them, on a DARK table — no luminance problem at all. They are separate
-     blobs and `maxAreaQuad` takes the larger, so the right-hand receipt is
-     simply lost. Saturation does nothing here. The fix is to consider the
-     UNION of paper-coloured blobs rather than only the largest — which is
-     also what protects the side-by-side case below, so the two must be
-     designed together, not sequenced.
+  **Area is NOT a pass/fail signal, and that is the first real finding.**
+  `2026-09-01 Market 34.08` scores 58% and is badly wrong — a skewed trapezoid
+  swallowing a wedge of wood table beside a narrow receipt. Any threshold-on-
+  area triage (including the >75% one first tried here) misses it. Judgement
+  has to come from looking at the annotated output, or from a shape metric
+  that is not area.
 
-  Re-run the harness after each change: 5/20 is the number to beat, and the
-  annotated images show immediately if something that worked stops working.
+  **Only 3 of the 20 were reviewed by eye so far.** All three confirmed a
+  distinct failure, so a full pass over the annotated set is the first job when
+  this work starts:
+  1. *Wood overgrab* — `Market 34.08`, described above. The saturation fix.
+  2. *Separated receipts* — `2026-09-04 GastroPub`: two slips with a gap, on a
+     DARK table, so no luminance collision at all. They are separate blobs,
+     `maxAreaQuad` takes the larger, and the itemised check is simply lost.
+     Saturation does nothing here; this needs the UNION of paper-coloured
+     blobs.
+  3. *Two receipts, sloppily spanned* — `CA61EEBF…`: the quad does cover both
+     slips but reaches to the frame edge and takes dark table with it. Works,
+     badly.
+
+  So there really are two independent problems, and they pull in opposite
+  directions: (1) wants a TIGHTER blob, (2) and (3) want a WIDER one. They must
+  be designed together — a fix for wood that assumes one receipt per photo
+  would break the restaurant pairs Dan actually shoots.
 
   **Dan's acceptance line for this work (2026-08-27), which is the right
   one:** a miss on a WHITE table is expected and fine — white laminate and
