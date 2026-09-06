@@ -861,6 +861,39 @@ DOM to matter, and `totalCount`/`truncated` remain wired for it). Cold renders
 are ~460-780ms and no query work reaches that — it is TLS and connection setup
 on a fresh function instance.
 
+## Register: reconciled rows (2026-09-06, Dan — deferred by him)
+
+Both raised off one screenshot, both to be done together since they touch the
+same rows. *"The locks do not line up with the C. I also need a way to edit a
+reconciled transaction. Everything but the amount."*
+
+**1. The lock does not line up with the C — cause found, one line.**
+`ClearedControl` (`components/MoneyRegister.tsx`) returns two shapes from the
+same column. The cleared/uncleared branch is a button with a fixed
+`h-5 w-5 shrink-0` circle; the reconciled branch is a bare
+`<span className="flex items-center justify-center">` around `<LockIcon/>`
+with NO box, so it collapses to the glyph's own size and sits off-centre
+against every C above it. Give the lock branch the same `h-5 w-5 shrink-0`
+and they share one column box. Check the phone renderer too — it draws the
+same control.
+
+**2. A reconciled row should be editable — everything except the amount.**
+Today `startEdit` is gated on `t.cleared !== 'reconciled'` and the row is
+wholly frozen. That is stricter than it needs to be: the amount is what a
+reconciliation actually attests to (it is what made the statement balance),
+while the payee, category, memo and show tag carry no such promise and are
+exactly the fields Dan finds wrong later — a payee he wants renamed, a
+category he now knows.
+
+Shape when built: keep the row editable but render the amount boxes read-only
+in edit mode, and refuse an amount change SERVER-side too (`updateLedgerTransaction`
+must not trust a client that stops sending the field). Note `rejectTransaction`
+already carries a reconciled lock and should keep it — deleting a reconciled
+row still breaks a closed reconciliation, editing its payee does not. The
+split editor is a harder case: changing legs changes what each category is
+charged without changing the parent total, so it should stay locked until
+someone decides what a reconciliation promises about legs.
+
 ## Small / cosmetic
 
 - Import error message couldn't tell a broken download from a wrong format —
