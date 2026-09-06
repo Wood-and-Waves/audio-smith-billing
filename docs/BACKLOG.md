@@ -861,6 +861,51 @@ DOM to matter, and `totalCount`/`truncated` remain wired for it). Cold renders
 are ~460-780ms and no query work reaches that — it is TLS and connection setup
 on a fresh function instance.
 
+## Corner detection, round two: EDGES (2026-09-06, Dan — wanted, not now)
+
+*"I think it is worth the change. But not right now."*
+
+The colour fix shipped 2026-09-05 (`3202f30`) does what it claims — six wood
+overgrabs tightened, his separated pair spanned — but Dan then shot the SAME
+Menards receipt on three surfaces and all three failed. Colour turns out to
+have been one cause of three.
+
+**These are three distinct failures, not one.** Read off screenshots, not
+measured — the photos were never saved into `~/Desktop/receipt-tests`, and
+that is step one when this is picked up:
+
+1. **Pale concrete / laminate** — quad sprawls across the frame. The surface
+   is NEUTRAL, so the chroma gate correctly declines to fire and detection
+   falls back to luma, which cannot tell pale stone from pale paper. This is
+   the limit already pinned by the "KNOWN LIMIT" test in
+   `scripts/test/receiptCorners.test.ts`, now met on a real surface.
+2. **Brushed stainless steel** — same cause. Neutral, bright, and scratched.
+3. **Dark wood** — the interesting one, because wood is what the colour fix
+   targeted, and it nearly worked: the quad hugs the right and bottom edges
+   then CUTS A CORNER OFF the receipt's top-left. That is not the table
+   leaking in, it is receipt being lost, and that corner sits in shadow. A
+   luma threshold drops shadowed paper before chroma is ever consulted.
+   Suspected, not confirmed.
+
+**The fix Dan wants: edge-based detection.** Find the receipt's BORDERS rather
+than its brightness — the standard document-scanner approach (gradient/Canny,
+then contours, then the best quadrilateral). It does not care whether the
+background is coloured, neutral, or the same brightness as the paper; it cares
+that paper has a straight edge against whatever is behind it. That covers all
+three failures above with one mechanism.
+
+**It should sit ALONGSIDE the current pipeline, not replace it.** The
+brightness+colour path is measured to work on twenty real photos and its
+results are pinned by tests; throwing it away to chase three would be a bad
+trade. Shape: run both, prefer the edge result when it finds a confident
+quadrilateral, fall back to the current one otherwise. Whatever is built must
+be measured on the FULL set — the harness draws each chosen quad onto the
+photo so results are judged by looking, and 20-photo before/after is the bar.
+
+Note the manual path already covers every one of these: Dan drags the corners
+or taps Use full photo, and he has said the drag works fine. This is hit rate,
+not correctness — which is why it can wait.
+
 ## Register: reconciled rows (2026-09-06, Dan — deferred by him)
 
 Both raised off one screenshot, both to be done together since they touch the
