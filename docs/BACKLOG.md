@@ -861,6 +861,51 @@ DOM to matter, and `totalCount`/`truncated` remain wired for it). Cold renders
 are ~460-780ms and no query work reaches that — it is TLS and connection setup
 on a fresh function instance.
 
+## The W-9 sentence should be editable (2026-09-06, Dan)
+
+*"I noticed the W-9 note at the end of the email was not added to the edit box
+on send. Can that be on there as well in case I want to edit it?"*
+
+Correct observation. `I've attached my W-9 as well.` never appears in the
+Message textarea — it is appended at SEND time by `assembleEmail`
+(`lib/invoiceEmailBody.ts`), in the same footer block as `View it online: …`
+and `A PDF copy is attached.`. The panel only hints at it, in the grey line
+under the box: *"A link to a read-only copy is added at the end."*
+
+**Why it is appended rather than prefilled, so this is not undone by accident.**
+Two reasons, and the second is the one that matters:
+
+1. The public link's token does not exist until the server mints it at send,
+   so the link line genuinely cannot be prefilled. The other two footer lines
+   ride along with it for consistency.
+2. **One flag decides both the attachment and the sentence.** `w9Attached` is
+   derived from the same value that puts the file on the email, so the message
+   cannot claim a W-9 it did not carry — or carry one it never mentioned. Move
+   the prose into a free-text box and that guarantee is gone: Dan could tick
+   the box and delete the sentence, or untick it and leave the sentence
+   standing, and the email would then lie to a client about a tax document.
+
+**Options, cheapest first.**
+
+- **(a) Show it, don't edit it.** Render the whole footer under the textarea as
+  a greyed preview — the exact three lines the client will see. Solves "I could
+  not see it", not "I want to word it". Keeps the guarantee intact. Smallest
+  change by far.
+- **(b) A dedicated W-9 note field.** A second, small input that appears ONLY
+  when the checkbox is ticked, prefilled with the current sentence, sent as its
+  own value. Dan can word it however he likes; the field cannot exist without
+  the attachment, so the claim and the file stay welded together. This is the
+  recommendation if he wants real editing.
+- **(c) Merge it into the body on tick, remove on untick.** What he literally
+  asked for, and the worst of the three: it fights his own edits (what should
+  ticking do if he has already rewritten that paragraph?), and it breaks the
+  claim/attachment link entirely. Only do this if he says so after hearing the
+  above.
+
+Note the same question applies to `A PDF copy is attached.` — if the footer
+becomes editable at all, decide for all three lines at once rather than
+special-casing the W-9.
+
 ## Corner detection, round two: EDGES (2026-09-06, Dan — wanted, not now)
 
 *"I think it is worth the change. But not right now."*
