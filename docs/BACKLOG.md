@@ -861,10 +861,16 @@ DOM to matter, and `totalCount`/`truncated` remain wired for it). Cold renders
 are ~460-780ms and no query work reaches that — it is TLS and connection setup
 on a fresh function instance.
 
-## The W-9 sentence should be editable (2026-09-06, Dan)
+## The W-9 sentence should be editable — CLOSED, not doing (2026-09-06)
 
-*"I noticed the W-9 note at the end of the email was not added to the edit box
-on send. Can that be on there as well in case I want to edit it?"*
+Dan raised it, heard why it works the way it does, and closed it himself:
+*"For now, let's just leave the language and editing alone. I am not sure it
+is worth the change."* Kept rather than deleted so the reasoning survives —
+and so the next person who notices the sentence missing from the Message box
+finds the answer instead of re-opening it.
+
+Original: *"I noticed the W-9 note at the end of the email was not added to the
+edit box on send. Can that be on there as well in case I want to edit it?"*
 
 Correct observation. `I've attached my W-9 as well.` never appears in the
 Message textarea — it is appended at SEND time by `assembleEmail`
