@@ -65,7 +65,12 @@ if (!clientId || !clientSecret) {
   process.exit(1)
 }
 
-const redirectUri = `http://localhost:${PORT}`
+// 127.0.0.1, NOT localhost. Google accepts either for a Desktop client, but
+// Safari would not deliver the redirect to a `localhost` listener at all —
+// the address bar showed the code and the request never arrived, while curl
+// reached the same server on both 127.0.0.1 and ::1 (2026-09-07). The literal
+// IP sidesteps whatever name-resolution or local-network gate Safari applies.
+const redirectUri = `http://127.0.0.1:${PORT}`
 const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams({
   client_id: clientId,
   redirect_uri: redirectUri,
