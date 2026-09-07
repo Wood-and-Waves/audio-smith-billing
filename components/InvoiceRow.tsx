@@ -40,9 +40,10 @@ export default function InvoiceRow({
    * red: amber asks for attention, red is late, green is done, and this is
    * none of those. It is a statement of fact about what the app can prove.
    *
-   * Set for EVERY unlinked paid invoice, pre-ledger ones included (Dan's
-   * call, 2026-09-07). Roughly 89 of his 107 paid invoices carry it, so it
-   * reads as "these are on your word" rather than "these need fixing".
+   * Set only for invoices issued after the ledger account opened — the
+   * caller carries the reasoning. With his ledger era fully reconciled
+   * (21 of 21 linked as of 2026-09-07), a dot means a NEW invoice was marked
+   * paid with no deposit behind it, which is worth acting on.
    */
   unverified?: boolean
 }) {
