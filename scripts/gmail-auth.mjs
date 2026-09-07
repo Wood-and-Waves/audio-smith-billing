@@ -89,11 +89,24 @@ const code = await new Promise((resolve, reject) => {
     const url = new URL(req.url, redirectUri)
     const got = url.searchParams.get('code')
     const err = url.searchParams.get('error')
+
+    // A browser asks for more than the redirect. Safari fetches /favicon.ico
+    // the moment the page renders, and an earlier version of this treated ANY
+    // request without a code as a failure — so the favicon killed a flow that
+    // had already succeeded, reporting "no code in redirect" about a URL that
+    // visibly contained one. Only a request actually carrying `code` or
+    // `error` decides anything; everything else is answered and ignored.
+    if (!got && !err) {
+      res.writeHead(204)
+      res.end()
+      return
+    }
+
     res.writeHead(200, { 'Content-Type': 'text/plain' })
-    res.end(got ? 'Authorised. Close this tab and return to the terminal.' : `Failed: ${err ?? 'no code'}`)
+    res.end(got ? 'Authorised. Close this tab and return to the terminal.' : `Failed: ${err}`)
     server.close()
     if (got) resolve(got)
-    else reject(new Error(err ?? 'no code in redirect'))
+    else reject(new Error(err))
   })
   server.listen(PORT)
   setTimeout(() => { server.close(); reject(new Error('timed out after 5 minutes')) }, 300_000)
