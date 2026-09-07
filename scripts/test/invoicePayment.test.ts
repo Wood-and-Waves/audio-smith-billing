@@ -9,7 +9,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { amountLinkRefusal, settlementFor } from '../../lib/invoicePayment.ts'
+import { amountLinkRefusal, settlementFor, rankPaymentCandidates } from '../../lib/invoicePayment.ts'
 
 test('no link at all reads as unpaid, with the whole total outstanding', () => {
   assert.deepEqual(settlementFor(60000, null), {
@@ -116,4 +116,52 @@ test('the refusal is the exact wording the UI already shows', () => {
   assert.equal(amountLinkRefusal({
     sumCents: 1, txnAmountCents: 2, invoiceCount: 1, settleMismatch: false,
   }), 'Those amounts do not add up.')
+})
+
+// rankPaymentCandidates — the "Link a payment" ordering. Dan's ledger counts
+// refunds as deposits (an Amazon return, a reversed hotel charge), so the
+// panel was offering a $19.47 refund against a $6,553 invoice as prominently
+// as the deposit that actually paid it.
+
+const cand = (id: string, date: string, amountCents: number) => ({ id, date, amountCents })
+
+test('the closest deposit to the invoice total comes first', () => {
+  // #385: $6,553.14 invoiced, paid $10 short by a deposit two weeks newer than
+  // some of the noise around it.
+  const ranked = rankPaymentCandidates([
+    cand('amazon', '2026-04-27', 1947),
+    cand('short', '2026-08-27', 654314),
+    cand('fairmont', '2026-08-24', 59210),
+  ], 655314)
+  assert.deepEqual(ranked.map((c) => c.id), ['short', 'fairmont', 'amazon'])
+})
+
+test('an EXACT match outranks a newer near-match', () => {
+  const ranked = rankPaymentCandidates([
+    cand('newer-close', '2026-09-01', 655000),
+    cand('older-exact', '2026-06-01', 655314),
+  ], 655314)
+  assert.equal(ranked[0].id, 'older-exact')
+})
+
+test('it ranks, it never drops — every candidate survives', () => {
+  // The whole reason this is a sort and not a filter: a short payment is a
+  // real payment, and no floor separates "$10 light" from "not this one".
+  const input = [cand('a', '2026-01-01', 100), cand('b', '2026-01-02', 200), cand('c', '2026-01-03', 300)]
+  assert.equal(rankPaymentCandidates(input, 999999).length, 3)
+})
+
+test('equally-close deposits break to the newer one, deterministically', () => {
+  // $10 over and $10 under are the same distance; order must not depend on
+  // input order or reshuffle between reloads.
+  const over = cand('over', '2026-05-01', 101000)
+  const under = cand('under', '2026-07-01', 99000)
+  assert.deepEqual(rankPaymentCandidates([over, under], 100000).map((c) => c.id), ['under', 'over'])
+  assert.deepEqual(rankPaymentCandidates([under, over], 100000).map((c) => c.id), ['under', 'over'])
+})
+
+test('the caller's array is not mutated', () => {
+  const input = [cand('b', '2026-01-02', 200), cand('a', '2026-01-01', 100)]
+  rankPaymentCandidates(input, 100)
+  assert.deepEqual(input.map((c) => c.id), ['b', 'a'])
 })

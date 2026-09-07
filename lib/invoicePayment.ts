@@ -87,3 +87,36 @@ export function amountLinkRefusal(input: {
   if (input.settleMismatch && input.invoiceCount === 1) return null
   return 'Those amounts do not add up.'
 }
+
+/**
+ * Orders "Link a payment" candidates by how close each deposit is to the
+ * invoice's total, nearest first.
+ *
+ * The panel offers every unlinked deposit, and in Dan's ledger a deposit is
+ * not always a client payment: an Amazon return and a reversed hotel charge
+ * are both money in, so both are `kind = 'income'` and both were being offered
+ * against a $6,553 invoice with the same prominence as the deposit that
+ * actually paid it (2026-09-07: "Why are there so many?").
+ *
+ * This RANKS rather than filters, deliberately. A filter would need a floor,
+ * and there is no honest one: the short-payment feature exists precisely
+ * because real payments arrive light, and no threshold separates "$10 short"
+ * from "not this invoice" without eventually hiding a payment Dan needs. Sort
+ * order costs nothing when it guesses wrong — the row is still in the list,
+ * just further down.
+ *
+ * Ties break newest-first, then by id, so the order is fully determined and a
+ * reload cannot reshuffle two equally-close deposits.
+ */
+export function rankPaymentCandidates<T extends { id: string; date: string; amountCents: number }>(
+  candidates: readonly T[],
+  invoiceTotalCents: number,
+): T[] {
+  return [...candidates].sort((a, b) => {
+    const da = Math.abs(a.amountCents - invoiceTotalCents)
+    const db = Math.abs(b.amountCents - invoiceTotalCents)
+    if (da !== db) return da - db
+    if (a.date !== b.date) return a.date < b.date ? 1 : -1
+    return a.id < b.id ? 1 : -1
+  })
+}

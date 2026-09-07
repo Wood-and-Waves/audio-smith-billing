@@ -16,7 +16,7 @@ import LinkPaymentPanel, { type PaymentCandidate } from '@/components/LinkPaymen
 import { signedReceiptUrls } from '@/app/expenses/actions'
 import type { ExpenseCategory } from '@/lib/expenses'
 import type { BackupSnapshot } from '@/lib/backupSnapshot'
-import { settlementFor, type Settlement } from '@/lib/invoicePayment'
+import { settlementFor, type Settlement, rankPaymentCandidates } from '@/lib/invoicePayment'
 
 export const dynamic = 'force-dynamic'
 
@@ -183,6 +183,13 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   // whole-table link read could silently truncate and leave an already
   // linked deposit on offer.
   //
+  // Ordering: the window is fetched newest-first, but what Dan is shown is
+  // ordered by how close each deposit is to THIS invoice's total. His ledger
+  // counts refunds as deposits — an Amazon return, a reversed hotel charge —
+  // so a $19.47 refund was being offered against a $6,553 invoice as
+  // prominently as the deposit that paid it (2026-09-07). Ranked, never
+  // filtered: a short payment is a real payment, so nothing is hidden.
+  //
   // The window is 200 rows and the 40-row display slice is taken AFTER the
   // linked ones are removed: the deposit this panel exists to reach is by
   // definition one that never auto-matched, so a run of already-linked
@@ -236,10 +243,16 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
       // Aliased because `taken` is a let: TypeScript's narrowing to non-null
       // does not survive into the callback below.
       const takenSet = taken
-      paymentCandidates = recent
-        .filter((t) => !takenSet.has(t.id))
-        .slice(0, 40)
-        .map((t) => ({ id: t.id, date: t.date, payee: t.payee, amountCents: t.amount_cents }))
+      // Ranked by closeness to this invoice's total BEFORE the display slice,
+      // so the deposit that actually paid it cannot be pushed off the end by
+      // older refunds. The 200-row window above stays date-ordered — that
+      // bounds "recent"; this decides what to show first within it.
+      paymentCandidates = rankPaymentCandidates(
+        recent
+          .filter((t) => !takenSet.has(t.id))
+          .map((t) => ({ id: t.id, date: t.date, payee: t.payee, amountCents: t.amount_cents })),
+        inv.total_cents,
+      ).slice(0, 40)
     }
   }
 
