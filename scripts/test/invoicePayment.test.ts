@@ -160,7 +160,7 @@ test('equally-close deposits break to the newer one, deterministically', () => {
   assert.deepEqual(rankPaymentCandidates([under, over], 100000).map((c) => c.id), ['under', 'over'])
 })
 
-test('the caller's array is not mutated', () => {
+test("the caller's array is not mutated", () => {
   const input = [cand('b', '2026-01-02', 200), cand('a', '2026-01-01', 100)]
   rankPaymentCandidates(input, 100)
   assert.deepEqual(input.map((c) => c.id), ['b', 'a'])
