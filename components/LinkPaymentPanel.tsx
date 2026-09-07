@@ -7,6 +7,20 @@ import { formatDateShort } from '@/lib/dates'
 import { acceptIncomeMatch } from '@/app/money/actions'
 import { settlementFor } from '@/lib/invoicePayment'
 
+/**
+ * How many candidates are shown before "Show all".
+ *
+ * The list arrives ranked by closeness to this invoice's total, so the deposit
+ * Dan wants is at or near the top essentially always. Ranking alone was not
+ * enough — he still had to scroll past Amazon refunds and a $0.99 Stripe row
+ * to reach it (2026-09-07: "Not any better"), because ordering a long list
+ * does not shorten it. Six is enough to show the right answer plus a few
+ * plausible neighbours; everything else is one tap away, so nothing is ever
+ * hidden — which is what lets this be a short list without needing a floor
+ * that could bury a genuine short payment.
+ */
+const VISIBLE_CANDIDATES = 6
+
 export type PaymentCandidate = {
   id: string
   date: string
@@ -51,6 +65,12 @@ export default function LinkPaymentPanel({
   const [pending, start] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [picked, setPicked] = useState<PaymentCandidate | null>(null)
+  const [showAll, setShowAll] = useState(false)
+
+  // Collapsed by default on every visit. The ranking is per-invoice, so an
+  // expansion Dan made on one invoice tells us nothing about the next.
+  const shown = showAll ? candidates : candidates.slice(0, VISIBLE_CANDIDATES)
+  const hidden = candidates.length - shown.length
 
   // invoiceCount is 1 by construction: this panel only ever links ONE
   // invoice, so a combo cannot arise from here.
@@ -79,7 +99,7 @@ export default function LinkPaymentPanel({
         </p>
       ) : (
         <ul className="space-y-1">
-          {candidates.map((c) => {
+          {shown.map((c) => {
             const isPicked = picked?.id === c.id
             return (
               <li key={c.id}>
@@ -100,6 +120,18 @@ export default function LinkPaymentPanel({
             )
           })}
         </ul>
+      )}
+
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowAll(true)}
+          disabled={pending}
+          className="mt-2 text-xs font-semibold uppercase tracking-wider text-accent
+                     hover:opacity-80 disabled:opacity-40"
+        >
+          Show all {candidates.length}
+        </button>
       )}
 
       {settlement && (
