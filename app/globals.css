@@ -35,6 +35,11 @@
 
   --danger: #ef4444;      /* clipping — overdue */
   --good: #10b981;        /* paid */
+  /* A statement of fact, not a warning: "paid, but no deposit is linked to
+     it". Blue because the existing three are all verdicts — amber asks for
+     attention, red is late, green is done — and this one is none of those.
+     Dan's word (2026-09-07), and the palette had no blue. */
+  --info: #60a5fa;        /* 6.4:1 on #121212 */
 
   /* The hard offset shadow an open overlay wears — carried over with
      components/ui/Select.tsx so a lifted menu reads as a slip of paper above
@@ -111,6 +116,7 @@
 
     --danger: #dc2626;      /* 4.9:1 — #ef4444 measures 3.76 */
     --good: #047857;        /* 5.5:1 — #10b981 measures 2.56 */
+    --info: #1d4ed8;        /* 6.3:1 — #60a5fa measures 2.0 and fails */
     --edge-shadow: rgba(34, 30, 22, 0.18);
   }
 }
@@ -137,6 +143,7 @@
 
   --danger: #dc2626;      /* 4.9:1 — #ef4444 measures 3.76 */
   --good: #047857;        /* 5.5:1 — #10b981 measures 2.56 */
+  --info: #1d4ed8;        /* 6.3:1 — #60a5fa measures 2.0 and fails */
   --edge-shadow: rgba(34, 30, 22, 0.18);
 
   /* Explicit choice locks native-widget rendering (date pickers, selects,
@@ -168,6 +175,7 @@
   --shadow-edge: 3px 3px 0 0 var(--edge-shadow);
   --color-danger: var(--danger);
   --color-good: var(--good);
+  --color-info: var(--info);
   --color-paper: var(--paper);
   --color-paper-ink: var(--paper-ink);
   --color-paper-line: var(--paper-line);

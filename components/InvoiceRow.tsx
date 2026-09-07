@@ -36,11 +36,13 @@ export default function InvoiceRow({
    * "How do I know which invoices are settled?" He could not; a hand-marked
    * invoice and one settled by a real deposit both just read "paid".
    *
-   * NOT an error state. 4 of his 21 ledger-era paid invoices are in it, and
-   * the caller only ever sets this for invoices issued after the ledger
-   * account opened — before that there were no bank rows to link to, so
-   * their absence says nothing and marking them would make the dot
-   * meaningless across 85 rows.
+   * NOT an error state, which is why it is --info blue rather than danger
+   * red: amber asks for attention, red is late, green is done, and this is
+   * none of those. It is a statement of fact about what the app can prove.
+   *
+   * Set for EVERY unlinked paid invoice, pre-ledger ones included (Dan's
+   * call, 2026-09-07). Roughly 89 of his 107 paid invoices carry it, so it
+   * reads as "these are on your word" rather than "these need fixing".
    */
   unverified?: boolean
 }) {
@@ -83,7 +85,7 @@ export default function InvoiceRow({
                 <span
                   title="Paid, but no deposit linked"
                   aria-label="Paid, but no deposit linked"
-                  className="inline-block align-middle mr-1.5 h-1.5 w-1.5 rounded-full bg-muted"
+                  className="inline-block align-middle mr-1.5 h-1.5 w-1.5 rounded-full bg-info"
                 />
               )}
               {name}

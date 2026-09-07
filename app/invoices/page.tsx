@@ -11,22 +11,14 @@ export default async function InvoicesPage() {
   const supabase = await createClient()
   const today = todayInChicago()
 
-  // Three reads together: the invoices, which of them have a bank deposit
-  // linked, and when the ledger account opened. The last is the cutoff that
-  // makes the "no deposit linked" dot mean anything — see below.
-  const [{ data, error }, linkRes, accountRes] = await Promise.all([
+  // Two reads together: the invoices, and which of them have a bank deposit
+  // linked.
+  const [{ data, error }, linkRes] = await Promise.all([
     supabase
       .from('invoices')
       .select('id, number, issue_date, due_date, status, total_cents, work_for, clients(name)')
       .order('number', { ascending: false }),
     supabase.from('ledger_transaction_invoices').select('invoice_id'),
-    supabase
-      .from('ledger_accounts')
-      .select('opening_date')
-      .eq('closed', false)
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .maybeSingle(),
   ])
 
   if (error) {
@@ -48,24 +40,28 @@ export default async function InvoicesPage() {
    * not — this page read `status` alone, so an invoice he hand-marked paid
    * and one settled by a real deposit both said "paid".
    *
-   * The OPENING DATE is what makes this useful rather than noise. 85 of his
-   * paid invoices predate the ledger account, and no deposit could ever have
-   * been linked to them, so marking those would put a dot on four rows in
-   * five and teach him to ignore it. Scoped this way it marks four.
+   * EVERY paid invoice with no link is marked, pre-ledger ones included —
+   * Dan's explicit call on 2026-09-07: "I would like the blue dots next to
+   * all that are not linked. Even the ones from before 2026."
    *
-   * Fails toward SILENCE: if either read errors, `unverified` stays empty. A
-   * false mark sends him hunting for a payment that is already recorded,
+   * This was first built with a cutoff at the ledger account's opening date,
+   * on the reasoning that 85 of his paid invoices predate any bank rows, so
+   * marking them says nothing and a dot on four rows in five teaches him to
+   * ignore it. He overruled that, and it is his ledger: the dot now means
+   * exactly "no deposit is linked", with no judgement about whether one
+   * could have been. The account read is kept — the retention/import work
+   * may want it — but no longer gates the mark.
+   *
+   * Fails toward SILENCE: if the link read errors, `unverified` stays empty.
+   * A false mark sends him hunting for a payment that is already recorded,
    * which is worse than the absence of a hint he never had.
    */
-  const openingDate = (accountRes.data?.opening_date as string | undefined) ?? null
   const linked = linkRes.error
     ? null
     : new Set(((linkRes.data ?? []) as { invoice_id: string }[]).map((l) => l.invoice_id))
   const unverified = new Set<string>(
-    linked && openingDate
-      ? rows
-          .filter((r) => r.status === 'paid' && !linked.has(r.id) && r.issue_date >= openingDate)
-          .map((r) => r.id)
+    linked
+      ? rows.filter((r) => r.status === 'paid' && !linked.has(r.id)).map((r) => r.id)
       : [],
   )
 
