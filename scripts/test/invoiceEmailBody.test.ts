@@ -5,7 +5,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildInvoiceEmailDefaults, assembleInvoiceEmail } from '../../lib/invoiceEmailBody.ts'
+import { buildInvoiceEmailDefaults, assembleInvoiceEmail, assembleEmail } from '../../lib/invoiceEmailBody.ts'
 import { formatUSD } from '../../lib/money.ts'
 import type { DocumentData } from '../../components/InvoiceDocument.tsx'
 
@@ -191,4 +191,47 @@ test('an empty body still produces a footer-only email with no leading blank lin
   assert.equal(text, `View it online: ${URL}\nA PDF copy is attached.`, 'text is footer only')
   assert.ok(!text.startsWith('\n'), 'no leading blank line')
   assert.ok(!html.includes('<div style="margin:0 0 16px"></div>'), 'no empty body block')
+})
+
+// The W-9 sentence. It is emitted from the SAME flag that decides whether the
+// file is attached (lib/invoiceEmail.ts), so the email cannot claim a W-9 it
+// did not carry — the failure that would actually matter to a client.
+
+test('ticking the W-9 says so, in both the text and the html', () => {
+  const { text, html } = assembleInvoiceEmail({
+    subject: 'Invoice #392', body: 'Hello!', publicUrl: URL, w9Attached: true,
+  })
+  assert.match(text, /I've attached my W-9 as well\./)
+  assert.match(html, /I&rsquo;ve attached my W-9 as well\./)
+})
+
+test('not ticking it says nothing about a W-9 anywhere', () => {
+  const { text, html } = assembleInvoiceEmail({
+    subject: 'Invoice #392', body: 'Hello!', publicUrl: URL,
+  })
+  assert.doesNotMatch(text, /W-9/)
+  assert.doesNotMatch(html, /W-9/)
+})
+
+test('the W-9 line follows the PDF line, after whatever Dan wrote', () => {
+  // Order is the assertion: the footer is appended so no edit can drop it,
+  // and the two attachment sentences should read together at the end.
+  const { text } = assembleInvoiceEmail({
+    subject: 's', body: 'Thanks for having me on PwC.', publicUrl: URL, w9Attached: true,
+  })
+  const lines = text.split('\n').filter(Boolean)
+  assert.equal(lines[lines.length - 3], `View it online: ${URL}`)
+  assert.equal(lines[lines.length - 2], 'A PDF copy is attached.')
+  assert.equal(lines[lines.length - 1], "I've attached my W-9 as well.")
+  assert.equal(lines[0], 'Thanks for having me on PwC.', 'his own text still leads')
+})
+
+test('a reminder email cannot carry the W-9 sentence — it is invoice-only', () => {
+  // assembleEmail is shared with the client reminder (pdfAttached: false).
+  // Defaulting w9Attached to false is what keeps the reminder silent.
+  const { text } = assembleEmail({
+    subject: 's', body: 'Just a nudge.', publicUrl: URL, pdfAttached: false,
+  })
+  assert.doesNotMatch(text, /W-9/)
+  assert.doesNotMatch(text, /PDF copy/)
 })
