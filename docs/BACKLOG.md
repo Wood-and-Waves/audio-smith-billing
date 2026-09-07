@@ -969,8 +969,56 @@ via a SUBDOMAIN MX without touching the root.
 - Storage under the existing `receipts` bucket at `{owner_id}/inbox/…`, which
   inherits its owner-scoped RLS with no new policy.
 
-**BLOCKED ON DAN:** a Postmark or Mailgun account, its inbound address, and the
-API key in Vercel. Everything else is decided.
+**Gmail is CONNECTED (2026-09-07).** Internal-audience OAuth app on the
+Workspace account, `gmail.readonly`, refresh token in `.env.local` and all
+three `GMAIL_*` vars in Vercel production. Verified end to end: refresh token
+-> access token -> labels API. Dan's label is **`audiosmith_receipts`**
+(id `Label_7919596007579494767`).
+
+Because the consent screen is INTERNAL the refresh token does not expire. An
+External/Testing app's would die after seven days — that trap is documented in
+`scripts/gmail-auth.mjs`'s header.
+
+**Safari will not deliver Google's redirect to a `localhost` listener.** Its
+address bar showed the callback complete with the code, a forced re-navigation
+changed nothing, and the server never saw a request — while curl reached the
+same server on both 127.0.0.1 and ::1. The script now uses `127.0.0.1` in the
+redirect URI (`6f90549`). Cost four attempts to find; do not "simplify" it back
+to localhost.
+
+### What two REAL receipts changed about the design
+
+`lib/gmailMessage.ts` parsed both correctly with no changes. The lesson was in
+the content, not the parsing:
+
+1. **ElevenLabs** — $5.00 in the body, plus TWO PDFs: `Invoice-….pdf` and
+   `Receipt-….pdf`. An email can carry several documents and they are not
+   equally useful.
+2. **Google Workspace** — the body carries NO dollar amount at all. It is a
+   notification that an invoice is available; every figure is inside the 83KB
+   PDF.
+
+**So extraction cannot pick a path from the message's shape.** The earlier plan
+assumed body-receipts and attachment-receipts were two kinds of mail needing
+two paths. They are not: Google Workspace is a body-receipt with nothing to
+extract. The rule is READ THE BODY FIRST, and fall through to the attachments
+when it yields no amount.
+
+**And PDFs are the common case, not the fallback** — both of the first two real
+examples carry one. The existing pipeline rasterises page one and OCRs it,
+which works but is the expensive path; for a text-based PDF, pulling the text
+out directly is cheaper and more accurate than photographing it.
+
+**Attachment rule:** keep ALL attachments, and prefer the one whose filename
+says "receipt" over "invoice" when choosing which to show and extract from. A
+receipt is proof of payment, which is what the books want. Never discard the
+other — that naming is Stripe's convention, not a standard, and plenty of
+vendors will send `document.pdf`.
+
+**Still to build:** the `receipt_inbox` migration, `lib/gmail.ts` (network,
+following the Dropbox pattern), extraction per the rule above, the poller on
+the existing cron, and `/money/receipts` where each item proposes the bank
+transaction it matches.
 
 ## Corner detection, round two: EDGES (2026-09-06, Dan — wanted, not now)
 
