@@ -418,7 +418,7 @@ export default async function MoneyPage({
     accountRes, categoriesRes0, showsRes, splitLegsRes,
     budgetCategoriesRes, movesRes,
     invoiceLinksRes, expenseLinksRes, dismissalsRes,
-    candidateInvoicesRes, candidateExpensesRes, aliasUserRes,
+    candidateInvoicesRes, candidateExpensesRes, aliasUserRes, receiptInboxRes,
   ] = await Promise.all([
     // opening_date rides along for the budget seed's own clamp below
     // (mirroring app/money/budget/page.tsx's own openingMonth/seedMonth
@@ -447,9 +447,15 @@ export default async function MoneyPage({
     fetchAllCandidateInvoices(supabase),
     fetchAllCandidateExpenses(supabase),
     supabase.auth.getUser(),
+    // Waiting receipts, for the badge beside Matches. head+count: the page
+    // needs the number, never the rows.
+    supabase.from('receipt_inbox').select('id', { count: 'exact', head: true }).eq('status', 'new'),
   ])
   const { data: accountRow, error: accountError } = accountRes
   const { data: { user: aliasUser } } = aliasUserRes
+  // A failed count reads as zero: a missing badge is a smaller loss than a
+  // register that will not render.
+  const receiptInboxCount = receiptInboxRes.error ? 0 : (receiptInboxRes.count ?? 0)
 
   // The one open checking account this ledger runs from — "first" by when it
   // was created, same tie-break the rest of the app uses when a query could
@@ -864,6 +870,17 @@ export default async function MoneyPage({
               className="text-xs text-muted hover:text-ink transition-colors"
             >
               Matches{matchCount > 0 && <span className="ml-1 font-semibold text-accent">{matchCount}</span>}
+            </Link>
+            {/* Beside Matches because it is the same job — confirming a pairing
+                the app can only propose — just with a document rather than
+                money on the other side. */}
+            <Link
+              href="/money/receipts"
+              className="text-xs text-muted hover:text-ink transition-colors"
+            >
+              Receipts{receiptInboxCount > 0 && (
+                <span className="ml-1 font-semibold text-accent">{receiptInboxCount}</span>
+              )}
             </Link>
             <Link
               href="/money/budget"

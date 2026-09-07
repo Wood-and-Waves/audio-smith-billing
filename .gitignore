@@ -30,7 +30,13 @@ tmp/
 
 # Real receipts used for testing OCR. Financial records — never committed,
 # and the repo is on GitHub.
-receipts/
+#
+# ANCHORED to the repo root. Unanchored, this matched any directory named
+# `receipts` at any depth, and silently swallowed the app/money/receipts route
+# — `git add` refused it and the feature would have shipped with its page
+# missing. The rule is about a folder of real financial documents at the top
+# level, so that is what it says now.
+/receipts/
 
 # Attack-path maps for a live billing system. Never pushable.
 security-audit/
