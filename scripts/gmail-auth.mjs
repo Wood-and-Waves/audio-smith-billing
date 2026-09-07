@@ -78,8 +78,10 @@ const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchP
   prompt: 'consent',
 })
 
-console.log(`\nAdd this EXACT redirect URI to the OAuth client first:\n  ${redirectUri}\n`)
-console.log(`Then open:\n\n${authUrl}\n`)
+// A DESKTOP-type OAuth client accepts any http://localhost:PORT redirect
+// without registering it — that is the whole reason to pick Desktop over Web
+// here. Nothing to configure in the console; the loopback below just works.
+console.log(`\nOpen this in the browser, signed in as the Workspace account:\n\n${authUrl}\n`)
 console.log('Waiting for the redirect…')
 
 const code = await new Promise((resolve, reject) => {
