@@ -25,10 +25,24 @@ export default function InvoiceRow({
   invoice,
   today,
   emphasis = false,
+  unverified = false,
 }: {
   invoice: InvoiceRowData
   today: string
   emphasis?: boolean
+  /**
+   * Paid, but no bank deposit is linked to it — so the app is taking Dan's
+   * word for it rather than showing him money that arrived. Dan, 2026-09-07:
+   * "How do I know which invoices are settled?" He could not; a hand-marked
+   * invoice and one settled by a real deposit both just read "paid".
+   *
+   * NOT an error state. 4 of his 21 ledger-era paid invoices are in it, and
+   * the caller only ever sets this for invoices issued after the ledger
+   * account opened — before that there were no bank rows to link to, so
+   * their absence says nothing and marking them would make the dot
+   * meaningless across 85 rows.
+   */
+  unverified?: boolean
 }) {
   const s = displayStatus(invoice, today)
   const days = daysUntilDue(invoice.due_date, today)
@@ -65,6 +79,13 @@ export default function InvoiceRow({
               inline " · " form. */}
           <span className={`min-w-0 sm:flex-1 ${emphasis ? 'font-semibold' : ''}`}>
             <span className="block truncate">
+              {unverified && (
+                <span
+                  title="Paid, but no deposit linked"
+                  aria-label="Paid, but no deposit linked"
+                  className="inline-block align-middle mr-1.5 h-1.5 w-1.5 rounded-full bg-muted"
+                />
+              )}
               {name}
               {invoice.work_for
                 ? <span className="hidden sm:inline text-muted font-normal"> · {invoice.work_for}</span>

@@ -11,10 +11,23 @@ export default async function InvoicesPage() {
   const supabase = await createClient()
   const today = todayInChicago()
 
-  const { data, error } = await supabase
-    .from('invoices')
-    .select('id, number, issue_date, due_date, status, total_cents, work_for, clients(name)')
-    .order('number', { ascending: false })
+  // Three reads together: the invoices, which of them have a bank deposit
+  // linked, and when the ledger account opened. The last is the cutoff that
+  // makes the "no deposit linked" dot mean anything — see below.
+  const [{ data, error }, linkRes, accountRes] = await Promise.all([
+    supabase
+      .from('invoices')
+      .select('id, number, issue_date, due_date, status, total_cents, work_for, clients(name)')
+      .order('number', { ascending: false }),
+    supabase.from('ledger_transaction_invoices').select('invoice_id'),
+    supabase
+      .from('ledger_accounts')
+      .select('opening_date')
+      .eq('closed', false)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+  ])
 
   if (error) {
     return (
@@ -27,6 +40,35 @@ export default async function InvoicesPage() {
   }
 
   const rows = (data ?? []) as unknown as InvoiceRowData[]
+
+  /**
+   * Paid invoices with no bank deposit behind them.
+   *
+   * Dan, 2026-09-07: "How do I know which invoices are settled?" He could
+   * not — this page read `status` alone, so an invoice he hand-marked paid
+   * and one settled by a real deposit both said "paid".
+   *
+   * The OPENING DATE is what makes this useful rather than noise. 85 of his
+   * paid invoices predate the ledger account, and no deposit could ever have
+   * been linked to them, so marking those would put a dot on four rows in
+   * five and teach him to ignore it. Scoped this way it marks four.
+   *
+   * Fails toward SILENCE: if either read errors, `unverified` stays empty. A
+   * false mark sends him hunting for a payment that is already recorded,
+   * which is worse than the absence of a hint he never had.
+   */
+  const openingDate = (accountRes.data?.opening_date as string | undefined) ?? null
+  const linked = linkRes.error
+    ? null
+    : new Set(((linkRes.data ?? []) as { invoice_id: string }[]).map((l) => l.invoice_id))
+  const unverified = new Set<string>(
+    linked && openingDate
+      ? rows
+          .filter((r) => r.status === 'paid' && !linked.has(r.id) && r.issue_date >= openingDate)
+          .map((r) => r.id)
+      : [],
+  )
+
   const open = rows.filter((r) => r.status === 'sent')
   const openTotal = open.reduce((t, r) => t + r.total_cents, 0)
   const overdue = open.filter((r) => displayStatus(r, today) === 'overdue')
@@ -56,7 +98,8 @@ export default async function InvoicesPage() {
         ) : (
           <ul className="border-t border-line">
             {open.map((r) => (
-              <InvoiceRow key={r.id} invoice={r} today={today} emphasis />
+              <InvoiceRow key={r.id} invoice={r} today={today} emphasis
+                          unverified={unverified.has(r.id)} />
             ))}
           </ul>
         )}
@@ -83,7 +126,8 @@ export default async function InvoicesPage() {
 
         <ul className="border-t border-line">
           {rows.map((r) => (
-            <InvoiceRow key={r.id} invoice={r} today={today} />
+            <InvoiceRow key={r.id} invoice={r} today={today}
+                        unverified={unverified.has(r.id)} />
           ))}
         </ul>
       </section>
