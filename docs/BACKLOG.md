@@ -912,6 +912,66 @@ Note the same question applies to `A PDF copy is attached.` — if the footer
 becomes editable at all, decide for all three lines at once rather than
 special-casing the W-9.
 
+## Receipts by email (2026-09-07, Dan — designed, blocked on a provider account)
+
+*"I get receipts in my email. Is there a way to send them via email so I can
+match them?"*
+
+**His follow-up is what settled the design:** *"What if the receipt I forward
+is not from a show, say Spotify?"* — `expenses.show_id` is NOT NULL, so every
+expense belongs to a show and feeds an invoice. A Spotify receipt is not an
+expense in this app's sense at all; it is overhead, and it belongs on the BANK
+TRANSACTION for that charge. The ledger already supports this:
+`ledger_transactions.receipt_path` / `receipt_original` (migration 0031),
+written by `attachLedgerReceipt(txnId, enhancedPath, originalPath)`
+(`app/money/actions.ts:580`).
+
+So an emailed receipt has TWO destinations and the inbox lets him pick:
+1. **A bank transaction** — Spotify, software, insurance. Attaches to the row
+   already in the register. The common case, and literally the "match" he
+   asked for.
+2. **A show** — a client-billable meal or ride, through the existing
+   `addExpense` path, which needs the show he chooses.
+
+**Decisions (2026-09-07):**
+- He forwards each receipt deliberately. No Gmail auto-forward rule: the same
+  senders send marketing, every arrival costs an AI extraction, and he would
+  end up triaging noise. He can add rules himself later — it is a Gmail
+  setting, not code.
+- The inbox is **its own screen under Money** (`/money/receipts`) with a count
+  badge, not a section of the register (already the densest screen) and not
+  part of the Matches queue (that is about money, not documents).
+- Nothing auto-files. An unmatched item waits rather than guessing — the same
+  judgement the Matches queue makes with its 10-day window.
+
+**VERIFIED 2026-09-07 — Cloudflare Email Routing is NOT an option.** The
+domain's nameservers are NS1 (`dns1.p03.nsone.net`, i.e. Squarespace) and MX
+points at Google Workspace (`aspmx.l.google.com`). Cloudflare routing requires
+taking over both and would break his actual email. Use a provider's inbound
+address instead (Postmark or Mailgun) — **no DNS change at all**, Google
+Workspace untouched. A prettier `receipts@theaudiosmith.com` can come later
+via a SUBDOMAIN MX without touching the root.
+
+**Shape when built:**
+- Webhook at `app/api/receipts/inbound`; `app/api/cron/reminders/route.ts` is
+  the model for shared-secret auth and service-role use.
+- Auth by an unguessable provider address plus a shared secret, never the From
+  header, which is trivially spoofed. Mirrors the `calendar_token` pattern and
+  makes the feature per-user for free if the sharing plan happens.
+- **Two extraction paths, both wanted.** Most forwarded receipts (Amazon, Uber,
+  hotels) are HTML BODIES, not attachments, and `readReceiptImage`
+  (`lib/receiptOcr.ts:27`) takes `image/jpeg` only — it cannot read them. Body
+  receipts want text-to-Claude, which is cheaper and more accurate than OCR;
+  PDF and image attachments reuse the current pipeline.
+- Matching reuses the amount + date-window shape of `lib/ledgerMatch.ts`.
+- New `receipt_inbox` table: owner, sender, subject, received_at, stored body
+  and attachment paths, extracted fields, status.
+- Storage under the existing `receipts` bucket at `{owner_id}/inbox/…`, which
+  inherits its owner-scoped RLS with no new policy.
+
+**BLOCKED ON DAN:** a Postmark or Mailgun account, its inbound address, and the
+API key in Vercel. Everything else is decided.
+
 ## Corner detection, round two: EDGES (2026-09-06, Dan — wanted, not now)
 
 *"I think it is worth the change. But not right now."*
