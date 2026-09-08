@@ -5,7 +5,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { validateTxnShape, isSaneLedgerDate, deriveKind, VALID_KINDS } from '../../lib/ledgerRules.ts'
+import { validateTxnShape, isSaneLedgerDate, deriveKind, reconciledAmountRefusal, VALID_KINDS } from '../../lib/ledgerRules.ts'
 import { OWNER_PAY_CATEGORY_NAME } from '../../lib/ledgerCategories.ts'
 
 test('VALID_KINDS is the four ledger kinds', () => {
@@ -202,4 +202,39 @@ test('the owner-pay match is exact, not case-insensitive or a substring', () => 
     deriveKind({ budgetRole: 'spending', name: `${OWNER_PAY_CATEGORY_NAME} (old)` }, 'outflow'),
     { kind: 'expense' },
   )
+})
+
+// --- the reconciled carve-out (2026-09-08, Dan: "I need to have the ability
+// to edit a reconciled transaction ... mainly the name/category/memo") ---
+//
+// A reconciliation attests to the AMOUNT: that is the figure that made the
+// statement balance. The payee, memo, category, date and show tag carry no
+// such promise, and they are exactly the fields found wrong months later.
+// So the lock narrows from the whole row to the one field it is actually
+// about. These run server-side on a row read fresh from the database, never
+// on what the client claims the row used to be.
+
+test('a reconciled row refuses an amount change', () => {
+  assert.equal(
+    reconciledAmountRefusal({ cleared: 'reconciled', amountCents: -5_000 }, -5_001),
+    'A reconciled transaction\'s amount is locked. Unreconcile it first to change the amount.',
+  )
+})
+
+test('a reconciled row allows every other edit: the amount is unchanged', () => {
+  assert.equal(reconciledAmountRefusal({ cleared: 'reconciled', amountCents: -5_000 }, -5_000), null)
+})
+
+test('an unreconciled row may change its amount freely', () => {
+  for (const cleared of ['uncleared', 'cleared'] as const) {
+    assert.equal(reconciledAmountRefusal({ cleared, amountCents: -5_000 }, 12_345), null)
+  }
+})
+
+// Sign flips and zero are amount changes like any other -- worth pinning
+// because a flip is the one edit that would also change the row's kind, and
+// 0 is falsy in a language where `!next` would wave it through.
+test('a reconciled row refuses a sign flip and a change to zero', () => {
+  assert.ok(reconciledAmountRefusal({ cleared: 'reconciled', amountCents: -5_000 }, 5_000))
+  assert.ok(reconciledAmountRefusal({ cleared: 'reconciled', amountCents: -5_000 }, 0))
 })

@@ -251,7 +251,10 @@ function ClearedControl({
 }) {
   if (row.cleared === 'reconciled') {
     return (
-      <span className="flex items-center justify-center text-muted" title="Reconciled — locked">
+      <span
+        className="flex h-5 w-5 shrink-0 items-center justify-center text-muted"
+        title="Reconciled — the amount is locked; other fields can still be edited"
+      >
         <LockIcon />
       </span>
     )
@@ -1662,6 +1665,16 @@ export default function MoneyRegister({
     // so the legs' amount boxes don't jump sides mid-keystroke on a
     // momentarily-empty box.
     const editBoxes = parseAmountBoxes(editOutflowAmount, editInflowAmount)
+    // The one field a reconciliation actually attests to. Read-only rather
+    // than disabled so the figure stays legible and selectable — it is the
+    // number Dan is checking against the statement while he fixes the payee
+    // beside it. The server refuses an amount change on this row regardless
+    // (reconciledAmountRefusal); this is the courtesy, not the guard.
+    const amountLocked = t.cleared === 'reconciled'
+    const amountLockProps = amountLocked
+      ? { readOnly: true, title: 'Locked by reconciliation — unreconcile to change the amount' }
+      : {}
+    const amountLockClass = amountLocked ? ' opacity-60 cursor-not-allowed' : ''
     const editAmountCents = 'error' in editBoxes ? null : editBoxes.amountCents
     const editDirection: LedgerDirection = 'error' in editBoxes
       ? (t.amount_cents < 0 ? 'outflow' : 'inflow')
@@ -1922,11 +1935,11 @@ export default function MoneyRegister({
             {categoryCell}
             <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={editMemo}
                    disabled={pending} onChange={(e) => setEditMemo(e.target.value)} />
-            <input aria-label="Outflow" inputMode="decimal" placeholder="0.00"
-                   className={`${FIELD_FULL} tabular text-right`} value={editOutflowAmount} disabled={pending}
+            <input aria-label="Outflow" inputMode="decimal" placeholder="0.00" {...amountLockProps}
+                   className={`${FIELD_FULL} tabular text-right${amountLockClass}`} value={editOutflowAmount} disabled={pending}
                    onChange={(e) => onEditOutflowChange(e.target.value)} />
-            <input aria-label="Inflow" inputMode="decimal" placeholder="0.00"
-                   className={`${FIELD_FULL} tabular text-right`} value={editInflowAmount} disabled={pending}
+            <input aria-label="Inflow" inputMode="decimal" placeholder="0.00" {...amountLockProps}
+                   className={`${FIELD_FULL} tabular text-right${amountLockClass}`} value={editInflowAmount} disabled={pending}
                    onChange={(e) => onEditInflowChange(e.target.value)} />
             {/* The row's existing balance — static, muted; nothing about
                 editing changes it until the save round-trips. */}
@@ -1964,11 +1977,11 @@ export default function MoneyRegister({
           {categoryCell}
           <input aria-label="Memo" className={FIELD_FULL} placeholder="Memo" value={editMemo}
                  disabled={pending} onChange={(e) => setEditMemo(e.target.value)} />
-          <input aria-label="Outflow" inputMode="decimal" placeholder="0.00"
-                 className={`${FIELD_FULL} tabular text-right`} value={editOutflowAmount} disabled={pending}
+          <input aria-label="Outflow" inputMode="decimal" placeholder="0.00" {...amountLockProps}
+                 className={`${FIELD_FULL} tabular text-right${amountLockClass}`} value={editOutflowAmount} disabled={pending}
                  onChange={(e) => onEditOutflowChange(e.target.value)} />
-          <input aria-label="Inflow" inputMode="decimal" placeholder="0.00"
-                 className={`${FIELD_FULL} tabular text-right`} value={editInflowAmount} disabled={pending}
+          <input aria-label="Inflow" inputMode="decimal" placeholder="0.00" {...amountLockProps}
+                 className={`${FIELD_FULL} tabular text-right${amountLockClass}`} value={editInflowAmount} disabled={pending}
                  onChange={(e) => onEditInflowChange(e.target.value)} />
         </div>
         {bottomBlock}
@@ -1993,11 +2006,20 @@ export default function MoneyRegister({
       )
     }
 
-    const editable = t.cleared !== 'reconciled'
     // A split parent's category is its legs — never the inline quick-pick
     // (see LedgerTxnRow's own `legs` doc comment for why this is
     // `legs.length > 0`, not a re-derivation from category_id being null).
     const isSplit = t.legs.length > 0
+    // Since 2026-09-08 a reconciled row OPENS for edit: the lock narrowed to
+    // the amount alone (reconciledAmountRefusal, lib/ledgerRules.ts), because
+    // the payee, memo, category, date and show tag carry no part of what a
+    // reconciliation attests to. A reconciled SPLIT stays shut, though —
+    // changing legs changes what each category is charged while the parent
+    // total sits still, and nobody has decided what a reconciliation promises
+    // about legs; saveSplit refuses it server-side regardless. So `editable`
+    // still means exactly "this row can open the edit form", which is what
+    // showReceiptLinks/showUnlink below depend on.
+    const editable = !(isSplit && t.cleared === 'reconciled')
     // owner_pay included: updateLedgerTransaction refuses reconciled rows
     // outright, and setTransactionCategory (the write this picker calls) is
     // the one category write exempt from that lock — so a reconciled,
@@ -2204,11 +2226,12 @@ export default function MoneyRegister({
       )
     }
 
-    const editable = t.cleared !== 'reconciled'
     // Same reasoning as renderDesktopRow's own isSplit/inlineCategory —
     // see that comment for both the owner_pay-included and
     // transfer/split-excluded halves.
     const isSplit = t.legs.length > 0
+    // Same reconciled carve-out as renderDesktopRow — see its comment.
+    const editable = !(isSplit && t.cleared === 'reconciled')
     // The category is the field Dan changes most (2026-09-02: "The one thing I
     // would want to adjust the most on the ledger is the category. I can't
     // click it and have it do anything"). It used to render as an inline

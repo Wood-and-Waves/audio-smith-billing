@@ -161,3 +161,36 @@ export function isSaneLedgerDate(date: string): boolean {
   const year = Number(date.slice(0, 4))
   return year >= 1990 && year <= 2100
 }
+
+/**
+ * The reconciled lock, narrowed to the one field a reconciliation actually
+ * attests to. Returns a refusal message for an amount change on a reconciled
+ * row, or null when the edit is allowed.
+ *
+ * A reconciliation is a promise that this row's AMOUNT is what made the
+ * statement balance. The payee, memo, category, date and show tag carry no
+ * such promise — and they are precisely the fields Dan finds wrong months
+ * later (a payee he wants renamed, a category he only learns afterwards).
+ * Freezing the whole row to protect one number kept his own corrections out
+ * of his own books. This is the same reasoning that already exempts
+ * setTransactionCategory (app/money/actions.ts) and the payee-alias rename:
+ * an edit that moves no money and touches nothing reconcileAccount's
+ * cleared-balance math reads is not what the lock is for.
+ *
+ * Dan chose (2026-09-08) to allow the DATE too, having been told a date
+ * change moves the row into a different month and so alters a closed month's
+ * budget activity after the fact. The amount staying fixed is what bounds
+ * that: the account balance cannot drift, only which month owns the row.
+ *
+ * Call this against a row read FRESH FROM THE DATABASE. A client that simply
+ * stops sending the amount field must not be able to buy itself an edit —
+ * which is exactly what a client-side-only lock would allow.
+ */
+export function reconciledAmountRefusal(
+  existing: { cleared: string; amountCents: number },
+  nextAmountCents: number,
+): string | null {
+  if (existing.cleared !== 'reconciled') return null
+  if (existing.amountCents === nextAmountCents) return null
+  return "A reconciled transaction's amount is locked. Unreconcile it first to change the amount."
+}

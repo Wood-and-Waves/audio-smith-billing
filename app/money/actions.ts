@@ -10,7 +10,8 @@ import { parseOfx, type ParsedOfx } from '@/lib/ofx'
 import { planImport, type ExistingTxn } from '@/lib/ledgerImport'
 import { normalizePayee, rememberedCategories, memoryKey } from '@/lib/payeeMemory'
 import {
-  validateTxnShape, isSaneLedgerDate, deriveKind, type LedgerKind, type CategoryForKind, type LedgerDirection,
+  validateTxnShape, isSaneLedgerDate, deriveKind, reconciledAmountRefusal,
+  type LedgerKind, type CategoryForKind, type LedgerDirection,
 } from '@/lib/ledgerRules'
 import { decideIncomeRoleChange } from '@/lib/incomeRoleGuard'
 import { amountLinkRefusal } from '@/lib/invoicePayment'
@@ -419,10 +420,16 @@ export async function addLedgerTransaction(input: {
 /**
  * Edits a transaction. Reads the row first, the same read-before-write shape
  * as setExpenseBillable's billed-show lock: a reconciled row has already
- * been matched against a bank statement, and rewriting its amount or kind
- * out from under that would leave the last reconciliation's own math
- * pointing at a transaction that no longer says what it said when it was
- * checked off.
+ * been matched against a bank statement, and rewriting its AMOUNT out from
+ * under that would leave the last reconciliation's own math pointing at a
+ * transaction that no longer says what it said when it was checked off.
+ *
+ * Since 2026-09-08 the lock is the amount alone, not the whole row (Dan:
+ * "I need to have the ability to edit a reconciled transaction ... mainly
+ * the name/category/memo"). The reasoning and the field list live on
+ * reconciledAmountRefusal in lib/ledgerRules.ts, which is where the rule is
+ * tested; it is called against `existing`, read here from the database, so a
+ * client that stops sending the amount cannot buy itself an edit.
  */
 export async function updateLedgerTransaction(input: {
   id: string
@@ -441,7 +448,10 @@ export async function updateLedgerTransaction(input: {
   const { data: existing } = await supabase
     .from('ledger_transactions').select('cleared, amount_cents, category_id').eq('id', input.id).maybeSingle()
   if (!existing) return { error: 'That transaction no longer exists.' }
-  if (existing.cleared === 'reconciled') return { error: 'Reconciled transactions are locked.' }
+  const amountRefusal = reconciledAmountRefusal(
+    { cleared: existing.cleared, amountCents: existing.amount_cents }, input.amountCents,
+  )
+  if (amountRefusal) return { error: amountRefusal }
 
   // Split-parent refusal (Task 3, Global Constraints): mirrors migration
   // 0042's own `ledger_transactions_refuse_amount_edit_with_legs` trigger —
