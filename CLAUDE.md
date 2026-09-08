@@ -33,6 +33,21 @@ status.
 
 ## Conventions that exist because something broke
 
+- **A `git add` that lists directories can silently drop a new one.** The W-9
+  tests shipped only in the working tree because that commit's `git add` named
+  `lib app components` and not `scripts/test` — the suite was green locally and
+  short in git for days. And `.gitignore`'s unanchored `receipts/` matched
+  `app/money/receipts` and made `git add` refuse the route outright. Anchor
+  ignore rules (`/receipts/`), and read what `git status` says you staged.
+- **Never pipe `npm test` into anything.** A gate written as
+  `npm test | grep ... && git push` pushed a commit with a broken test file,
+  because grep succeeded. Run it, read it, then push.
+- **Storage rejects a mime type the bucket does not list, and the error is easy
+  to swallow.** The receipts bucket accepts jpeg/png/pdf only; senders mislabel
+  PDFs as `application/octet-stream`. Correct the label to what the bytes are
+  before uploading (`storageContentType`), and never `continue` past an upload
+  error without counting it.
+
 - **Money = integer cents** everywhere (`lib/money.ts`; `parseUSD('')` returns
   **0, not null** — every blank-input guard must check `trim()` first; this
   trap has bitten twice).
@@ -376,7 +391,33 @@ status.
   merging — that double-counts $400; merge-then-split is the sanctioned
   path, parity re-run after).
 
-## Current state (2026-08-25) & where things are written
+## Current state (2026-09-08) & where things are written
+
+- **Prod migrations through 0050. 1,004 tests.** Since 2026-08-25, all live:
+  register-truth + payee aliases (0048), the 24h flight check-in alarm, the
+  **/money speed work** (the page awaited ~15 fetches in a line; two
+  Promise.all waves took a warm render from ~1,350ms to ~265ms, and the same
+  treatment went to matches/forecast/reports), one-line add row with
+  Enter-to-save, a clickable category cell, optimistic category and cleared
+  edits, **W-9 attach on invoice send** (0049), the settled-invoice dot, and
+  **receipts by email** (0050).
+- **Receipts by email** — Gmail label -> /money/receipts -> attach to the bank
+  row. Full design and its four shipped bugs are in docs/BACKLOG.md; the rules
+  that must not drift are in the lib files' own headers.
+- **Two environment facts worth knowing before debugging anything:** the DEV
+  Supabase project pauses when idle and comes back intact (restore it from the
+  dashboard; DNS and the pooler both vanish while paused, which looks exactly
+  like deletion). And `npm test` passes `--conditions=react-server`, which
+  resolves React to the server-components build — anything needing the full
+  reconciler (@react-pdf) cannot be tested there and fails with a message that
+  names nothing.
+- **What is waiting on DAN, not on code:** his 17 budget targets remain
+  unentered (prod `ledger_category_targets` = 0 rows); auto-assign renders
+  nothing until they exist. Then September budgeted in both tools, and
+  `npm run parity` at month end is the YNAB switch-off test. His ledger-era
+  invoices are now fully reconciled — 21 of 21 carry a real deposit.
+
+## Superseded: state as of 2026-08-25
 
 - **Shipped 2026-08-25 (three waves, all live, prod migrations through
   0047):** (1) **one-save split edit** (0045) — the split editor validates

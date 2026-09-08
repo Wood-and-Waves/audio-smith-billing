@@ -912,113 +912,84 @@ Note the same question applies to `A PDF copy is attached.` — if the footer
 becomes editable at all, decide for all three lines at once rather than
 special-casing the W-9.
 
-## Receipts by email (2026-09-07, Dan — designed, blocked on a provider account)
+## Receipts by email — SHIPPED 2026-09-08
 
 *"I get receipts in my email. Is there a way to send them via email so I can
-match them?"*
+match them?"* Label a receipt `audiosmith_receipts` in Gmail, open
+**/money/receipts**, press **Check Gmail**.
 
-**His follow-up is what settled the design:** *"What if the receipt I forward
-is not from a show, say Spotify?"* — `expenses.show_id` is NOT NULL, so every
-expense belongs to a show and feeds an invoice. A Spotify receipt is not an
-expense in this app's sense at all; it is overhead, and it belongs on the BANK
-TRANSACTION for that charge. The ledger already supports this:
-`ledger_transactions.receipt_path` / `receipt_original` (migration 0031),
-written by `attachLedgerReceipt(txnId, enhancedPath, originalPath)`
-(`app/money/actions.ts:580`).
+**His follow-up shaped the whole design:** *"What if the receipt I forward is
+not from a show, say Spotify?"* — `expenses.show_id` is NOT NULL, so every
+expense belongs to a show and feeds a client invoice. Overhead is not an
+expense in this app's sense; it belongs on the BANK ROW. So an inbox item has
+two possible destinations and Dan picks.
 
-So an emailed receipt has TWO destinations and the inbox lets him pick:
-1. **A bank transaction** — Spotify, software, insurance. Attaches to the row
-   already in the register. The common case, and literally the "match" he
-   asked for.
-2. **A show** — a client-billable meal or ride, through the existing
-   `addExpense` path, which needs the show he chooses.
+**Built:** `0050_receipt_inbox` (staging table) · `lib/gmail.ts` (plain fetch,
+the lib/dropbox.ts pattern) · `lib/gmailMessage.ts` (MIME walk, 10 tests) ·
+`lib/receiptAttachment.ts` (which file to read, 11 tests) ·
+`lib/receiptFromEmail.ts` (extraction) · `lib/receiptMatch.ts` (proposals,
+8 tests) · `lib/renderReceiptBodyPdf.ts` · `app/money/receipts/*` ·
+`components/ReceiptInbox.tsx`. Reached from /money beside Matches, with a count.
 
-**Decisions (2026-09-07):**
-- He forwards each receipt deliberately. No Gmail auto-forward rule: the same
-  senders send marketing, every arrival costs an AI extraction, and he would
-  end up triaging noise. He can add rules himself later — it is a Gmail
-  setting, not code.
-- The inbox is **its own screen under Money** (`/money/receipts`) with a count
-  badge, not a section of the register (already the densest screen) and not
-  part of the Matches queue (that is about money, not documents).
-- Nothing auto-files. An unmatched item waits rather than guessing — the same
-  judgement the Matches queue makes with its 10-day window.
+**Auth:** Internal-audience OAuth app on the Workspace account, `gmail.readonly`
+— it can never alter the mailbox; "already filed" lives in `receipt_inbox`.
+Internal means the refresh token DOES NOT EXPIRE (an External/Testing app's
+dies after seven days). `npm run gmail:auth`, then `-- --push`.
 
-**VERIFIED 2026-09-07 — Cloudflare Email Routing is NOT an option.** The
-domain's nameservers are NS1 (`dns1.p03.nsone.net`, i.e. Squarespace) and MX
-points at Google Workspace (`aspmx.l.google.com`). Cloudflare routing requires
-taking over both and would break his actual email. Use a provider's inbound
-address instead (Postmark or Mailgun) — **no DNS change at all**, Google
-Workspace untouched. A prettier `receipts@theaudiosmith.com` can come later
-via a SUBDOMAIN MX without touching the root.
+### Design rules, each learned from real mail rather than guessed
 
-**Shape when built:**
-- Webhook at `app/api/receipts/inbound`; `app/api/cron/reminders/route.ts` is
-  the model for shared-secret auth and service-role use.
-- Auth by an unguessable provider address plus a shared secret, never the From
-  header, which is trivially spoofed. Mirrors the `calendar_token` pattern and
-  makes the feature per-user for free if the sharing plan happens.
-- **Two extraction paths, both wanted.** Most forwarded receipts (Amazon, Uber,
-  hotels) are HTML BODIES, not attachments, and `readReceiptImage`
-  (`lib/receiptOcr.ts:27`) takes `image/jpeg` only — it cannot read them. Body
-  receipts want text-to-Claude, which is cheaper and more accurate than OCR;
-  PDF and image attachments reuse the current pipeline.
-- Matching reuses the amount + date-window shape of `lib/ledgerMatch.ts`.
-- New `receipt_inbox` table: owner, sender, subject, received_at, stored body
-  and attachment paths, extracted fields, status.
-- Storage under the existing `receipts` bucket at `{owner_id}/inbox/…`, which
-  inherits its owner-scoped RLS with no new policy.
+- **Body first, PDF second.** Not two paths chosen by message shape: ElevenLabs
+  carries $5.00 in the body AND two PDFs, while Google Workspace carries no
+  figure in the body at all. The amount is the test; no amount means read the
+  PDF.
+- **PDFs go to the model AS PDFs**, not rasterised. Keeps the real text and
+  reads every page. The camera path rasterises only because a receipt must
+  become an image to embed in a client's invoice.
+- **Same RECEIPT_PROMPT and RECEIPT_SCHEMA as the camera path**, so a receipt
+  cannot produce different data depending on how it arrived.
+- **Keep every attachment; prefer the one named "receipt" over "invoice."**
+  That naming is Stripe's convention, not a standard — an ordering, never a
+  filter.
+- **Filing writes `receipt_original` always, `receipt_path` only for an IMAGE.**
+  Most forwarded receipts are PDFs and there is no server-side rasteriser
+  (pdf.js needs a browser canvas; sharp needs system libraries). Dan's call:
+  keep the true document, lose the inline thumbnail.
+- **A body-only receipt is rendered to a PDF** so every receipt is filable.
 
-**Gmail is CONNECTED (2026-09-07).** Internal-audience OAuth app on the
-Workspace account, `gmail.readonly`, refresh token in `.env.local` and all
-three `GMAIL_*` vars in Vercel production. Verified end to end: refresh token
--> access token -> labels API. Dan's label is **`audiosmith_receipts`**
-(id `Label_7919596007579494767`).
+### Four bugs it shipped with, all found by running it on real data
 
-Because the consent screen is INTERNAL the refresh token does not expire. An
-External/Testing app's would die after seven days — that trap is documented in
-`scripts/gmail-auth.mjs`'s header.
+1. **Netlify's PDF is labelled `application/octet-stream`.** The bucket accepts
+   only jpeg/png/pdf, so storage refused it and the poller's `continue`
+   swallowed it — three receipts landed with no document while extraction,
+   which had already READ those PDFs, looked fine. `storageContentType`
+   corrects the label to what the bytes are.
+2. **Those rows were recorded anyway**, so the dedupe key marked them seen
+   forever with no way to retry. A message whose attachments all fail to store
+   is now a failure and is not recorded — the next run picks it up, the same
+   treatment every other failure in that loop already had.
+3. **`.gitignore` had `receipts/` unanchored**, which matched
+   `app/money/receipts` and made `git add` refuse the route. Anchored to
+   `/receipts/`. Had it been forced past, the feature would have shipped with
+   its page missing and worked locally.
+4. **Safari will not deliver Google's OAuth redirect to a `localhost`
+   listener** — address bar showed the code, server never saw a request, curl
+   reached it on both 127.0.0.1 and ::1. Script uses `127.0.0.1`. Cost four
+   attempts.
 
-**Safari will not deliver Google's redirect to a `localhost` listener.** Its
-address bar showed the callback complete with the code, a forced re-navigation
-changed nothing, and the server never saw a request — while curl reached the
-same server on both 127.0.0.1 and ::1. The script now uses `127.0.0.1` in the
-redirect URI (`6f90549`). Cost four attempts to find; do not "simplify" it back
-to localhost.
+### Two traps recorded in the files themselves
 
-### What two REAL receipts changed about the design
+- **react-pdf does not parse the `borderBottom` shorthand** and dies in its own
+  style resolver with "Cannot read properties of undefined (reading 'S')",
+  naming nothing.
+- **`lib/renderReceiptBodyPdf.ts` cannot be unit-tested under `npm test`**,
+  which passes `--conditions=react-server` — that resolves React to the
+  server-components build and react-pdf needs the full reconciler. It renders
+  fine under default conditions, which is the footing `renderInvoicePdf` has
+  shipped on for months.
 
-`lib/gmailMessage.ts` parsed both correctly with no changes. The lesson was in
-the content, not the parsing:
-
-1. **ElevenLabs** — $5.00 in the body, plus TWO PDFs: `Invoice-….pdf` and
-   `Receipt-….pdf`. An email can carry several documents and they are not
-   equally useful.
-2. **Google Workspace** — the body carries NO dollar amount at all. It is a
-   notification that an invoice is available; every figure is inside the 83KB
-   PDF.
-
-**So extraction cannot pick a path from the message's shape.** The earlier plan
-assumed body-receipts and attachment-receipts were two kinds of mail needing
-two paths. They are not: Google Workspace is a body-receipt with nothing to
-extract. The rule is READ THE BODY FIRST, and fall through to the attachments
-when it yields no amount.
-
-**And PDFs are the common case, not the fallback** — both of the first two real
-examples carry one. The existing pipeline rasterises page one and OCRs it,
-which works but is the expensive path; for a text-based PDF, pulling the text
-out directly is cheaper and more accurate than photographing it.
-
-**Attachment rule:** keep ALL attachments, and prefer the one whose filename
-says "receipt" over "invoice" when choosing which to show and extract from. A
-receipt is proof of payment, which is what the books want. Never discard the
-other — that naming is Stripe's convention, not a standard, and plenty of
-vendors will send `document.pdf`.
-
-**Still to build:** the `receipt_inbox` migration, `lib/gmail.ts` (network,
-following the Dropbox pattern), extraction per the rule above, the poller on
-the existing cron, and `/money/receipts` where each item proposes the bank
-transaction it matches.
+**Deferred:** filing to a SHOW as an expense (only the bank-row path is built);
+per-user label once the sharing plan lands; a cron stage so the inbox fills
+without pressing the button.
 
 ## Corner detection, round two: EDGES (2026-09-06, Dan — wanted, not now)
 
