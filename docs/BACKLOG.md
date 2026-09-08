@@ -987,6 +987,11 @@ dies after seven days). `npm run gmail:auth`, then `-- --push`.
   fine under default conditions, which is the footing `renderInvoicePdf` has
   shipped on for months.
 
+**Verified on real mail 2026-09-08.** After the two storage fixes, the
+poller's first clean run brought every labelled message in WITH its
+document attached — the three Netlify PDFs storing correctly, and the two
+body-only receipts arriving as rendered PDFs. Dan confirmed.
+
 **Deferred:** filing to a SHOW as an expense (only the bank-row path is built);
 per-user label once the sharing plan lands; a cron stage so the inbox fills
 without pressing the button.
