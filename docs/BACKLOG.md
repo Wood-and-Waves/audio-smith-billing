@@ -1041,7 +1041,23 @@ Note the manual path already covers every one of these: Dan drags the corners
 or taps Use full photo, and he has said the drag works fine. This is hit rate,
 not correctness — which is why it can wait.
 
-## Register: reconciled rows (2026-09-06, Dan — deferred by him)
+## Register: reconciled rows — SHIPPED 2026-09-08 (`667bccf`)
+
+Both halves built as specified below. Two things settled at build time:
+Dan chose to allow the **date** as well, having been told a date change
+moves the row into another month and so alters a closed month's budget
+activity after the fact — the amount staying fixed is what bounds it, since
+the account balance cannot drift, only which month owns the row. And
+`editable` was kept meaning "this row can open the edit form" rather than
+being deleted as dead: a reconciled SPLIT still cannot open, so the inline
+receipt/unlink carve-outs below still have exactly the rows they were
+written for.
+
+**Known rough edge:** the edit form's CategoryPicker still offers "Split…"
+on a reconciled row. `saveSplit` refuses it server-side with a clear
+message, so nothing breaks, but the option should not be offered at all.
+
+Original entry (2026-09-06, Dan — deferred by him):
 
 Both raised off one screenshot, both to be done together since they touch the
 same rows. *"The locks do not line up with the C. I also need a way to edit a
