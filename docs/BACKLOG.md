@@ -1234,3 +1234,45 @@ someone decides what a reconciliation promises about legs.
   `ShowProjection` (`lib/forecast.ts`) so the line can say "5-day block" and
   let "days" and "travel" both be sub-counts of it. Deliberate follow-up, not
   shipped with day-types.
+
+## Header wordmark wraps and collides with the nav (2026-09-08, Dan — filed, not fixed)
+
+Dan, working the budget in a narrow window, hit a header where **"The Audio
+Smith" stacks onto three lines and runs straight through the nav links.**
+Screenshot shows the wordmark overlapping INVOICES / SHOWS / CALENDAR.
+
+**Cause, read off the markup rather than guessed.** In
+`components/AppShell.tsx:64-77` the bar is
+`flex items-center justify-between h-16`, the brand `<Link>` carries
+`min-w-0`, and the wordmark span carries **no `whitespace-nowrap`**:
+
+```tsx
+<Link href="/shows" className="flex items-center gap-3 min-w-0">
+  <Image src="/logo.png" ... />
+  <span className="hidden sm:inline display font-bold text-lg tracking-wide">
+    The Audio <span className="text-accent">Smith</span>
+  </span>
+</Link>
+```
+
+`min-w-0` is what lets the brand shrink below its content width, and with no
+nowrap the text wraps instead of the row scrolling. So there is a band of
+widths **just above the `sm` breakpoint (640px)** where the wordmark has been
+un-hidden but the four nav labels have already claimed the room — the wordmark
+folds to three lines, blows past `h-16`, and the fixed-height header lets it
+overlap. Below `sm` it is hidden and fine; on a wide desktop there is slack and
+it is fine. It only bites in the band between, which is exactly the width of a
+side-by-side window.
+
+**Two candidate fixes, and they are not equivalent:**
+1. `whitespace-nowrap` on the wordmark span — stops the wrap, but with
+   `min-w-0` still set the text would then be clipped rather than stacked.
+   Wants `truncate` alongside it to clip honestly.
+2. **Move the collapse point from `sm` to `md`** — hides the wordmark through
+   the whole bad band instead of squeezing it. The existing comment at line 96
+   already reasons about this bar being "the tightest thing in the app," so
+   raising the breakpoint is in the spirit of what is written there.
+
+Recommend 2, with 1 as a cheap belt-and-braces. Verify by dragging the window
+across the 640-820px band, not by checking one width — a single screenshot at
+either end shows nothing wrong.
