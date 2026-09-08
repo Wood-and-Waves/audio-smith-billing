@@ -9,6 +9,7 @@ import {
 import { parseGmailMessage } from '@/lib/gmailMessage'
 import { pickPrimaryAttachment, isPdf, isReadable, storageContentType } from '@/lib/receiptAttachment'
 import { readReceiptFromEmail } from '@/lib/receiptFromEmail'
+import { renderReceiptBodyPdf } from '@/lib/renderReceiptBodyPdf'
 import { todayInChicago } from '@/lib/dates'
 
 type Fail = { error: string }
@@ -104,6 +105,30 @@ export async function syncReceiptInbox(): Promise<
         if (upErr) continue
         stored.push({ filename: a.filename, mimeType: a.mimeType, path, size: a.size })
         if (primary && a.attachmentId === primary.attachmentId) primaryPath = path
+      }
+
+      // No attachment at all: the receipt IS the body, so render it to a PDF
+      // and file that. Without this the amount reads perfectly and then has
+      // nothing to attach, leaving a charge that looks unreceipted while the
+      // proof sits in Gmail (Butter's Burgers and United both arrive this
+      // way). Failing to render is not fatal — the item still lands with its
+      // extracted fields, just with no document.
+      if (keep.length === 0 && mail.text.trim() !== '') {
+        try {
+          const pdf = await renderReceiptBodyPdf({
+            subject: mail.subject, from: mail.from,
+            receivedAt: mail.receivedAt ? new Date(mail.receivedAt).toISOString().slice(0, 10) : null,
+            text: mail.text,
+          })
+          const path = `${user.id}/inbox/${id}-email.pdf`
+          const { error: upErr } = await supabase.storage
+            .from('receipts')
+            .upload(path, pdf, { contentType: 'application/pdf', upsert: true })
+          if (!upErr) {
+            stored.push({ filename: 'email.pdf', mimeType: 'application/pdf', path, size: pdf.byteLength })
+            primaryPath = path
+          }
+        } catch { /* the item is still worth having without a document */ }
       }
 
       // A message whose attachments ALL failed to store is a failure, not an
