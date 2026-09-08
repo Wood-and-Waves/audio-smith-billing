@@ -234,7 +234,23 @@ export default async function MoneyBudgetPage({
 
   const current = months.get(month)!
 
-  const rta = current.readyToAssignCents
+  // A month that has ENDED has no Ready to Assign of its own. On the first of
+  // the next month whatever was left rolled forward, and those same dollars
+  // are already counted in the current month's figure — so showing August's
+  // $2,380.46 on the August screen both presents money that has since moved
+  // and reads it twice across two screens. YNAB reports exactly 0.00 for
+  // every past month; verified against Dan's own budget on 2026-09-08, where
+  // May, June, July and August all return to_be_budgeted 0.00 while only
+  // September carries a real number.
+  //
+  // Deliberately a VIEW rule, not an arithmetic one: lib/budget.ts must keep
+  // computing each month's true figure, because that is precisely what feeds
+  // the next month's rollover (August's 2,380.46 + September's 2,340.00
+  // deposit - 97.89 of August overspending = September's 4,622.57). Zeroing
+  // it in the lib would break the chain it is the head of.
+  const thisMonth = today.slice(0, 7)
+  const monthClosed = month < thisMonth
+  const rta = monthClosed ? 0 : current.readyToAssignCents
   const filter = parseBudgetFilter(params.f)
   // Carried onto both header arrows and the month picker below so stepping
   // months (or picking one from the popover) never silently resets an
@@ -329,7 +345,16 @@ export default async function MoneyBudgetPage({
             <p className="eyebrow text-good">Ready to Assign</p>
           </div>
         )}
-        {rta === 0 && (
+        {/* A closed month gets its own wording. "All Money Assigned" would be
+            a small lie on a month like August, where the remainder was not
+            assigned at all — it rolled forward. */}
+        {rta === 0 && monthClosed && (
+          <div className="rounded-card border border-line bg-accent-wash text-muted px-8 py-4 text-center">
+            <p className="tabular text-2xl font-bold">{formatUSD(0)}</p>
+            <p className="eyebrow text-muted mt-1">Rolled Forward</p>
+          </div>
+        )}
+        {rta === 0 && !monthClosed && (
           <div className="rounded-card border border-line bg-accent-wash text-muted px-8 py-4 text-center">
             <p className="text-2xl font-bold leading-none">✓</p>
             <p className="eyebrow text-muted mt-1">All Money Assigned</p>
