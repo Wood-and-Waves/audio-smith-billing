@@ -7,7 +7,7 @@ import {
   getMessage, getAttachment,
 } from '@/lib/gmail'
 import { parseGmailMessage } from '@/lib/gmailMessage'
-import { pickPrimaryAttachment, isPdf, isReadable } from '@/lib/receiptAttachment'
+import { pickPrimaryAttachment, isPdf, isReadable, storageContentType } from '@/lib/receiptAttachment'
 import { readReceiptFromEmail } from '@/lib/receiptFromEmail'
 import { todayInChicago } from '@/lib/dates'
 
@@ -94,13 +94,26 @@ export async function syncReceiptInbox(): Promise<
         // this inherits owner-only access with no new policy.
         const safe = a.filename.replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 80)
         const path = `${user.id}/inbox/${id}-${safe}`
+        // The sender's label is corrected to what the bytes are: the bucket
+        // accepts only jpeg/png/pdf, and Netlify's `application/octet-stream`
+        // PDF was refused outright — three receipts stored no document while
+        // extraction, which had already read those same PDFs, looked fine.
         const { error: upErr } = await supabase.storage
           .from('receipts')
-          .upload(path, got.bytes, { contentType: a.mimeType, upsert: true })
+          .upload(path, got.bytes, { contentType: storageContentType(a), upsert: true })
         if (upErr) continue
         stored.push({ filename: a.filename, mimeType: a.mimeType, path, size: a.size })
         if (primary && a.attachmentId === primary.attachmentId) primaryPath = path
       }
+
+      // A message whose attachments ALL failed to store is a failure, not an
+      // item. Recording it would be worse than dropping it: the dedupe key
+      // would mark it seen forever, and it would sit in the inbox with an
+      // amount, no document, and no way to retry — which is exactly what
+      // happened to three Netlify receipts when storage refused their
+      // mislabelled PDFs. Left unrecorded, the next run picks it up again,
+      // the same way any other failure here is retried.
+      if (keep.length > 0 && stored.length === 0) { failed += 1; continue }
 
       const pdfBytes = primary && isPdf(primary)
         ? await getAttachment(token.token, id, primary.attachmentId)

@@ -2,7 +2,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { pickPrimaryAttachment, isReadable, isPdf, type MailAttachment } from '../../lib/receiptAttachment.ts'
+import { pickPrimaryAttachment, isReadable, isPdf, storageContentType, type MailAttachment } from '../../lib/receiptAttachment.ts'
 
 const at = (filename: string, mimeType = 'application/pdf'): MailAttachment =>
   ({ filename, mimeType, attachmentId: filename, size: 1000 })
@@ -60,4 +60,18 @@ test('isPdf accepts a mislabelled PDF — a strict mime check skipped a real one
   assert.equal(isPdf(at('Invoice-ESQSJT-00006.pdf', 'application/octet-stream')), true)
   assert.equal(isPdf(at('receipt.pdf')), true)
   assert.equal(isPdf(at('photo.jpg', 'image/jpeg')), false)
+})
+
+test("storageContentType corrects a sender's mislabelled PDF", () => {
+  // Netlify sends application/octet-stream. The bucket accepts only
+  // jpeg/png/pdf, so that label made storage refuse a real PDF and three
+  // receipts arrived carrying no document.
+  assert.equal(storageContentType(at('Invoice-1.pdf', 'application/octet-stream')), 'application/pdf')
+  assert.equal(storageContentType(at('photo.JPG', 'application/octet-stream')), 'image/jpeg')
+  assert.equal(storageContentType(at('scan.png', 'application/octet-stream')), 'image/png')
+})
+
+test('storageContentType passes through a type it cannot identify', () => {
+  // Better refused by the bucket than stored under a guess.
+  assert.equal(storageContentType(at('mystery.xyz', 'application/zip')), 'application/zip')
 })

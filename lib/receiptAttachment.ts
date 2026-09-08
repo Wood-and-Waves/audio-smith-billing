@@ -62,3 +62,25 @@ export function pickPrimaryAttachment(attachments: readonly MailAttachment[]): M
   for (const a of readable.slice(1)) if (rank(a) < rank(best)) best = a
   return best
 }
+
+/**
+ * The content type to STORE this attachment as.
+ *
+ * The receipts bucket accepts image/jpeg, image/png and application/pdf and
+ * rejects everything else (0010, widened by 0011). Senders do not respect
+ * that: Netlify labels its invoice PDF `application/octet-stream`, storage
+ * refused the upload, and three receipts landed with no document at all while
+ * the extraction that had already READ those PDFs looked like it worked.
+ *
+ * So the sender's label is corrected to what the bytes actually are, by the
+ * same extension test the rest of this file trusts. Anything still unknown is
+ * returned as-is and will be refused by the bucket — which is the right
+ * outcome for a file we cannot identify.
+ */
+export function storageContentType(a: MailAttachment): string {
+  if (isPdf(a)) return 'application/pdf'
+  const name = a.filename.toLowerCase()
+  if (a.mimeType === 'image/jpeg' || /\.jpe?g$/.test(name)) return 'image/jpeg'
+  if (a.mimeType === 'image/png' || name.endsWith('.png')) return 'image/png'
+  return a.mimeType
+}
