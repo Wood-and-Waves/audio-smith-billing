@@ -161,7 +161,26 @@ test('a by-date target spreads what is missing across the months remaining', () 
     targets: [{ categoryId: 'a', kind: 'by_date', amountCents: 30_000, dueDate: '2026-03-31' }],
   })
   assert.equal(row(b, '2026-01', 'a').neededCents, 10_000)
-  assert.deepEqual(row(b, '2026-01', 'a').status, { kind: 'needed_eventually', remainingCents: 30_000 })
+  assert.deepEqual(row(b, '2026-01', 'a').status, { kind: 'needed_eventually', remainingCents: 30_000, neededCents: 10_000 })
+})
+
+test('a by-date status carries THIS MONTH\'s share, not only the lifetime shortfall', () => {
+  // Dan's real Tax Prep goal, the one that sent him asking for this: $500.00
+  // by 1 April 2027 with $123.64 already saved. September through April
+  // inclusive is eight months, so 376.36 / 8 = 47.045 -> 47.05 rounded up.
+  // The row used to show him the 376.36 and nothing else, which is not a
+  // number he can act on; the monthly share is. Both travel on the status so
+  // the view never recomputes either one.
+  const b = buildBudget({
+    categories: [cat('a')],
+    moves: [assign('2026-08', 'a', 12_364)],
+    txns: [],
+    targets: [{ categoryId: 'a', kind: 'by_date', amountCents: 50_000, dueDate: '2027-04-01' }],
+    fromMonth: '2026-08', toMonth: '2026-09',
+  })
+  assert.deepEqual(row(b, '2026-09', 'a').status, {
+    kind: 'needed_eventually', remainingCents: 37_636, neededCents: 4_705,
+  })
 })
 
 test('a by-date target with this month\'s share already in reads as on track', () => {
@@ -313,7 +332,7 @@ test('a by-date target due in a later year divides its shortfall across the righ
     fromMonth: '2026-11', toMonth: '2027-01',
   })
   assert.equal(row(b, '2026-11', 'a').neededCents, 10_000)
-  assert.deepEqual(row(b, '2026-11', 'a').status, { kind: 'needed_eventually', remainingCents: 30_000 })
+  assert.deepEqual(row(b, '2026-11', 'a').status, { kind: 'needed_eventually', remainingCents: 30_000, neededCents: 10_000 })
 })
 
 // --- loop termination on bad input: a pure function must not hang no matter

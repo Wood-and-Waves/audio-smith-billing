@@ -17,7 +17,7 @@ import type { AssignableCategory } from '@/app/money/budget/page'
  * `row`) — lib/budget.ts is this arithmetic's one home, validated against
  * 1,421 rows of Dan's real export; this file only formats what it's handed.
  */
-function statusLine(status: TargetStatus): { text: string; className: string } | null {
+function statusLine(status: TargetStatus): { text: string; className: string; title?: string } | null {
   switch (status.kind) {
     case 'none':
       return null
@@ -35,8 +35,15 @@ function statusLine(status: TargetStatus): { text: string; className: string } |
     case 'underfunded':
       return { text: `${formatUSD(status.neededCents)} more needed`, className: 'text-xs text-muted' }
     case 'needed_eventually':
+      // Lead with THIS month's share, not the lifetime shortfall. The old
+      // wording ("$376.36 more needed eventually") named a figure Dan could
+      // not act on, was the longest string this line produces so it clipped
+      // to "$376.36 more needed e...", and disagreed with what Auto-assign
+      // would actually fund. The share is both shorter and actionable; the
+      // lifetime figure stays in the tooltip and the progress bar.
       return {
-        text: `${formatUSD(status.remainingCents)} more needed eventually`,
+        text: `${formatUSD(status.neededCents)} needed this month`,
+        title: `${formatUSD(status.neededCents)} this month · ${formatUSD(status.remainingCents)} to go`,
         className: 'text-xs text-muted',
       }
     case 'overspent':
@@ -157,7 +164,7 @@ export default function BudgetRow({
           <span>{name}</span>
           <span className="ml-auto inline-flex items-center gap-2 min-w-0">
             <TargetEditor categoryId={row.categoryId} categoryName={name} target={target ?? null} />
-            {status && <span className={`${status.className} min-w-0 truncate`}>{status.text}</span>}
+            {status && <span title={status.title ?? status.text} className={`${status.className} min-w-0 truncate`}>{status.text}</span>}
           </span>
         </div>
         <TargetProgressBar row={row} />

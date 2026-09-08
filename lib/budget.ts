@@ -86,7 +86,14 @@ export type TargetStatus =
   | { kind: 'none' }
   | { kind: 'overspent'; spentCents: number; assignedCents: number }
   | { kind: 'underfunded'; neededCents: number }
-  | { kind: 'needed_eventually'; remainingCents: number }
+  /**
+   * A by-date goal that is not yet fully saved. `neededCents` is THIS
+   * month's share (what is still missing, spread over the months left);
+   * `remainingCents` is the lifetime shortfall. The share is the figure
+   * Dan acts on and the one Auto-assign funds — the row led with the
+   * lifetime total until 2026-09-08 and told him nothing he could do.
+   */
+  | { kind: 'needed_eventually'; remainingCents: number; neededCents: number }
   | { kind: 'fully_spent' }
   | { kind: 'on_track' }
   | { kind: 'funded'; spentCents: number; targetCents: number }
@@ -188,7 +195,7 @@ function statusFor(
   if (needed > 0) {
     return target.kind === 'monthly'
       ? { status: { kind: 'underfunded', neededCents: needed }, needed }
-      : { status: { kind: 'needed_eventually', remainingCents: shortfall }, needed }
+      : { status: { kind: 'needed_eventually', remainingCents: shortfall, neededCents: needed }, needed }
   }
   if (available === 0) return { status: { kind: 'fully_spent' }, needed: 0 }
   if (target.kind === 'by_date' && funded < target.amountCents) {
