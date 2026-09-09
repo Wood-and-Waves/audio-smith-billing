@@ -7,6 +7,8 @@
 //
 // No '@/' imports and no JSX — exercised by node --test.
 
+import { addMonths } from './dates.ts'
+
 export type ReportTxn = {
   date: string
   amount_cents: number
@@ -22,9 +24,18 @@ export type ReportCategory = {
   deductible: boolean
 }
 
-export function filterYear<T extends { date: string }>(txns: T[], year: number): T[] {
-  const prefix = `${year}-`
-  return txns.filter((t) => t.date.startsWith(prefix))
+/**
+ * Every row inside an inclusive date range. Dates are 'YYYY-MM-DD', which
+ * sorts lexicographically — that is why the whole app stores them that way,
+ * and why this needs no date parsing.
+ *
+ * Replaced filterYear on 2026-09-09: the Reports screen stopped being a
+ * calendar-year screen when Dan needed quarters for his accountant.
+ */
+export function filterRange<T extends { date: string }>(
+  txns: T[], from: string, to: string,
+): T[] {
+  return txns.filter((t) => t.date >= from && t.date <= to)
 }
 
 export type PlSummary = {
@@ -86,17 +97,28 @@ export function spendByCategory(
 
 export type MonthTotals = { month: string; incomeCents: number; expenseCents: number }
 
-export function monthlyTotals(txns: ReportTxn[], year: number): MonthTotals[] {
+/**
+ * One row per month the range touches, in order — three for a quarter, twelve
+ * for a year, one for a range inside a single month.
+ *
+ * Rows are bucketed by month for display, but membership is decided by the
+ * range's DAYS: a transaction in the right month but outside the range is not
+ * counted. A quarter that started mid-month would otherwise quietly include
+ * the days before it.
+ */
+export function monthlyTotals(txns: ReportTxn[], from: string, to: string): MonthTotals[] {
   const out: MonthTotals[] = []
-  for (let m = 1; m <= 12; m++) {
-    out.push({ month: `${year}-${String(m).padStart(2, '0')}`, incomeCents: 0, expenseCents: 0 })
+  const lastMonth = to.slice(0, 7)
+  for (let m = from.slice(0, 7); m <= lastMonth; m = addMonths(m, 1)) {
+    out.push({ month: m, incomeCents: 0, expenseCents: 0 })
   }
+  const indexOf = new Map(out.map((row, i) => [row.month, i]))
   for (const t of txns) {
-    if (!t.date.startsWith(`${year}-`)) continue
-    const idx = Number(t.date.slice(5, 7)) - 1
-    if (idx < 0 || idx > 11) continue
-    if (t.kind === 'income') out[idx].incomeCents += t.amount_cents
-    else if (t.kind === 'expense') out[idx].expenseCents += -t.amount_cents
+    if (t.date < from || t.date > to) continue
+    const i = indexOf.get(t.date.slice(0, 7))
+    if (i === undefined) continue
+    if (t.kind === 'income') out[i].incomeCents += t.amount_cents
+    else if (t.kind === 'expense') out[i].expenseCents += -t.amount_cents
   }
   return out
 }

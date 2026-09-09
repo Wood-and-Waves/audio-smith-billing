@@ -2,8 +2,9 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { todayInChicago } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
+import { yearRange } from '@/lib/reportRange'
 import {
-  filterYear, plSummary, spendByCategory, monthlyTotals,
+  filterRange, plSummary, spendByCategory, monthlyTotals,
   type ReportTxn, type ReportCategory, type CategorySpend,
 } from '@/lib/ledgerReports'
 import { explodeForReports, type ReportTxnForExplode } from '@/lib/ledgerSplits'
@@ -255,10 +256,11 @@ export default async function MoneyReportsPage({
     (t) => t.category_id === null && !legsByTxnId.has(t.id) && (t.kind === 'income' || t.kind === 'expense'),
   ).length
 
-  const yearTxns = filterYear(allTxns, year)
+  const { from, to } = yearRange(year)
+  const yearTxns = filterRange(allTxns, from, to)
   const pl = plSummary(yearTxns, categories)
   const spend = spendByCategory(yearTxns, categories)
-  const months = monthlyTotals(allTxns, year)
+  const months = monthlyTotals(allTxns, from, to)
 
   const groups = groupByGrp(spend.rows)
   const maxSpend = Math.max(1, ...spend.rows.map((r) => r.spentCents), spend.uncategorizedCents)
