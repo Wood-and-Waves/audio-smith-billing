@@ -58,6 +58,7 @@
 
 import { addDays, addMonths } from './dates.ts'
 import { instantToWall } from './zonedTime.ts'
+import { OWNER_PAY_CATEGORY_NAME } from './ledgerCategories.ts'
 
 // ---- inputs (DB-shaped, snake_case where they come from rows) ----
 
@@ -372,6 +373,35 @@ export function computeOverheadCents(
     total += -t.amount_cents // expense amounts are stored negative; spend is positive
   }
   return Math.round(total / monthsWithHistory.size)
+}
+
+/**
+ * Money the forecast must NOT treat as runway: everything sitting available
+ * in a category, except the owner-pay envelope.
+ *
+ * Dan's rule (2026-09-09): "All saving money except for any in owner
+ * investment, pay, and personal expenses, should be off limits. They are
+ * saved for a purpose and not a payout." Measured the day he asked: of an
+ * $18,350.27 balance, $15,802.47 was reserved — including $13,000 held for
+ * taxes, which the forecast had been offering him as runway.
+ *
+ * Owner pay is excluded for a structural reason, not as a preference. Its
+ * balance is reserved for the one outflow the forecast ALREADY subtracts —
+ * the draw — so hiding it while still charging the draw would count it
+ * twice. Taxes and Retained Earnings fund obligations the forecast models
+ * nowhere, which is exactly why leaving them in inflates the runway.
+ *
+ * Each category floors at zero: an overspent category means money already
+ * left the account, which the starting balance reflects; letting its negative
+ * offset a real reserve would hand runway back that does not exist.
+ */
+export function reservedCents(rows: { name: string; availableCents: number }[]): number {
+  let total = 0
+  for (const r of rows) {
+    if (r.name === OWNER_PAY_CATEGORY_NAME) continue
+    total += Math.max(0, r.availableCents)
+  }
+  return total
 }
 
 type Bucketed = { month: string; overdue: boolean }

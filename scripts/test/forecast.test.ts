@@ -5,11 +5,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  projectedShowCents, stateOf, computeOverheadCents, buildForecast, HORIZON_MONTHS, PM_FORECAST_HOURS,
+  projectedShowCents, stateOf, computeOverheadCents, buildForecast, HORIZON_MONTHS, PM_FORECAST_HOURS, reservedCents,
 } from '../../lib/forecast.ts'
 import type {
   ForecastShow, ForecastShowDay, ForecastInvoice, ForecastClient, ForecastAssumptions,
 } from '../../lib/forecast.ts'
+import { OWNER_PAY_CATEGORY_NAME } from '../../lib/ledgerCategories.ts'
 
 // Dan's configured home state for every fixture below, matching the client()
 // factory's implicit Chicago-area business — 'FL'-located shows are the
@@ -1155,4 +1156,38 @@ test('showProjections count fields on a plain one-day local show: 1 day, no trav
   assert.equal(proj.dayCents, 80000)
   assert.equal(proj.travelCents, 0)
   assert.equal(proj.pmCents, 0)
+})
+
+// ---------------------------------------------------------------------------
+// reservedCents — Dan (2026-09-09): "All saving money except for any in owner
+// investment, pay, and personal expenses, should be off limits. They are saved
+// for a purpose and not a payout."
+
+test('reservedCents sums every category except owner pay', () => {
+  assert.equal(reservedCents([
+    { name: 'Taxes', availableCents: 1_300_000 },
+    { name: 'Retained Earnings', availableCents: 68_061 },
+    { name: OWNER_PAY_CATEGORY_NAME, availableCents: 310_417 },
+  ]), 1_368_061)
+})
+
+// The owner-pay envelope is the one exception, and the reason is structural:
+// its balance funds the very line the forecast already subtracts (the draw),
+// where Taxes and Retained Earnings fund things the forecast does not model.
+test('reservedCents excludes owner pay however large it grows', () => {
+  assert.equal(reservedCents([
+    { name: OWNER_PAY_CATEGORY_NAME, availableCents: 5_000_000 },
+  ]), 0)
+})
+
+// An overspent category must not quietly hand runway back.
+test('reservedCents floors each category at zero rather than netting negatives', () => {
+  assert.equal(reservedCents([
+    { name: 'Meals and Entertainment', availableCents: -9_327 },
+    { name: 'Taxes', availableCents: 1_300_000 },
+  ]), 1_300_000)
+})
+
+test('reservedCents is zero for an empty ledger', () => {
+  assert.equal(reservedCents([]), 0)
 })
