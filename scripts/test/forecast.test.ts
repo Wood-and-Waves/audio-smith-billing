@@ -766,6 +766,18 @@ test('the current month charges the planned draw minus what has already been dra
   assert.equal(result.months[0].drawCents, 657_500) // 750,000 - 92,500
 })
 
+// plannedDrawCents is the PLAN — before month 0's "what's left" subtraction —
+// so an edit control can show and save the plan while drawCents (net of what
+// has already been drawn) is shown alongside it as a separate, read-only figure.
+test('plannedDrawCents is the pre-subtraction plan; drawCents stays net for the current month', () => {
+  const result = buildForecast(baseInput({
+    assumptions: assumptions({ overheadCents: 0, takeHomeCents: 750_000, taxRateBp: 0 }),
+    ownerPayDrawnThisMonthCents: 92_500,
+  }))
+  assert.equal(result.months[0].plannedDrawCents, 750_000)
+  assert.equal(result.months[0].drawCents, 657_500)
+})
+
 test('a month already drawn beyond its plan charges nothing more, never a negative', () => {
   const result = buildForecast(baseInput({
     assumptions: assumptions({ overheadCents: 0, takeHomeCents: 750_000, taxRateBp: 0 }),

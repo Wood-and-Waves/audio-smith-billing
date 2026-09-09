@@ -118,6 +118,11 @@ export type ForecastMonth = {
   incomeCents: number
   overheadCents: number
   taxCents: number
+  // The plan itself — before month 0's "what's left to take" subtraction.
+  // This is the figure an edit control should show and save; drawCents
+  // (below) is the net cash effect for the month, which for month 0 is a
+  // different number once some of the plan has already been drawn.
+  plannedDrawCents: number
   drawCents: number
   endingBalanceCents: number
   covered: boolean // endingBalance >= 0
@@ -578,7 +583,10 @@ export function buildForecast(input: {
     balance += incomeCents - overheadCents - taxCents - drawCents
     const covered = balance >= 0
 
-    months.push({ month, incomeCents, overheadCents, taxCents, drawCents, endingBalanceCents: balance, covered })
+    months.push({
+      month, incomeCents, overheadCents, taxCents, plannedDrawCents: planned, drawCents,
+      endingBalanceCents: balance, covered,
+    })
 
     if (!covered) {
       coveredThrough = i === 0 ? null : addMonths(startMonth, i - 1)
