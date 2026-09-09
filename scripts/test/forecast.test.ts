@@ -665,12 +665,9 @@ test('surplus carries forward into the next month\'s balance rather than resetti
   }))
   // client() terms_days=30 -> sent_at (Chicago date 2026-08-13)
   // + 30 days = 2026-09-12 -> month 2026-09 (index 1).
-  // Month 0 (today 2026-08-21) is partial: August has 31 days, 11 remain
-  // counting today -> fraction 11/31. overhead0 = round(100000*11/31) =
-  // 35484; draw0 = same = 35484.
-  assert.equal(result.months[0].endingBalanceCents, 429032) // 500000 + 0 income - 35484 - 35484
-  assert.equal(result.months[1].endingBalanceCents, 5229032) // 429032 + 5000000 - 100000 - 100000 (full month)
-  assert.equal(result.months[2].endingBalanceCents, 5029032) // 5229032 + 0 income - 200000, carried forward
+  assert.equal(result.months[0].endingBalanceCents, 300000) // 500000 - 100000 - 100000
+  assert.equal(result.months[1].endingBalanceCents, 5100000) // 300000 + 5000000 - 200000
+  assert.equal(result.months[2].endingBalanceCents, 4900000) // 5100000 - 200000
   assert.ok(result.months.every((m) => m.covered))
 })
 
@@ -679,13 +676,10 @@ test('the first uncovered month is identified exactly, and coveredThrough is the
     startingBalanceCents: 250000,
     assumptions: assumptions({ overheadCents: 100000, takeHomeCents: 100000, taxRateBp: 0 }),
   }))
-  // no income at all. Month 0 (today 2026-08-21) is partial: 11 of August's
-  // 31 days remain counting today, so overhead/draw are pro-rated to 11/31
-  // -> round(100000*11/31) = 35484 each, not the full 100000.
-  // 250000 -> 179032 (covered) -> -20968 (uncovered, full month now)
-  assert.equal(result.months[0].endingBalanceCents, 179032)
+  // no income at all; each month costs a full 100000 + 100000.
+  assert.equal(result.months[0].endingBalanceCents, 50000) // 250000 - 200000
   assert.equal(result.months[0].covered, true)
-  assert.equal(result.months[1].endingBalanceCents, -20968)
+  assert.equal(result.months[1].endingBalanceCents, -150000)
   assert.equal(result.months[1].covered, false)
   assert.equal(result.months.length, 2)
   assert.equal(result.coveredThrough, '2026-08')
@@ -702,11 +696,10 @@ test('coveredThrough is null when the very first month is already uncovered', ()
 })
 
 test('a balance of exactly zero counts as covered, and the walk continues', () => {
-  // Overhead/take-home chosen as multiples of 31 so month 0's 11/31
-  // pro-ration (today is 2026-08-21, 11 of August's 31 days remain) divides
-  // evenly, keeping this test's arithmetic exact rather than rounded.
+  // A full month of overhead and draw now, so the starting balance that
+  // lands exactly on zero is their sum.
   const result = buildForecast(baseInput({
-    startingBalanceCents: 22000, // 11000 overhead0 + 11000 draw0
+    startingBalanceCents: 62000, // one full month: 31000 overhead + 31000 draw
     assumptions: assumptions({ overheadCents: 31000, takeHomeCents: 31000, taxRateBp: 0 }),
   }))
   assert.equal(result.months[0].endingBalanceCents, 0)
@@ -727,22 +720,18 @@ test('income comfortably exceeding costs for the whole horizon reports beyond-ho
 })
 
 // ---------------------------------------------------------------------------
-// Month 0 pro-ration (M2). Month 0's income is already only "what's left to
-// land" — every inflow is dated to a future expected landing date, so
-// nothing before today ever accrues into it. Overhead and the draw must be
-// pro-rated the same way, or month 0 charges a full month's costs against a
-// starting balance that already covered its share of both up through
-// yesterday.
+// Month 0 used to pro-rate overhead and the draw by the days remaining in
+// the month. That was removed 2026-09-09 (see buildForecast's month loop):
+// both now charge in full regardless of what day of the month `today` is.
 
-test('a mid-month start pro-rates both overhead and the draw by the days remaining, today included', () => {
-  // today (baseInput) is 2026-08-21. August has 31 days; 11 remain counting
-  // today itself (21st through 31st). Overhead/take-home chosen as multiples
-  // of 31 so 11/31 divides evenly.
+test('a mid-month start charges a full month of overhead and the full planned draw', () => {
+  // today (baseInput) is 2026-08-21, mid-month — no fraction applies to
+  // either figure any more.
   const result = buildForecast(baseInput({
     assumptions: assumptions({ overheadCents: 310000, takeHomeCents: 620000, taxRateBp: 0 }),
   }))
-  assert.equal(result.months[0].overheadCents, 110000) // 310000 * 11/31
-  assert.equal(result.months[0].drawCents, 220000) // 620000 * 11/31
+  assert.equal(result.months[0].overheadCents, 310000)
+  assert.equal(result.months[0].drawCents, 620000)
 })
 
 test('a forecast run on the 1st of the month charges the full month\'s overhead and draw', () => {
@@ -750,19 +739,89 @@ test('a forecast run on the 1st of the month charges the full month\'s overhead 
     today: '2026-08-01',
     assumptions: assumptions({ overheadCents: 500000, takeHomeCents: 760000, taxRateBp: 0 }),
   }))
-  // All 31 days remain, today included -> fraction is 31/31 = 1.
+  // No pro-ration at all now; the day of the month is irrelevant.
   assert.equal(result.months[0].overheadCents, 500000)
   assert.equal(result.months[0].drawCents, 760000)
 })
 
-test('a forecast run on the last day of the month charges roughly one day\'s worth', () => {
+test('a forecast run on the last day of the month still charges the full month', () => {
   const result = buildForecast(baseInput({
     today: '2026-08-31',
     assumptions: assumptions({ overheadCents: 310000, takeHomeCents: 620000, taxRateBp: 0 }),
   }))
-  // Only today itself remains -> fraction is 1/31.
-  assert.equal(result.months[0].overheadCents, 10000) // 310000 / 31
-  assert.equal(result.months[0].drawCents, 20000) // 620000 / 31
+  assert.equal(result.months[0].overheadCents, 310000)
+  assert.equal(result.months[0].drawCents, 620000)
+})
+
+// ---------------------------------------------------------------------------
+// The current month charges what is LEFT to draw. Dan's draws are lumpy on
+// purpose: $14,936 in July, $0 in August, $925 in September (he took the rest
+// from Wood and Waves that month). A calendar fraction cannot describe that.
+
+test('the current month charges the planned draw minus what has already been drawn', () => {
+  const result = buildForecast(baseInput({
+    assumptions: assumptions({ overheadCents: 0, takeHomeCents: 750_000, taxRateBp: 0 }),
+    ownerPayDrawnThisMonthCents: 92_500,
+  }))
+  assert.equal(result.months[0].drawCents, 657_500) // 750,000 - 92,500
+})
+
+test('a month already drawn beyond its plan charges nothing more, never a negative', () => {
+  const result = buildForecast(baseInput({
+    assumptions: assumptions({ overheadCents: 0, takeHomeCents: 750_000, taxRateBp: 0 }),
+    ownerPayDrawnThisMonthCents: 1_493_600, // July's real figure
+  }))
+  assert.equal(result.months[0].drawCents, 0)
+})
+
+test('drawn-so-far applies ONLY to the current month, never to later ones', () => {
+  const result = buildForecast(baseInput({
+    assumptions: assumptions({ overheadCents: 0, takeHomeCents: 750_000, taxRateBp: 0 }),
+    ownerPayDrawnThisMonthCents: 92_500,
+  }))
+  assert.equal(result.months[1].drawCents, 750_000)
+})
+
+test('a per-month plan overrides the take-home for that month only', () => {
+  const result = buildForecast(baseInput({
+    assumptions: assumptions({ overheadCents: 0, takeHomeCents: 750_000, taxRateBp: 0 }),
+    plannedDrawCentsByMonth: new Map([['2026-09', 200_000]]),
+  }))
+  assert.equal(result.months[0].drawCents, 750_000) // 2026-08, no plan -> take-home
+  assert.equal(result.months[1].drawCents, 200_000) // 2026-09, planned
+  assert.equal(result.months[2].drawCents, 750_000) // 2026-10, back to take-home
+})
+
+// A planned ZERO is a real instruction and must not read as "unset".
+test('a planned draw of zero is honoured, not treated as missing', () => {
+  const result = buildForecast(baseInput({
+    assumptions: assumptions({ overheadCents: 0, takeHomeCents: 750_000, taxRateBp: 0 }),
+    plannedDrawCentsByMonth: new Map([['2026-08', 0]]),
+  }))
+  assert.equal(result.months[0].drawCents, 0)
+})
+
+test('the current month applies drawn-so-far against the PLAN, not the take-home', () => {
+  const result = buildForecast(baseInput({
+    assumptions: assumptions({ overheadCents: 0, takeHomeCents: 750_000, taxRateBp: 0 }),
+    plannedDrawCentsByMonth: new Map([['2026-08', 100_000]]),
+    ownerPayDrawnThisMonthCents: 40_000,
+  }))
+  assert.equal(result.months[0].drawCents, 60_000)
+})
+
+// Overhead no longer pro-rates either. It does NOT get the "what's left"
+// treatment: with Dan's manual override in force, "overhead spent so far this
+// month" has no clean definition, and most of a month's real spend is
+// reimbursable gig cost that is not overhead at all.
+test('the current month charges a full month of overhead regardless of the day', () => {
+  for (const today of ['2026-08-01', '2026-08-21', '2026-08-31']) {
+    const result = buildForecast(baseInput({
+      today,
+      assumptions: assumptions({ overheadCents: 310_000, takeHomeCents: 0, taxRateBp: 0 }),
+    }))
+    assert.equal(result.months[0].overheadCents, 310_000, `overhead on ${today}`)
+  }
 })
 
 test('bookedThrough is the latest month of booked WORK, never a lag-shifted cash-landing date', () => {

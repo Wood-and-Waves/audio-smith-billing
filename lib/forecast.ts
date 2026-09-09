@@ -420,8 +420,17 @@ export function buildForecast(input: {
   invoices: ForecastInvoice[]
   clients: ForecastClient[]
   assumptions: ForecastAssumptions
+  /** 'YYYY-MM' -> the draw Dan plans for that month. A missing month means
+   *  "the usual" and falls back to assumptions.takeHomeCents — absence must
+   *  never read as a zero-draw month, which would flatter the runway. */
+  plannedDrawCentsByMonth?: Map<string, number>
+  /** Owner pay already taken in the CURRENT month, from the ledger. */
+  ownerPayDrawnThisMonthCents?: number
 }): Forecast {
-  const { today, startingBalanceCents, homeState, shows, invoices, clients, assumptions } = input
+  const {
+    today, startingBalanceCents, homeState, shows, invoices, clients, assumptions,
+    plannedDrawCentsByMonth, ownerPayDrawnThisMonthCents = 0,
+  } = input
   const clientNames = new Map(clients.map((c) => [c.id, c.name]))
   const clientsById = new Map(clients.map((c) => [c.id, c]))
   const termsDaysFor = (clientId: string): number => clientsById.get(clientId)?.terms_days ?? FALLBACK_TERMS_DAYS
@@ -547,25 +556,23 @@ export function buildForecast(input: {
     const month = addMonths(startMonth, i)
     const incomeCents = incomeByMonth.get(month) ?? 0
 
-    // Month 0 is a partial month. Its income is already only "what's left
-    // to land" — every inflow is dated to an expected FUTURE landing date,
-    // so nothing before today ever accrues into it. Overhead and the draw
-    // must be pro-rated the same way, or month 0 charges a full month's
-    // costs against a starting balance that, per the design doc, already
-    // paid its share of both up through yesterday — overstating what this
-    // month still owes. `today` itself counts as remaining (a forecast run
-    // on the 1st owes the whole month; run on the last day, it owes ~1 day
-    // of it). Tax is computed from incomeCents/overheadCents below either
-    // way, so it needs no separate pro-ration — it already follows suit.
-    let overheadCents = assumptions.overheadCents
-    let drawCents = assumptions.takeHomeCents
-    if (i === 0) {
-      const totalDays = daysInMonth(month)
-      const dayOfMonth = Number(today.slice(8, 10))
-      const remainingFraction = (totalDays - dayOfMonth + 1) / totalDays
-      overheadCents = Math.round(assumptions.overheadCents * remainingFraction)
-      drawCents = Math.round(assumptions.takeHomeCents * remainingFraction)
-    }
+    // Overhead is charged in full every month, month 0 included. Pro-ration
+    // by calendar day was removed 2026-09-09 — Dan: "Proration is just flat
+    // out incorrect for how this should be calculated." Overhead does NOT get
+    // month 0's "what's left" treatment either: with his manual override in
+    // force, "overhead spent so far this month" has no clean definition, and
+    // most of a month's real spend is reimbursable gig cost that is not
+    // overhead at all. Charging the full month errs conservative and bounds
+    // the error at one month's overhead.
+    const overheadCents = assumptions.overheadCents
+
+    // The draw is what he PLANS to take, per month, falling back to the
+    // single take-home figure for any month he has not planned. Month 0
+    // charges only what is still to come: his September plan is $925 and he
+    // has already taken $925, so the honest answer for this month is nothing
+    // more — which neither pro-ration nor a flat monthly figure can express.
+    const planned = plannedDrawCentsByMonth?.get(month) ?? assumptions.takeHomeCents
+    const drawCents = i === 0 ? Math.max(0, planned - ownerPayDrawnThisMonthCents) : planned
 
     const taxCents = Math.round(Math.max(0, incomeCents - overheadCents) * assumptions.taxRateBp / 10000)
     balance += incomeCents - overheadCents - taxCents - drawCents
