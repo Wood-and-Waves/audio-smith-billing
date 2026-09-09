@@ -1492,3 +1492,29 @@ better than a trailing average does.
 - `daysInMonth()` in `lib/forecast.ts` is dead for the same reason: it lost its
   only caller when the current month's draw stopped being pro-rated by
   calendar day (this section, above).
+
+### Follow-up the same day: what the table shows after a short month
+
+Shipping the reserves change made a latent limit bite immediately. The month
+walk had always stopped at the first uncovered month; that was tolerable while
+the runway started from the whole bank balance, but once reserved money came
+out of the starting figure, month 0 goes short routinely — and Dan saw a single
+red September with **$11,544 of booked October work listed directly beneath the
+table he could no longer see**. The final review had flagged this and it was
+recorded rather than fixed, which was the wrong call: the truncation and the
+reserves change were one change, not two.
+
+**His rule, and what now ships:** *"The forecast should only run until after the
+ending balance go below zero and the income drops to 0."* Both halves matter. A
+short month with money still due keeps the walk going, because those later
+months are what say whether he recovers; the walk stops only once the balance is
+under AND nothing further is expected. `lastIncomeMonth` comes from the whole
+inflow map, not from `bookedThrough`, so a gap month inside a booked run is not
+mistaken for the end of the money.
+
+**And a bug that rode in with the first attempt:** `ForecastTable` computed
+`uncovered = i === lastIndex && !m.covered`, a shorthand that was only valid
+while the array held at most one uncovered month at the end. Running the full
+horizon made it mark a row red only if the LAST of 24 months was short — so in
+exactly the case the change existed to show, it would have marked nothing at
+all, silently dropping the warning. Caught in review. Now `!m.covered` per row.
