@@ -102,6 +102,23 @@ export default function ForecastTable({
                       const raw = e.target.value.trim()
                       const cents = raw === '' ? null : Math.round(Number(raw) * 100)
                       if (cents !== null && !Number.isFinite(cents)) return
+                      // Dirty check: skip the round trip when nothing
+                      // changed. `m.plannedDrawCents` is always a number
+                      // (a saved plan, or the take-home fallback when none
+                      // is saved), so `cents === m.plannedDrawCents` is
+                      // only ever true when the field still reads the same
+                      // amount — untouched-by-tab and reformatted-but-equal
+                      // (e.g. "750.00" typed over "750") both land here.
+                      // Clearing the field (cents === null) never equals a
+                      // number, so it always falls through to the save —
+                      // deliberately, even when no plan was saved yet (the
+                      // field was only showing the fallback): we cannot
+                      // tell "a plan existed" from "the fallback happens to
+                      // be showing" from this data alone, and the delete
+                      // this sends when no row exists is a harmless no-op,
+                      // while skipping it would risk silently ignoring a
+                      // real clear against an existing plan.
+                      if (cents === m.plannedDrawCents) return
                       startTransition(async () => {
                         const res = await setDrawPlan(m.month, cents)
                         if ('error' in res) setError(res.error)
