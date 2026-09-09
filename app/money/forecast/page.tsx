@@ -3,12 +3,12 @@ import { createClient } from '@/lib/supabase/server'
 import { todayInChicago, monthLabel, formatDateShort } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
 import { workingBalance } from '@/lib/ledgerBalance'
-import { availableToAllocate, type EnvelopeMoveLike } from '@/lib/envelopes'
 import {
-  buildForecast, computeOverheadCents,
+  buildForecast, computeOverheadCents, reservedCents,
   type ForecastShow, type ForecastInvoice, type ForecastClient, type ShowProjection,
 } from '@/lib/forecast'
 import { explodeForReports, type ReportTxnForExplode } from '@/lib/ledgerSplits'
+import { assembleBudget } from '@/app/money/budget/data'
 import AppShell from '@/components/AppShell'
 import MoneyNav from '@/components/MoneyNav'
 import ForecastTable from '@/components/ForecastTable'
@@ -94,32 +94,6 @@ async function fetchAllForecastSplitLegs(
       .range(from, from + PAGE_SIZE - 1)
     if (error) return { rows: [], error: error.message }
     rows.push(...((data ?? []) as RawSplitLegRow[]))
-    if (!data || data.length < PAGE_SIZE) break
-    from += PAGE_SIZE
-  }
-  return { rows, error: null }
-}
-
-type RawMoveRow = { from_envelope_id: string | null; to_envelope_id: string | null; amount_cents: number }
-
-// Every move this owner has ever made, not account-scoped (ledger_envelope_moves
-// carries owner_id, not account_id — RLS alone is the filter here). Same
-// paging rationale as app/money/budget/page.tsx's own copy: starting balance
-// below is a sum over ALL of history, so a truncated page would understate it.
-async function fetchAllForecastMoves(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-): Promise<{ rows: RawMoveRow[]; error: string | null }> {
-  const rows: RawMoveRow[] = []
-  let from = 0
-  for (;;) {
-    const { data, error } = await supabase
-      .from('ledger_envelope_moves')
-      .select('from_envelope_id, to_envelope_id, amount_cents')
-      .order('created_at', { ascending: true })
-      .order('id', { ascending: true })
-      .range(from, from + PAGE_SIZE - 1)
-    if (error) return { rows: [], error: error.message }
-    rows.push(...((data ?? []) as RawMoveRow[]))
     if (!data || data.length < PAGE_SIZE) break
     from += PAGE_SIZE
   }
@@ -375,8 +349,8 @@ export default async function MoneyForecastPage() {
   // trips, not query work). Every guard below keeps its original position and
   // order, so the first failure shown is unchanged.
   const [
-    userRes, accountRes, splitLegsRes, movesRes,
-    showsRes, invoicesRes, voidRes, clientsRes,
+    userRes, accountRes, splitLegsRes,
+    showsRes, invoicesRes, voidRes, clientsRes, drawPlansRes,
   ] = await Promise.all([
     supabase.auth.getUser(),
     // Same single-account model as the rest of /money: the one open checking
@@ -388,11 +362,11 @@ export default async function MoneyForecastPage() {
       .limit(1)
       .maybeSingle(),
     fetchAllForecastSplitLegs(supabase),
-    fetchAllForecastMoves(supabase),
     fetchAllForecastShows(supabase),
     fetchAllForecastInvoices(supabase),
     fetchAllVoidInvoiceIds(supabase),
     fetchAllForecastClients(supabase),
+    supabase.from('forecast_draw_plans').select('month, amount_cents'),
   ])
   const { data: { user } } = userRes
   const { data: accountRow, error: accountError } = accountRes
@@ -460,8 +434,11 @@ export default async function MoneyForecastPage() {
     legsByTxnId.set(l.transaction_id, list)
   }
 
-  const { rows: moveRows, error: moveError } = movesRes
-  if (moveError) return <LoadError message={moveError} />
+  const { data: drawPlanRows, error: drawPlanError } = drawPlansRes
+  if (drawPlanError) return <LoadError message={drawPlanError.message} />
+  const plannedDrawCentsByMonth = new Map<string, number>(
+    (drawPlanRows ?? []).map((r) => [String(r.month).slice(0, 7), r.amount_cents]),
+  )
 
   const { rows: showRows, error: showError } = showsRes
   if (showError) return <LoadError message={showError} />
@@ -484,22 +461,32 @@ export default async function MoneyForecastPage() {
   const today = todayInChicago()
 
   const workingBalanceCents = workingBalance(accountRow.opening_balance_cents, txnRows)
-  // I4 (comment fix, behavior deliberately unchanged): this used to say
-  // /money/budget computes the same figure via its own call to this helper.
-  // It no longer does — /money/budget doesn't import lib/envelopes at all.
-  // `moveRows` comes from ledger_envelope_moves, which the 0030 envelope
-  // feature shipped empty and which NOTHING CAN WRITE TO ANY MORE: the last
-  // writer, moveEnvelopeMoney, was deleted with the rest of that feature's
-  // dead write path, so the table is empty by construction rather than by
-  // accident. netAllocated(moveRows) is therefore permanently 0 and this
-  // always equals workingBalanceCents exactly. In particular it
-  // does NOT subtract money the real budget (lib/budget.ts) has already
-  // assigned to a category this month — so this figure can present money
-  // Dan already gave a job as still free to spend. That's a real gap, not
-  // this page's math being wrong for what it's actually computing; closing
-  // it (making the forecast budget-aware) is deliberately deferred, not
-  // fixed here.
-  const availableCents = availableToAllocate(workingBalanceCents, moveRows as EnvelopeMoveLike[])
+
+  // Runway is UNRESERVED cash. Dan (2026-09-09): "All saving money except for
+  // any in owner investment, pay, and personal expenses, should be off
+  // limits. They are saved for a purpose and not a payout." Until today this
+  // page started from the whole working balance and offered him $13,000 of
+  // tax money as runway — a gap this file's own comment had recorded as
+  // deferred. reservedCents (lib/forecast.ts) holds the rule and its reasons.
+  const budgetForReserves = await assembleBudget(supabase, today.slice(0, 7))
+  if (!budgetForReserves.ok) return <LoadError message={budgetForReserves.error} />
+  const reserveRows = budgetForReserves.assembly
+    ? (budgetForReserves.assembly.months.get(today.slice(0, 7))?.rows ?? []).map((r) => ({
+        name: budgetForReserves.assembly!.categories.find((c) => c.id === r.categoryId)?.name ?? '',
+        availableCents: r.availableCents,
+      }))
+    : []
+  const startingBalanceCents = workingBalanceCents - reservedCents(reserveRows)
+
+  // Only the current month, only outflows: what he has already paid himself
+  // this month, which month 0's draw is charged NET of.
+  const thisMonth = today.slice(0, 7)
+  const ownerPayDrawnThisMonthCents = txnRows.reduce(
+    (sum, t) => (t.kind === 'owner_pay' && t.date.slice(0, 7) === thisMonth && t.amount_cents < 0
+      ? sum - t.amount_cents
+      : sum),
+    0,
+  )
 
   const clients: ForecastClient[] = (clientRows ?? []).map((c) => ({
     id: c.id, name: c.name, terms_days: c.terms_days,
@@ -580,12 +567,14 @@ export default async function MoneyForecastPage() {
   const forecast = hasOpenShows || hasUnpaidInvoices
     ? buildForecast({
         today,
-        startingBalanceCents: availableCents,
+        startingBalanceCents,
         homeState,
         shows,
         invoices,
         clients,
         assumptions: { takeHomeCents, overheadCents, taxRateBp, billingLagDays },
+        plannedDrawCentsByMonth,
+        ownerPayDrawnThisMonthCents,
       })
     : null
 
