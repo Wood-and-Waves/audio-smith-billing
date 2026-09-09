@@ -259,7 +259,7 @@ async function fetchAllForecastClients(
 
 function LoadError({ message }: { message: string }) {
   return (
-    <AppShell current="money">
+    <AppShell current="money" wide>
       <p role="alert" className="text-danger border-l-2 border-danger pl-4 py-2">
         Couldn&rsquo;t load the forecast: {message}
       </p>
@@ -419,7 +419,7 @@ export default async function MoneyForecastPage() {
   // owner_id-filtered read.
   if (!user) {
     return (
-      <AppShell current="money">
+      <AppShell current="money" wide>
         <p role="alert" className="text-danger border-l-2 border-danger pl-4 py-2">
           You&rsquo;re not signed in.
         </p>
@@ -431,7 +431,7 @@ export default async function MoneyForecastPage() {
 
   if (!accountRow) {
     return (
-      <AppShell current="money">
+      <AppShell current="money" wide>
         <MoneyNav current="forecast" />
         <h1 className="display text-3xl font-bold mb-4">Forecast</h1>
         <p className="text-muted border-l-2 border-line pl-4 py-2">
@@ -616,7 +616,7 @@ export default async function MoneyForecastPage() {
         : `Covered through ${monthLabel(forecast.coveredThrough)}`
 
   return (
-    <AppShell current="money">
+    <AppShell current="money" wide>
       <MoneyNav current="forecast" />
       <h1 className="display text-3xl font-bold mb-8">Forecast</h1>
 

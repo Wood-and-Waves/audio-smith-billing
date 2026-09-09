@@ -285,7 +285,7 @@ async function fetchMissingExpenses(
 
 function LoadError({ message }: { message: string }) {
   return (
-    <AppShell current="money">
+    <AppShell current="money" wide>
       <p role="alert" className="text-danger border-l-2 border-danger pl-4 py-2">
         Couldn&rsquo;t load the match queue: {message}
       </p>
@@ -328,7 +328,7 @@ export default async function MoneyMatchesPage() {
 
   if (!accountRow) {
     return (
-      <AppShell current="money">
+      <AppShell current="money" wide>
         <MoneyNav current="matches" />
         <h1 className="display text-3xl font-bold mb-4">Matches</h1>
         <p className="text-muted border-l-2 border-line pl-4 py-2">
@@ -535,7 +535,7 @@ export default async function MoneyMatchesPage() {
   })
 
   return (
-    <AppShell current="money">
+    <AppShell current="money" wide>
       <MoneyNav current="matches" />
       <h1 className="display text-3xl font-bold mb-8">Matches</h1>
       <MatchQueue income={income} expense={expense} dismissed={dismissedCards} />

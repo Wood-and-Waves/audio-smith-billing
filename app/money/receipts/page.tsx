@@ -38,7 +38,7 @@ export default async function ReceiptInboxPage() {
 
   if (inboxRes.error) {
     return (
-      <AppShell current="money">
+      <AppShell current="money" wide>
         <p role="alert" className="text-danger border-l-2 border-danger pl-4 py-2">
           Couldn&rsquo;t load the receipt inbox: {inboxRes.error.message}
         </p>
@@ -73,7 +73,7 @@ export default async function ReceiptInboxPage() {
   }))
 
   return (
-    <AppShell current="money">
+    <AppShell current="money" wide>
       <MoneyNav current="receipts" />
       <h1 className="display text-3xl font-bold mb-6">Receipts</h1>
       <ReceiptInbox items={items} />

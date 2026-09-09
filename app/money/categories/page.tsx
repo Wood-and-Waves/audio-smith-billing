@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 
 function LoadError({ message }: { message: string }) {
   return (
-    <AppShell current="money">
+    <AppShell current="money" wide>
       <p role="alert" className="text-danger border-l-2 border-danger pl-4 py-2">
         Couldn&rsquo;t load categories: {message}
       </p>
@@ -43,7 +43,7 @@ export default async function MoneyCategoriesPage() {
   }))
 
   return (
-    <AppShell current="money">
+    <AppShell current="money" wide>
       <MoneyNav current="categories" />
 
       <h1 className="display text-3xl font-bold mb-8">Categories</h1>

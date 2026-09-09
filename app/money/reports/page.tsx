@@ -92,7 +92,7 @@ async function fetchAllReportSplitLegs(
 
 function LoadError({ message }: { message: string }) {
   return (
-    <AppShell current="money">
+    <AppShell current="money" wide>
       <p role="alert" className="text-danger border-l-2 border-danger pl-4 py-2">
         Couldn&rsquo;t load the reports: {message}
       </p>
@@ -177,7 +177,7 @@ export default async function MoneyReportsPage({
 
   if (!accountRow) {
     return (
-      <AppShell current="money">
+      <AppShell current="money" wide>
         <MoneyNav current="reports" />
         <h1 className="display text-3xl font-bold mb-4">Reports</h1>
         <p className="text-muted border-l-2 border-line pl-4 py-2 max-w-md">
@@ -265,7 +265,7 @@ export default async function MoneyReportsPage({
   const maxMonth = Math.max(1, ...months.flatMap((m) => [m.incomeCents, m.expenseCents]))
 
   return (
-    <AppShell current="money">
+    <AppShell current="money" wide>
       <MoneyNav current="reports" />
 
       <header className="flex flex-wrap items-baseline justify-between gap-4 mb-10">

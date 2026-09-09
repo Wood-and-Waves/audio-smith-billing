@@ -77,7 +77,7 @@ export type RecentMove = {
 
 function LoadError({ message }: { message: string }) {
   return (
-    <AppShell current="money">
+    <AppShell current="money" wide>
       <p role="alert" className="text-danger border-l-2 border-danger pl-4 py-2">
         Couldn&rsquo;t load the budget: {message}
       </p>
@@ -117,7 +117,7 @@ export default async function MoneyBudgetPage({
 
   if (!assembled.assembly) {
     return (
-      <AppShell current="money">
+      <AppShell current="money" wide>
         <MoneyNav current="budget" />
         <h1 className="display text-3xl font-bold mb-4">Budget</h1>
         <p className="text-muted border-l-2 border-line pl-4 py-2">
