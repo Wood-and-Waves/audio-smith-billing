@@ -425,7 +425,7 @@ status.
 
 ## Current state (2026-09-09) & where things are written
 
-- **Prod migrations through 0051. 1,021 tests.** Nothing is pending: no
+- **Prod migrations through 0051. 1,025 tests.** Nothing is pending: no
   migration waiting, no branch open.
 - **The forecast is budget-aware (2026-09-09, 0051).** Three changes, all in
   `lib/forecast.ts` plus the page: it starts from UNRESERVED cash (working
@@ -442,6 +442,22 @@ status.
   already subtracts, while Taxes and Retained Earnings fund obligations it
   models nowhere. Reasoning in
   docs/superpowers/specs/2026-09-09-forecast-reserves-and-draws-design.md.
+- **The forecast's month walk stops on BOTH conditions** (Dan, same day):
+  *"The forecast should only run until after the ending balance go below zero
+  and the income drops to 0."* It used to break at the first uncovered month
+  regardless of income — survivable until reserved money came out of the
+  starting balance and made month 0 go short routinely, at which point one red
+  September hid $11,544 of booked October work sitting beneath it. A short
+  month with money still due keeps the walk going; it stops only once the
+  balance is under AND nothing further is expected. `lastIncomeMonth` is
+  derived from the whole inflow map, never from `bookedThrough`, so a gap month
+  inside a booked run is not mistaken for the end of the money.
+  `coveredThrough` is untouched by all of this: still the month before the
+  FIRST shortfall, never a later one, so a temporary dip can never read as a
+  longer runway. **`ForecastTable` marks every short month (`!m.covered`),
+  never `i === lastIndex`** — that shorthand was only valid while the walk
+  truncated at the first shortfall, and once it did not, it silently showed no
+  red at all.
 - **Shipped 2026-09-08/09, all live:** the settled-invoice dot; **receipts by
   email** (0050 — verified on real mail, everything arrives with its
   document); **reconciled rows editable except the amount** (the lock narrowed
