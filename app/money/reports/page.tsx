@@ -263,6 +263,14 @@ export default async function MoneyReportsPage({
   const pl = plSummary(rangeTxns, categories)
   const spend = spendByCategory(rangeTxns, categories)
   const months = monthlyTotals(allTxns, from, to)
+  // `months` starts wherever the range starts (Task f330b9f made it
+  // range-shaped, not calendar-year-shaped), so a row's label has to come
+  // from its own `m.month` ('YYYY-MM') and never from its position in the
+  // array — a Q3 range no longer begins at index 0 = January. When the range
+  // crosses a year boundary (e.g. Dec 2025 - Feb 2026), "Dec / Jan / Feb"
+  // alone can't tell the reader which December or January, so those rows
+  // also get a two-digit year suffix.
+  const monthsSpanYears = from.slice(0, 4) !== to.slice(0, 4)
 
   const groups = groupByGrp(spend.rows)
   const maxSpend = Math.max(1, ...spend.rows.map((r) => r.spentCents), spend.uncategorizedCents)
@@ -418,14 +426,16 @@ export default async function MoneyReportsPage({
       <section>
         <h2 className="eyebrow mb-4">By month</h2>
         <div className="border-t border-line">
-          {months.map((m, idx) => {
+          {months.map((m) => {
             const empty = m.incomeCents === 0 && m.expenseCents === 0
+            const monthLabel = MONTH_LABELS[Number(m.month.slice(5, 7)) - 1]
+            const label = monthsSpanYears ? `${monthLabel} ${m.month.slice(2, 4)}` : monthLabel
             return (
               <div
                 key={m.month}
                 className="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2.5 border-b border-line"
               >
-                <span className="w-9 text-xs text-muted shrink-0">{MONTH_LABELS[idx]}</span>
+                <span className={`${monthsSpanYears ? 'w-12' : 'w-9'} text-xs text-muted shrink-0`}>{label}</span>
                 {empty ? (
                   <span className="flex-1 min-w-[6rem] text-xs text-muted">—</span>
                 ) : (
