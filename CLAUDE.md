@@ -488,6 +488,10 @@ status.
   reverted (`da561d3`); the remaining fix is viewport-fit/status-bar-style,
   which `app/layout.tsx` records as having caused an iPhone collision. Dan:
   "It is merely cosmetic." Not in the backlog, by his choice.
+- **`/money/reports` takes any date range via `?from=&to=` with calendar-quarter
+  shortcuts;** `lib/reportRange.ts` owns quarters and range resolution; **the
+  app reports profit and never computes a tax figure**, and carries no IRS
+  payment due dates because they shift for weekends and holidays.
 - **What is waiting on DAN, not on code:** he has entered **2 of his budget
   targets** (Tax Prep $500 by 2027-04-01, State License Fee $75) and the rest
   remain. September is budgeted in both tools and now agrees except for

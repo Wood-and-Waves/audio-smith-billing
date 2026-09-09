@@ -1361,6 +1361,15 @@ comment at `app/money/reports/page.tsx:67`. Any new total must go through
 `explodeForReports` like the existing ones, never re-derive from
 `ledger_transactions` alone.
 
+**Phase 1 SHIPPED 2026-09-09** — design and reasoning in
+`docs/superpowers/specs/2026-09-09-accountant-reports-design.md`. `/money/reports`
+now takes any date range via `?from=&to=` (`lib/reportRange.ts`), with
+calendar-quarter and all-year shortcut chips; totals, spend by category, and
+the by-month table all follow that one range. **Still remaining: Phase 2 (a
+CSV of transactions for the range, and a printable P&L — the half that makes
+this a deliverable rather than a screen) and Phase 3 (the year-end
+package).**
+
 ## Money navigation and layout — SHIPPED 2026-09-09
 
 *"The ledger is the only screen in money where I can get to all the submenus

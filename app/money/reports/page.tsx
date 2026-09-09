@@ -1,8 +1,8 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { todayInChicago } from '@/lib/dates'
+import { todayInChicago, formatDateShort } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
-import { yearRange } from '@/lib/reportRange'
+import { resolveRange, quarterRange, yearRange } from '@/lib/reportRange'
 import {
   filterRange, plSummary, spendByCategory, monthlyTotals,
   type ReportTxn, type ReportCategory, type CategorySpend,
@@ -10,6 +10,7 @@ import {
 import { explodeForReports, type ReportTxnForExplode } from '@/lib/ledgerSplits'
 import AppShell from '@/components/AppShell'
 import MoneyNav from '@/components/MoneyNav'
+import { FIELD } from '@/components/ui/field'
 
 export const dynamic = 'force-dynamic'
 
@@ -138,12 +139,14 @@ function Bar({ pct, className }: { pct: number; className: string }) {
 export default async function MoneyReportsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ year?: string }>
+  searchParams: Promise<{ from?: string; to?: string }>
 }) {
   const params = await searchParams
-  const currentYear = Number(todayInChicago().slice(0, 4))
-  const parsedYear = Number(params.year)
-  const year = Number.isInteger(parsedYear) && params.year ? parsedYear : currentYear
+  const today = todayInChicago()
+  const { from, to } = resolveRange(params.from, params.to, today)
+  // The year the shortcut buttons offer: the one the current range starts in,
+  // so stepping from Q4 2026 to Q1 2026 is one click rather than a year hunt.
+  const shortcutYear = Number(from.slice(0, 4))
 
   const supabase = await createClient()
 
@@ -256,10 +259,9 @@ export default async function MoneyReportsPage({
     (t) => t.category_id === null && !legsByTxnId.has(t.id) && (t.kind === 'income' || t.kind === 'expense'),
   ).length
 
-  const { from, to } = yearRange(year)
-  const yearTxns = filterRange(allTxns, from, to)
-  const pl = plSummary(yearTxns, categories)
-  const spend = spendByCategory(yearTxns, categories)
+  const rangeTxns = filterRange(allTxns, from, to)
+  const pl = plSummary(rangeTxns, categories)
+  const spend = spendByCategory(rangeTxns, categories)
   const months = monthlyTotals(allTxns, from, to)
 
   const groups = groupByGrp(spend.rows)
@@ -272,24 +274,62 @@ export default async function MoneyReportsPage({
 
       <header className="flex flex-wrap items-baseline justify-between gap-4 mb-10">
         <h1 className="display text-3xl font-bold">Reports</h1>
-        <div className="flex items-center gap-4">
-          <Link
-            href={`/money/reports?year=${year - 1}`}
-            aria-label="Previous year"
-            className="text-muted hover:text-ink transition-colors text-lg leading-none"
+        {/* A plain GET form: this is a server component and the range lives in
+            the URL, so no client JavaScript is needed to change it. */}
+        <form method="get" action="/money/reports" className="flex flex-wrap items-end gap-3">
+          <label className="text-xs text-muted">
+            <span className="eyebrow block mb-1">From</span>
+            <input type="date" name="from" defaultValue={from} className={FIELD} />
+          </label>
+          <label className="text-xs text-muted">
+            <span className="eyebrow block mb-1">To</span>
+            <input type="date" name="to" defaultValue={to} className={FIELD} />
+          </label>
+          <button
+            type="submit"
+            className="rounded-field border border-line px-3 py-2 text-xs font-semibold
+                       uppercase tracking-wider hover:text-accent transition-colors"
           >
-            ‹
-          </Link>
-          <span className="tabular text-xl font-bold">{year}</span>
-          <Link
-            href={`/money/reports?year=${year + 1}`}
-            aria-label="Next year"
-            className="text-muted hover:text-ink transition-colors text-lg leading-none"
-          >
-            ›
-          </Link>
-        </div>
+            Show
+          </button>
+        </form>
       </header>
+
+      <nav aria-label="Report period" className="-ml-3 mb-10 flex flex-wrap gap-2">
+        {([1, 2, 3, 4] as const).map((q) => {
+          const r = quarterRange(shortcutYear, q)
+          const active = r.from === from && r.to === to
+          return (
+            <Link
+              key={q}
+              href={`/money/reports?from=${r.from}&to=${r.to}`}
+              aria-current={active ? 'true' : undefined}
+              className={`rounded-pill px-3 py-1.5 text-xs font-semibold uppercase tracking-wider
+                          transition-colors ${
+                            active ? 'bg-accent-wash text-accent' : 'text-muted hover:text-ink'
+                          }`}
+            >
+              Q{q} {shortcutYear}
+            </Link>
+          )
+        })}
+        {(() => {
+          const r = yearRange(shortcutYear)
+          const active = r.from === from && r.to === to
+          return (
+            <Link
+              href={`/money/reports?from=${r.from}&to=${r.to}`}
+              aria-current={active ? 'true' : undefined}
+              className={`rounded-pill px-3 py-1.5 text-xs font-semibold uppercase tracking-wider
+                          transition-colors ${
+                            active ? 'bg-accent-wash text-accent' : 'text-muted hover:text-ink'
+                          }`}
+            >
+              All {shortcutYear}
+            </Link>
+          )
+        })()}
+      </nav>
 
       {uncategorizedCount > 0 && (
         <Link
@@ -303,8 +343,7 @@ export default async function MoneyReportsPage({
       )}
 
       <section className="mb-10">
-        {/* Honest label: paging back to 2025 must not read "This year". */}
-        <h2 className="eyebrow mb-4">{year === currentYear ? 'This year' : `${year} totals`}</h2>
+        <h2 className="eyebrow mb-4">{formatDateShort(from)} – {formatDateShort(to)}</h2>
         <div className="border-t border-line">
           <div className="flex items-center justify-between py-3 border-b border-line">
             <span className="text-muted">Income</span>
@@ -336,7 +375,7 @@ export default async function MoneyReportsPage({
       <section className="mb-10">
         <h2 className="eyebrow mb-4">Spend by category</h2>
         {groups.length === 0 && spend.uncategorizedCents === 0 ? (
-          <p className="text-muted border-l-2 border-line pl-4 py-1">No categorized spend in {year}.</p>
+          <p className="text-muted border-l-2 border-line pl-4 py-1">No categorized spend in this period.</p>
         ) : (
           <div className="space-y-6">
             {groups.map((group) => (
