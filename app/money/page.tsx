@@ -1,12 +1,8 @@
-import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { formatDateShort, todayInChicago } from '@/lib/dates'
 import {
   workingBalance, clearedBalance, compareLedgerOrder, runningBalances, type BalanceLike,
 } from '@/lib/ledgerBalance'
-import {
-  proposeMatches, type BankRow, type CandidateInvoice, type CandidateExpense, type Dismissal,
-} from '@/lib/ledgerMatch'
 import {
   buildBudget, OPENING_MONTH, FIRST_BUDGET_MONTH, type BudgetCategory, type BudgetMove, type BudgetTxn,
 } from '@/lib/budget'
@@ -276,107 +272,6 @@ async function fetchAllExpenseLinks(
   return { rows, error: null }
 }
 
-type RawDismissalRow = { transaction_id: string; invoice_id: string | null; expense_id: string | null }
-
-/** Every ledger_match_dismissals row, owner-wide — mirrors
- *  app/money/matches/page.tsx's own fetchAllDismissals exactly. proposeMatches
- *  is pure and stateless, so a truncated read here would let a guess Dan
- *  already dismissed reappear in the Matches badge count once the dismissal
- *  list grew past 1000 rows. */
-async function fetchAllDismissals(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-): Promise<{ rows: RawDismissalRow[]; error: string | null }> {
-  const rows: RawDismissalRow[] = []
-  let from = 0
-  for (;;) {
-    const { data, error } = await supabase
-      .from('ledger_match_dismissals')
-      .select('transaction_id, invoice_id, expense_id')
-      .order('created_at', { ascending: true })
-      .order('id', { ascending: true })
-      .range(from, from + LEDGER_TXN_PAGE_SIZE - 1)
-    if (error) return { rows: [], error: error.message }
-    rows.push(...((data ?? []) as RawDismissalRow[]))
-    if (!data || data.length < LEDGER_TXN_PAGE_SIZE) break
-    from += LEDGER_TXN_PAGE_SIZE
-  }
-  return { rows, error: null }
-}
-
-type RawCandidateInvoiceRow = {
-  id: string
-  number: number
-  client_id: string
-  total_cents: number
-  sent_at: string | null
-  paid_at: string | null
-  status: string
-  // Many-to-one FK (invoices.client_id -> clients.id) embeds as a single
-  // object at runtime — same cast app/money/matches/page.tsx's identical
-  // fetcher uses for the same embed.
-  clients: { name: string } | null
-}
-
-/** Every sent-or-paid invoice, owner-wide — mirrors
- *  app/money/matches/page.tsx's own fetchAllCandidateInvoices exactly (same
- *  `.in('status', ['sent','paid'])` filter: a paid-but-unlinked invoice still
- *  counts toward the badge, same broad-query-narrow-per-row split that page's
- *  own comment explains). */
-async function fetchAllCandidateInvoices(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-): Promise<{ rows: RawCandidateInvoiceRow[]; error: string | null }> {
-  const rows: RawCandidateInvoiceRow[] = []
-  let from = 0
-  for (;;) {
-    const { data, error } = await supabase
-      .from('invoices')
-      .select('id, number, client_id, total_cents, sent_at, paid_at, status, clients(name)')
-      .in('status', ['sent', 'paid'])
-      .order('created_at', { ascending: true })
-      .order('id', { ascending: true })
-      .range(from, from + LEDGER_TXN_PAGE_SIZE - 1)
-    if (error) return { rows: [], error: error.message }
-    rows.push(...((data ?? []) as unknown as RawCandidateInvoiceRow[]))
-    if (!data || data.length < LEDGER_TXN_PAGE_SIZE) break
-    from += LEDGER_TXN_PAGE_SIZE
-  }
-  return { rows, error: null }
-}
-
-type RawCandidateExpenseRow = {
-  id: string
-  show_id: string
-  amount_cents: number
-  spent_on: string
-  where_spent: string
-}
-
-/** Every expense, owner-wide — mirrors app/money/matches/page.tsx's own
- *  fetchAllCandidateExpenses, minus the `shows(name)` embed that page needs
- *  for MatchQueue's display and this one doesn't (the badge only counts
- *  proposals, it never renders one). Unfiltered on whether it's already
- *  billed, same as that page: `linked` (from fetchAllExpenseLinks' set) is
- *  what proposeMatches actually uses to exclude an already-matched one. */
-async function fetchAllCandidateExpenses(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-): Promise<{ rows: RawCandidateExpenseRow[]; error: string | null }> {
-  const rows: RawCandidateExpenseRow[] = []
-  let from = 0
-  for (;;) {
-    const { data, error } = await supabase
-      .from('expenses')
-      .select('id, show_id, amount_cents, spent_on, where_spent')
-      .order('created_at', { ascending: true })
-      .order('id', { ascending: true })
-      .range(from, from + LEDGER_TXN_PAGE_SIZE - 1)
-    if (error) return { rows: [], error: error.message }
-    rows.push(...((data ?? []) as RawCandidateExpenseRow[]))
-    if (!data || data.length < LEDGER_TXN_PAGE_SIZE) break
-    from += LEDGER_TXN_PAGE_SIZE
-  }
-  return { rows, error: null }
-}
-
 function LoadError({ message }: { message: string }) {
   return (
     <AppShell current="money" wide>
@@ -418,8 +313,7 @@ export default async function MoneyPage({
   const [
     accountRes, categoriesRes0, showsRes, splitLegsRes,
     budgetCategoriesRes, movesRes,
-    invoiceLinksRes, expenseLinksRes, dismissalsRes,
-    candidateInvoicesRes, candidateExpensesRes, aliasUserRes, receiptInboxRes,
+    invoiceLinksRes, expenseLinksRes, aliasUserRes,
   ] = await Promise.all([
     // opening_date rides along for the budget seed's own clamp below
     // (mirroring app/money/budget/page.tsx's own openingMonth/seedMonth
@@ -444,20 +338,10 @@ export default async function MoneyPage({
     fetchAllBudgetMoves(supabase),
     fetchAllInvoiceLinks(supabase),
     fetchAllExpenseLinks(supabase),
-    fetchAllDismissals(supabase),
-    fetchAllCandidateInvoices(supabase),
-    fetchAllCandidateExpenses(supabase),
     supabase.auth.getUser(),
-    // Waiting receipts, for the badge beside Matches. head+count: the page
-    // needs the number, never the rows.
-    supabase.from('receipt_inbox').select('id', { count: 'exact', head: true }).eq('status', 'new'),
   ])
   const { data: accountRow, error: accountError } = accountRes
   const { data: { user: aliasUser } } = aliasUserRes
-  // A failed count reads as zero: a missing badge is a smaller loss than a
-  // register that will not render.
-  const receiptInboxCount = receiptInboxRes.error ? 0 : (receiptInboxRes.count ?? 0)
-
   // The one open checking account this ledger runs from — "first" by when it
   // was created, same tie-break the rest of the app uses when a query could
   // in principle return more than one row. Guarded here, ahead of the seed
@@ -652,15 +536,6 @@ export default async function MoneyPage({
   const { rows: expenseLinkRows, error: expenseLinkError } = expenseLinksRes
   if (expenseLinkError) return <LoadError message={expenseLinkError} />
 
-  const { rows: dismissalRows, error: dismissalError } = dismissalsRes
-  if (dismissalError) return <LoadError message={dismissalError} />
-
-  const { rows: candidateInvoiceRows, error: candidateInvoicesError } = candidateInvoicesRes
-  if (candidateInvoicesError) return <LoadError message={candidateInvoicesError} />
-
-  const { rows: candidateExpenseRows, error: candidateExpensesError } = candidateExpensesRes
-  if (candidateExpensesError) return <LoadError message={candidateExpensesError} />
-
   // The three fields LedgerTxnRow adds for the register (components/
   // MoneyRegister.tsx) — a txn can carry more than one invoice link (a
   // deposit covering two invoices), hence an array; "first linked expense
@@ -691,43 +566,6 @@ export default async function MoneyPage({
   const linkedTxnIds = new Set<string>()
   for (const l of invoiceLinkRows) linkedTxnIds.add(l.transaction_id)
   for (const l of expenseLinkRows) linkedTxnIds.add(l.transaction_id)
-  const linkedInvoiceIds = new Set(invoiceLinkRows.map((l) => l.invoice_id))
-  const linkedExpenseIds = new Set(expenseLinkRows.map((l) => l.expense_id))
-
-  // No pending filter (2026-08-25): an unreviewed deposit is ordinary money
-  // now and can legitimately be the one that paid an invoice. /money/matches
-  // drops the same filter at its own fetch, so this badge still agrees with
-  // the page it links to (the register's own badge/list rule).
-  const matchRows: BankRow[] = allTxns.map((t) => ({
-    id: t.id, date: t.date, amount_cents: t.amount_cents, payee: t.payee, kind: t.kind,
-    linked: linkedTxnIds.has(t.id),
-  }))
-  const candidateInvoices: CandidateInvoice[] = candidateInvoiceRows.map((i) => ({
-    id: i.id,
-    number: i.number,
-    client_id: i.client_id,
-    client_name: i.clients?.name ?? '',
-    total_cents: i.total_cents,
-    sent_at: i.sent_at,
-    paid_at: i.paid_at,
-    status: i.status as 'sent' | 'paid',
-    linked: linkedInvoiceIds.has(i.id),
-  }))
-  const candidateExpenses: CandidateExpense[] = candidateExpenseRows.map((e) => ({
-    id: e.id,
-    show_id: e.show_id,
-    amount_cents: e.amount_cents,
-    spent_on: e.spent_on,
-    where_spent: e.where_spent,
-    linked: linkedExpenseIds.has(e.id),
-  }))
-  const dismissed: Dismissal[] = dismissalRows.map((d) => ({
-    transaction_id: d.transaction_id, invoice_id: d.invoice_id, expense_id: d.expense_id,
-  }))
-  const proposals = proposeMatches({
-    rows: matchRows, invoices: candidateInvoices, expenses: candidateExpenses, dismissed,
-  })
-  const matchCount = proposals.income.length + proposals.expense.length
 
   const balanceInputs: BalanceLike[] = allTxns.map((t) => ({ amount_cents: t.amount_cents, cleared: t.cleared }))
   const workingBalanceCents = workingBalance(accountRow.opening_balance_cents, balanceInputs)
