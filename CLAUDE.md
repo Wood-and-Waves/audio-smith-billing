@@ -102,6 +102,29 @@ status.
   comments mark both. `app/layout.tsx` holds the app's ONLY inline script
   (pre-paint theme read), safe only because next.config deliberately ships
   no script-src CSP — adding one breaks theming.
+- **The app header's width is LOCKED at `max-w-5xl`** and must NOT follow the
+  page's `wide` flag. It followed it for one day (2026-09-09) so the nav would
+  not end before a wide table — but only some pages are wide, so the logo moved
+  whenever Dan crossed between them. He chose the fixed width by name ("I like
+  the width it has on the invoice page") and accepted the cost: on the Money
+  screens the nav ends before the table. Chrome holds still, content varies.
+- **A chip row needs `-ml-3` to line up with the page.** `px-3` on the first
+  chip otherwise sets its text 12px inside the left edge every heading and row
+  honours. The offset is constant but reads as *changing* page to page, because
+  the highlighted pill moves — which is how Dan found it, across five
+  screenshots. Applies to MoneyNav and the budget filter chips.
+- **Before putting a count in a badge, find out what the count costs.** The
+  receipts badge is a `head + count` and free; the Matches badge is not a query
+  at all — it only exists after `proposeMatches` has run over every candidate
+  transaction, invoice, expense and dismissal. Six screens nearly paid that for
+  a number nobody asked for.
+- **Do not lazy-load a module the bundler has already split out.** Deferring
+  `components/receiptCapture` (2026-09-09) moved ~13KB over the wire — it was
+  already its own chunk, not buried in the shared bundle — while adding a
+  failure that could not happen before: a chunk that fails to fetch on a weak
+  signal throws inside `onFilePicked`, where nothing catches it, so a tapped
+  camera silently does nothing. Reverted. Measure which chunk a module is in
+  before assuming it ships with every page.
 - **UI copy:** minimal — Dan: "There are too many instructions. I understand
   what is happening." Use his vocabulary ("Non-reimbursable", not invented
   terms; category names come from his YNAB chart). List-row idiom:
@@ -391,19 +414,28 @@ status.
   merging — that double-counts $400; merge-then-split is the sanctioned
   path, parity re-run after).
 
-## Current state (2026-09-08) & where things are written
+## Current state (2026-09-09) & where things are written
 
-- **Prod migrations through 0050. 1,004 tests.** Since 2026-08-25, all live:
-  register-truth + payee aliases (0048), the 24h flight check-in alarm, the
-  **/money speed work** (the page awaited ~15 fetches in a line; two
-  Promise.all waves took a warm render from ~1,350ms to ~265ms, and the same
-  treatment went to matches/forecast/reports), one-line add row with
-  Enter-to-save, a clickable category cell, optimistic category and cleared
-  edits, **W-9 attach on invoice send** (0049), the settled-invoice dot, and
-  **receipts by email** (0050).
-- **Receipts by email** — Gmail label -> /money/receipts -> attach to the bank
-  row. Full design and its four shipped bugs are in docs/BACKLOG.md; the rules
-  that must not drift are in the lib files' own headers.
+- **Prod migrations through 0050. 1,009 tests.** Nothing is pending: no
+  migration waiting, no branch open.
+- **Shipped 2026-09-08/09, all live:** the settled-invoice dot; **receipts by
+  email** (0050 — verified on real mail, everything arrives with its
+  document); **reconciled rows editable except the amount** (the lock narrowed
+  to the one field a reconciliation attests to — `reconciledAmountRefusal`,
+  lib/ledgerRules.ts); **a closed month reads $0.00 "Rolled Forward"** instead
+  of last month's leftover (view rule only — lib/budget.ts still computes each
+  month's true figure, which is what feeds the next month's rollover); **a
+  by-date savings goal shows this month's share**, not the lifetime shortfall
+  (the pacing maths already existed and drove Auto-assign; only the label was
+  wrong); and **MoneyNav** — one nav strip on all seven Money screens.
+- **MoneyNav replaced six hand-rolled back links** (four local `BackLink`
+  definitions, two inline, disagreeing on wording). It carries no badge counts
+  by Dan's decision, and dropping the Matches badge let the ledger page shed
+  **four queries and 159 lines** — the three paged candidate/dismissal fetch
+  helpers existed there only to feed that number.
+- **Layout decisions settled 2026-09-09** (see the conventions section for the
+  rules): every Money screen is `wide`, including error and empty states; the
+  header is locked at `max-w-5xl`; chip rows carry `-ml-3`.
 - **Two environment facts worth knowing before debugging anything:** the DEV
   Supabase project pauses when idle and comes back intact (restore it from the
   dashboard; DNS and the pooler both vanish while paused, which looks exactly
@@ -411,11 +443,17 @@ status.
   resolves React to the server-components build — anything needing the full
   reconciler (@react-pdf) cannot be tested there and fails with a message that
   names nothing.
-- **What is waiting on DAN, not on code:** his 17 budget targets remain
-  unentered (prod `ledger_category_targets` = 0 rows); auto-assign renders
-  nothing until they exist. Then September budgeted in both tools, and
-  `npm run parity` at month end is the YNAB switch-off test. His ledger-era
-  invoices are now fully reconciled — 21 of 21 carry a real deposit.
+- **Known and deliberately unfixed:** content draws under the iPad status bar
+  in the home-screen web app. A safe-area padding attempt did nothing and was
+  reverted (`da561d3`); the remaining fix is viewport-fit/status-bar-style,
+  which `app/layout.tsx` records as having caused an iPhone collision. Dan:
+  "It is merely cosmetic." Not in the backlog, by his choice.
+- **What is waiting on DAN, not on code:** he has entered **2 of his budget
+  targets** (Tax Prep $500 by 2027-04-01, State License Fee $75) and the rest
+  remain. September is budgeted in both tools and now agrees except for
+  transactions the app has not imported yet — `npm run parity` at month end is
+  still the YNAB switch-off test. His ledger-era invoices are fully reconciled,
+  21 of 21.
 
 ## Superseded: state as of 2026-08-25
 

@@ -1360,3 +1360,50 @@ shape enough that it should not be assumed.
 comment at `app/money/reports/page.tsx:67`. Any new total must go through
 `explodeForReports` like the existing ones, never re-derive from
 `ledger_transactions` alone.
+
+## Money navigation and layout — SHIPPED 2026-09-09
+
+*"The ledger is the only screen in money where I can get to all the submenus
+for Money. I always have to click back to ledger."* True, and the shape was
+worse: all seven links lived in the register's own `headerActions`, while each
+sub-screen hand-rolled its way back — four defined a local `BackLink`, two
+inlined one, and they disagreed on wording ("← Ledger" vs "← Back to the
+ledger").
+
+**`components/MoneyNav.tsx`** now carries the seven on every Money screen,
+current one marked. It REPLACES the back link rather than sitting above it, so
+it costs no vertical space.
+
+**No badge counts, Dan's call** ("No numbers, just nav") — and that decision
+paid for itself. The receipts badge was a cheap `head + count`, but the Matches
+badge was not a query at all: it only existed after `proposeMatches` ran over
+every candidate transaction, invoice, expense and dismissal. Removing it let
+`/money/page.tsx` drop **four queries and 159 lines** — three paged fetch
+helpers (`fetchAllDismissals`, `fetchAllCandidateInvoices`,
+`fetchAllCandidateExpenses`) and their row types existed there only to feed
+that number. `/money/matches` keeps its own copies; nothing it does changed.
+
+### Layout decisions made the same day, and why
+
+- **Budget page takes `wide`** and its summary moved from a 20rem right-hand
+  column to a strip above the table. Dan, on an iPad: *"I don't really need the
+  summary available all the time. It can live at the top."* The column cost the
+  table a third of the page to show four short figures. The summary keeps a
+  20rem cap of its own — its rows are `justify-between` label/value pairs that
+  would strand each figure a hand's width from its label at full width.
+- **Every Money screen is `wide`**, error and empty states included (16 call
+  sites), so nothing shifts inside the section even when a page fails to load.
+- **The header is LOCKED at `max-w-5xl`.** It followed `wide` for one day so
+  the nav would not end before a wide table, but only some pages are wide, so
+  the logo moved whenever Dan crossed between them. He picked the fixed width
+  by name — *"I like the width it has on the invoice page"* — and accepted that
+  the nav now ends before the Money tables do. **Do not re-link it to `wide`.**
+- **Chip rows need `-ml-3`.** `px-3` on the first chip sets its text 12px
+  inside the left edge every heading and row honours. Constant offset, but it
+  reads as changing page to page because the highlighted pill moves — which is
+  how Dan found it, across five screenshots.
+
+**Not done, by his choice:** content draws under the iPad status bar in the
+home-screen web app. Safe-area padding did nothing and was reverted; the
+remaining fix is viewport-fit/status-bar-style, which `app/layout.tsx` records
+as having caused an iPhone collision. *"It is merely cosmetic."*
