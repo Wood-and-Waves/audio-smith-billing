@@ -63,21 +63,7 @@ export default async function AppShell({
 
   return (
     <div className="min-h-dvh">
-      {/* STEP 1 of the status-bar fix (2026-09-09). On Dan's iPad home-screen
-          web app, page content scrolls THROUGH the status-bar strip: his
-          screenshot shows the Recent Moves row and the summary figures drawn
-          on the same line as the clock and the battery. `pt-[env(...)]` pads
-          the header by whatever the device reserves for that strip, so the
-          header's own opaque bg-bg covers it and content passes underneath
-          like it does everywhere else.
-
-          Deliberately the ONLY change in this step. env(safe-area-inset-top)
-          resolves to 0px where there is no inset to report, which makes this
-          a no-op rather than a regression on the iPhone -- and the iPhone is
-          the device layout.tsx's statusBarStyle comment says a previous
-          attempt at this broke. viewport-fit and statusBarStyle are the next
-          two steps, each on its own, each checked on both devices. */}
-      <header className="sticky top-0 z-50 bg-bg border-b-2 border-accent pt-[env(safe-area-inset-top)]">
+      <header className="sticky top-0 z-50 bg-bg border-b-2 border-accent">
         {/* Matches <main>'s own cap below. Hard-coded to max-w-5xl until
             2026-09-09, which left the nav running PAST the content on every
             `wide` page — the register has looked like that for weeks, and it
