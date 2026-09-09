@@ -64,7 +64,11 @@ export default async function AppShell({
   return (
     <div className="min-h-dvh">
       <header className="sticky top-0 z-50 bg-bg border-b-2 border-accent">
-        <div className="mx-auto max-w-5xl px-6 flex items-center justify-between h-16">
+        {/* Matches <main>'s own cap below. Hard-coded to max-w-5xl until
+            2026-09-09, which left the nav running PAST the content on every
+            `wide` page — the register has looked like that for weeks, and it
+            is what Dan noticed first on the budget screen. */}
+        <div className={`mx-auto ${wide ? 'max-w-[96rem]' : 'max-w-5xl'} px-6 flex items-center justify-between h-16`}>
           <Link href="/shows" className="flex items-center gap-3 min-w-0">
             <Image src="/logo.png" alt="The Audio Smith" width={34} height={34} priority />
             {/* On a phone the mark carries the identity on its own — with the

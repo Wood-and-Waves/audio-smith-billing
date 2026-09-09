@@ -283,7 +283,12 @@ export default async function MoneyBudgetPage({
     .map((c) => ({ id: c.id, name: c.name, grp: c.grp, availableCents: rowByCategoryId.get(c.id)?.availableCents ?? 0 }))
 
   return (
-    <AppShell current="money">
+    /* `wide` for the same reason the register takes it: this is a table, and
+       at the default max-w-5xl the grid below used to hand a third of 1024px
+       to a summary column too short to fill it, leaving Dan's iPad table
+       about 624px wide with the right third blank (his screenshot,
+       2026-09-09). */
+    <AppShell current="money" wide>
       <BackLink />
       <h1 className="display text-3xl font-bold mb-8">Budget</h1>
 
@@ -368,19 +373,26 @@ export default async function MoneyBudgetPage({
         )}
       </header>
 
-      {/* Right column at `lg` and up (design doc: "Right panel"); above the
-          table below `lg`, where it reads as a strip (design doc: "The
-          summary becomes a strip at the top"). Plain DOM order puts
-          BudgetSummary first so mobile — no `order` in play there — stacks
-          it on top by default; `lg:order-*` below reassigns which grid
-          track each side lands in once there are two, without moving
-          either block's markup or duplicating either component. */}
-      <div className="grid lg:grid-cols-[1fr_20rem] gap-8">
-        <div className="lg:order-2">
+      {/* The summary reads as a strip above the table at EVERY width now.
+          It used to become a 20rem right-hand column at `lg`, which the
+          original design doc called the "Right panel" — but Dan, seeing it
+          on an iPad (2026-09-09): "I don't really need the summary
+          available all the time. It can live at the top." That column cost
+          the table a third of the page to show four short figures, and the
+          summary scrolled out of view almost immediately anyway. One column
+          for everyone: no `lg:order-*` reassignment, and the table gets the
+          whole width. */}
+      <div className="grid gap-8">
+        {/* Capped at the 20rem the right-hand column used to give it. Its rows
+            are `justify-between` label/value pairs, so at the page's full
+            1536px each figure would sit a hand's width from its own label —
+            the same wasted space this change set out to remove, pointed the
+            other way. Full width below `sm`, where a phone IS ~20rem. */}
+        <div className="sm:max-w-xs">
           <BudgetSummary month={current} />
         </div>
 
-        <div className="lg:order-1 min-w-0">
+        <div className="min-w-0">
           {/* Undo/Redo + Recent Moves (budget-phase-two Task 4) render
               beside the filter chips, not above or below them — `flex-wrap`
               on the OUTER row (not just the nav's own) is what lets
