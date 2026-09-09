@@ -64,11 +64,17 @@ export default async function AppShell({
   return (
     <div className="min-h-dvh">
       <header className="sticky top-0 z-50 bg-bg border-b-2 border-accent">
-        {/* Matches <main>'s own cap below. Hard-coded to max-w-5xl until
-            2026-09-09, which left the nav running PAST the content on every
-            `wide` page — the register has looked like that for weeks, and it
-            is what Dan noticed first on the budget screen. */}
-        <div className={`mx-auto ${wide ? 'max-w-[96rem]' : 'max-w-5xl'} px-6 flex items-center justify-between h-16`}>
+        {/* LOCKED at max-w-5xl, deliberately independent of <main>'s own cap
+            below. It briefly followed `wide` (2026-09-09) so the nav would not
+            end before a wide table -- but only some pages are wide, so the
+            logo then moved whenever Dan crossed between them, and a moving
+            logo is worse than a nav that stops short. He chose this width by
+            name: "I like the width it has on the invoice page."
+
+            So: chrome holds still, content varies. On the Money screens the
+            nav ends before the table does. That is the accepted cost, not an
+            oversight -- do not "fix" it by making this follow `wide` again. */}
+        <div className="mx-auto max-w-5xl px-6 flex items-center justify-between h-16">
           <Link href="/shows" className="flex items-center gap-3 min-w-0">
             <Image src="/logo.png" alt="The Audio Smith" width={34} height={34} priority />
             {/* On a phone the mark carries the identity on its own — with the
