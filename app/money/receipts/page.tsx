@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import AppShell from '@/components/AppShell'
+import MoneyNav from '@/components/MoneyNav'
 import ReceiptInbox, { type InboxItem } from '@/components/ReceiptInbox'
 import { proposeReceiptMatches, type ReceiptCandidateTxn } from '@/lib/receiptMatch'
 
@@ -73,13 +74,8 @@ export default async function ReceiptInboxPage() {
 
   return (
     <AppShell current="money">
-      <Link
-        href="/money"
-        className="text-xs font-semibold uppercase tracking-wider text-muted hover:text-ink"
-      >
-        ← Ledger
-      </Link>
-      <h1 className="display text-3xl font-bold mt-2 mb-6">Receipts</h1>
+      <MoneyNav current="receipts" />
+      <h1 className="display text-3xl font-bold mb-6">Receipts</h1>
       <ReceiptInbox items={items} />
     </AppShell>
   )

@@ -8,6 +8,7 @@ import {
 } from '@/lib/ledgerReports'
 import { explodeForReports, type ReportTxnForExplode } from '@/lib/ledgerSplits'
 import AppShell from '@/components/AppShell'
+import MoneyNav from '@/components/MoneyNav'
 
 export const dynamic = 'force-dynamic'
 
@@ -99,15 +100,6 @@ function LoadError({ message }: { message: string }) {
   )
 }
 
-const BackLink = () => (
-  <Link
-    href="/money"
-    className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider
-               text-muted hover:text-ink transition-colors mb-8"
-  >
-    ← Back to the ledger
-  </Link>
-)
 
 const MONTH_LABELS = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
@@ -186,7 +178,7 @@ export default async function MoneyReportsPage({
   if (!accountRow) {
     return (
       <AppShell current="money">
-        <BackLink />
+        <MoneyNav current="reports" />
         <h1 className="display text-3xl font-bold mb-4">Reports</h1>
         <p className="text-muted border-l-2 border-line pl-4 py-2 max-w-md">
           There&rsquo;s no ledger account yet, so there&rsquo;s nothing to report on. Set one up
@@ -274,7 +266,7 @@ export default async function MoneyReportsPage({
 
   return (
     <AppShell current="money">
-      <BackLink />
+      <MoneyNav current="reports" />
 
       <header className="flex flex-wrap items-baseline justify-between gap-4 mb-10">
         <h1 className="display text-3xl font-bold">Reports</h1>

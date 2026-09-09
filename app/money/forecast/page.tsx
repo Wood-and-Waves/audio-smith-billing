@@ -10,6 +10,7 @@ import {
 } from '@/lib/forecast'
 import { explodeForReports, type ReportTxnForExplode } from '@/lib/ledgerSplits'
 import AppShell from '@/components/AppShell'
+import MoneyNav from '@/components/MoneyNav'
 import ForecastTable from '@/components/ForecastTable'
 
 export const dynamic = 'force-dynamic'
@@ -266,15 +267,6 @@ function LoadError({ message }: { message: string }) {
   )
 }
 
-const BackLink = () => (
-  <Link
-    href="/money"
-    className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider
-               text-muted hover:text-ink transition-colors mb-8"
-  >
-    ← Back to the ledger
-  </Link>
-)
 
 /** One assumptions row — by default the whole row links to Settings, where
  *  every figure here (take-home, overhead override, tax rate, billing lag,
@@ -440,7 +432,7 @@ export default async function MoneyForecastPage() {
   if (!accountRow) {
     return (
       <AppShell current="money">
-        <BackLink />
+        <MoneyNav current="forecast" />
         <h1 className="display text-3xl font-bold mb-4">Forecast</h1>
         <p className="text-muted border-l-2 border-line pl-4 py-2">
           There&rsquo;s no checking account yet.{' '}
@@ -625,7 +617,7 @@ export default async function MoneyForecastPage() {
 
   return (
     <AppShell current="money">
-      <BackLink />
+      <MoneyNav current="forecast" />
       <h1 className="display text-3xl font-bold mb-8">Forecast</h1>
 
       {forecast === null ? (

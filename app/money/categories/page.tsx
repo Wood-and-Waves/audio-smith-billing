@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import AppShell from '@/components/AppShell'
+import MoneyNav from '@/components/MoneyNav'
 import CategoryEditor, { type CategoryRow } from '@/components/CategoryEditor'
 
 export const dynamic = 'force-dynamic'
@@ -43,13 +44,7 @@ export default async function MoneyCategoriesPage() {
 
   return (
     <AppShell current="money">
-      <Link
-        href="/money"
-        className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider
-                   text-muted hover:text-ink transition-colors mb-8"
-      >
-        ← Back to the ledger
-      </Link>
+      <MoneyNav current="categories" />
 
       <h1 className="display text-3xl font-bold mb-8">Categories</h1>
 

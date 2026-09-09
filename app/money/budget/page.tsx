@@ -7,6 +7,7 @@ import { autoAssignBatchLabel } from '@/lib/budgetAutoAssign'
 import { FIRST_BUDGET_MONTH, MAX_MONTHS_AHEAD } from '@/lib/budget'
 import { assembleBudget, type RawMoveRow } from './data'
 import AppShell from '@/components/AppShell'
+import MoneyNav from '@/components/MoneyNav'
 import BudgetTable, { parseBudgetFilter, type BudgetFilter } from '@/components/BudgetTable'
 import BudgetSummary from '@/components/BudgetSummary'
 import BudgetHistory from '@/components/BudgetHistory'
@@ -84,15 +85,6 @@ function LoadError({ message }: { message: string }) {
   )
 }
 
-const BackLink = () => (
-  <Link
-    href="/money"
-    className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider
-               text-muted hover:text-ink transition-colors mb-8"
-  >
-    ← Back to the ledger
-  </Link>
-)
 
 export default async function MoneyBudgetPage({
   searchParams,
@@ -126,7 +118,7 @@ export default async function MoneyBudgetPage({
   if (!assembled.assembly) {
     return (
       <AppShell current="money">
-        <BackLink />
+        <MoneyNav current="budget" />
         <h1 className="display text-3xl font-bold mb-4">Budget</h1>
         <p className="text-muted border-l-2 border-line pl-4 py-2">
           There&rsquo;s no checking account yet.{' '}
@@ -289,7 +281,7 @@ export default async function MoneyBudgetPage({
        about 624px wide with the right third blank (his screenshot,
        2026-09-09). */
     <AppShell current="money" wide>
-      <BackLink />
+      <MoneyNav current="budget" />
       <h1 className="display text-3xl font-bold mb-8">Budget</h1>
 
       <header className="flex flex-col items-center gap-5 mb-10">

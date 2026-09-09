@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { proposeMatches, type BankRow, type CandidateInvoice, type CandidateExpense, type Dismissal } from '@/lib/ledgerMatch'
 import { formatUSD } from '@/lib/money'
 import AppShell from '@/components/AppShell'
+import MoneyNav from '@/components/MoneyNav'
 import MatchQueue, { type IncomeCard, type ExpenseCard, type DismissedCard } from '@/components/MatchQueue'
 
 export const dynamic = 'force-dynamic'
@@ -292,15 +293,6 @@ function LoadError({ message }: { message: string }) {
   )
 }
 
-const BackLink = () => (
-  <Link
-    href="/money"
-    className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider
-               text-muted hover:text-ink transition-colors mb-8"
-  >
-    ← Back to the ledger
-  </Link>
-)
 
 export default async function MoneyMatchesPage() {
   const supabase = await createClient()
@@ -337,7 +329,7 @@ export default async function MoneyMatchesPage() {
   if (!accountRow) {
     return (
       <AppShell current="money">
-        <BackLink />
+        <MoneyNav current="matches" />
         <h1 className="display text-3xl font-bold mb-4">Matches</h1>
         <p className="text-muted border-l-2 border-line pl-4 py-2">
           There&rsquo;s no checking account yet.{' '}
@@ -544,7 +536,7 @@ export default async function MoneyMatchesPage() {
 
   return (
     <AppShell current="money">
-      <BackLink />
+      <MoneyNav current="matches" />
       <h1 className="display text-3xl font-bold mb-8">Matches</h1>
       <MatchQueue income={income} expense={expense} dismissed={dismissedCards} />
     </AppShell>

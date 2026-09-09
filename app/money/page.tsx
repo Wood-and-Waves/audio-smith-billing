@@ -12,6 +12,7 @@ import {
 } from '@/lib/budget'
 import { explodeForCategories, type TxnForExplode } from '@/lib/ledgerSplits'
 import AppShell from '@/components/AppShell'
+import MoneyNav from '@/components/MoneyNav'
 import MoneyRegister, {
   type CategoryOption, type LedgerAccountSummary, type LedgerTxnRow, type ShowOption, type SplitLegRow,
 } from '@/components/MoneyRegister'
@@ -848,6 +849,7 @@ export default async function MoneyPage({
 
   return (
     <AppShell current="money" wide>
+      <MoneyNav current="ledger" />
       <MoneyRegister
         account={account}
         categories={categories}
@@ -862,52 +864,7 @@ export default async function MoneyPage({
         knownPayees={knownPayees}
         aliasedRawPayees={aliasedRaw}
         uncategorizedOnly={uncategorizedOnly}
-        headerActions={
-          <>
-            <LedgerImportReconcile accountId={account.id} />
-            <Link
-              href="/money/matches"
-              className="text-xs text-muted hover:text-ink transition-colors"
-            >
-              Matches{matchCount > 0 && <span className="ml-1 font-semibold text-accent">{matchCount}</span>}
-            </Link>
-            {/* Beside Matches because it is the same job — confirming a pairing
-                the app can only propose — just with a document rather than
-                money on the other side. */}
-            <Link
-              href="/money/receipts"
-              className="text-xs text-muted hover:text-ink transition-colors"
-            >
-              Receipts{receiptInboxCount > 0 && (
-                <span className="ml-1 font-semibold text-accent">{receiptInboxCount}</span>
-              )}
-            </Link>
-            <Link
-              href="/money/budget"
-              className="text-xs text-muted hover:text-ink transition-colors"
-            >
-              Budget
-            </Link>
-            <Link
-              href="/money/forecast"
-              className="text-xs text-muted hover:text-ink transition-colors"
-            >
-              Forecast
-            </Link>
-            <Link
-              href="/money/reports"
-              className="text-xs text-muted hover:text-ink transition-colors"
-            >
-              Reports
-            </Link>
-            <Link
-              href="/money/categories"
-              className="text-xs text-muted hover:text-ink transition-colors"
-            >
-              Edit categories
-            </Link>
-          </>
-        }
+        headerActions={<LedgerImportReconcile accountId={account.id} />}
       />
     </AppShell>
   )
