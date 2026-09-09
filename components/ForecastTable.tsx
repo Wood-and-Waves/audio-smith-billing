@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useTransition } from 'react'
+import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { monthLabel } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
@@ -47,23 +47,6 @@ export default function ForecastTable({
   // keystrokes when tabbing down the column. Only the row actually saving
   // should disable.
   const [savingMonth, setSavingMonth] = useState<string | null>(null)
-
-  // `months` is rebuilt fresh on every request (app/money/forecast/page.tsx
-  // is `force-dynamic`), so router.refresh() always hands this component a
-  // brand-new array — even when a save's own value happens to equal what
-  // was already showing (e.g. clearing a field that had no saved plan sends
-  // a no-op DELETE, and plannedDrawCents, which falls back to the same
-  // settings figure, doesn't change at all). A key derived from that value
-  // would miss exactly that case, leaving the box blank while the model
-  // still resolves to the fallback. Bumping a generation counter on every
-  // new `months` reference — not on whether any particular value changed —
-  // and folding it into each row's key forces every draw input to remount
-  // and re-read `defaultValue` after every refresh, so the box can never
-  // disagree with the model it just fetched.
-  const [refreshGen, setRefreshGen] = useState(0)
-  useEffect(() => {
-    setRefreshGen((g) => g + 1)
-  }, [months])
 
   return (
     <div className="overflow-x-auto">
@@ -115,8 +98,23 @@ export default function ForecastTable({
                     the net "left to take" figure is shown alongside it,
                     read-only, only for the current month.
                   */}
+                  {/*
+                    Key is deliberately stable (m.month, not tied to a
+                    refresh) — a generation-bumped key was tried on
+                    2026-09-09 and reverted the same day. Changing the key
+                    remounts the input, and the save that triggers a refresh
+                    is fire-and-forget: rows re-enable before the refreshed
+                    `months` payload arrives, so the user can already be
+                    typing into the NEXT cell when the remount lands. That
+                    discards focus and whatever they'd typed since — a worse
+                    bug than the one being fixed. Residual cost of reverting:
+                    after clearing a month that had no saved plan, the box
+                    shows blank while the model still charges the take-home
+                    fallback, until the next full navigation re-mounts the
+                    table from scratch.
+                  */}
                   <input
-                    key={`${m.month}:${refreshGen}`}
+                    key={m.month}
                     aria-label={`Planned draw for ${monthLabel(m.month)}`}
                     inputMode="decimal"
                     className={`${FIELD_FULL} tabular text-right`}
