@@ -115,10 +115,18 @@ Tax set-aside is unchanged: it already follows `incomeCents − overheadCents`.
 - Every forecast line drops by the reserved total (**~$15,800** today).
   Dan: *"The runway doesn't get shorter. It gets more accurate and more
   conservative which is important."*
-- **The current-month draw reads imported bank data.** If Dan pays himself and
-  has not imported, that line runs OPTIMISTIC until he does. Every other change
-  here errs pessimistic; this one does not, and it is the only one that can
-  flatter him.
+- **The current-month draw reads imported bank data — but only the excess over
+  plan is exposed.** If Dan pays himself and has not imported it yet, the
+  starting balance is high by exactly the unimported amount (it's still
+  sitting in the real bank, and `workingBalance` mirrors that) and the current
+  month's remaining-to-draw charge is high by that same amount
+  (`alreadyDrawnThisMonth` can't see a transaction that isn't imported). For
+  any unimported draw UP TO the plan, those two errors cancel exactly and the
+  ending balance stays correct. Only the excess is real exposure —
+  `max(0, unimported draws − plan)` — once he's drawn past what's planned
+  without importing, that excess is invisible and the line runs optimistic by
+  that amount. Every other change here errs pessimistic; this is the only
+  place any optimism can slip in, and it's bounded to that excess.
 - Runway now moves when Dan re-budgets even though the bank has not changed
   (money into Retained Earnings shortens it). Correct, but new behaviour.
 

@@ -1450,9 +1450,16 @@ that is not overhead at all.
 
 ### Two things worth keeping
 
-- **The current-month draw reads imported bank data.** If Dan pays himself and
-  does not import, that line runs OPTIMISTIC until he does. Every other part of
-  this change errs pessimistic; this one does not.
+- **The current-month draw reads imported bank data — but only the excess over
+  plan is exposed.** If Dan pays himself and doesn't import it yet, the
+  starting balance is high by exactly the unimported amount (still sitting in
+  the real bank, mirrored in `workingBalance`) and the remaining-to-draw
+  charge is high by that same amount (`alreadyDrawnThisMonth` can't see an
+  unimported transaction). For any unimported draw UP TO the plan those two
+  errors cancel exactly and the ending balance stays correct — the real
+  exposure is only `max(0, unimported draws − plan)`, the amount drawn past
+  what was planned. Every other part of this change errs pessimistic; this is
+  the only place any optimism can slip in, and it's bounded to that excess.
 - **The budget cannot supply the draw plan**, which is why the table exists.
   September assigns $3,784.65 to owner pay while he intended to take $925 — the
   envelope accumulates toward future draws and also carries personal expenses.
@@ -1471,3 +1478,17 @@ future payment) beside Taxes (already modelled) and Retained Earnings (not a
 cost at all). His true non-reimbursable overhead measured **$657.60/month**
 against an **$800** override, and a flat figure survives lumpy annual bills
 better than a trailing average does.
+
+**Dead code found in review, not removed this wave:**
+
+- `lib/envelopes.ts` (`envelopeBalances`, `netAllocated`, `availableToAllocate`)
+  has zero callers anywhere outside its own `scripts/test/envelopes.test.ts`.
+  It backed the 0030 envelope feature, which shipped with `ledger_envelope_moves`
+  permanently empty — nothing writes to that table — and its last real caller
+  (the forecast page's starting-balance subtraction) was deleted in this same
+  wave, along with the page comment that used to explain why the table stayed
+  empty. Fully tested, fully dead; the tests will keep passing forever without
+  proving anything runs in production.
+- `daysInMonth()` in `lib/forecast.ts` is dead for the same reason: it lost its
+  only caller when the current month's draw stopped being pro-rated by
+  calendar day (this section, above).

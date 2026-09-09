@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { monthLabel } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
@@ -39,8 +39,31 @@ export default function ForecastTable({
   // line still names the month correctly either way, so nothing is lost.
 
   const router = useRouter()
-  const [pending, startTransition] = useTransition()
+  const [, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  // Which row's save is in flight — NOT useTransition's own `pending`, which
+  // is shared across every row's input. Disabling on that shared flag meant
+  // blurring cell A disabled cell B the instant focus landed there, dropping
+  // keystrokes when tabbing down the column. Only the row actually saving
+  // should disable.
+  const [savingMonth, setSavingMonth] = useState<string | null>(null)
+
+  // `months` is rebuilt fresh on every request (app/money/forecast/page.tsx
+  // is `force-dynamic`), so router.refresh() always hands this component a
+  // brand-new array — even when a save's own value happens to equal what
+  // was already showing (e.g. clearing a field that had no saved plan sends
+  // a no-op DELETE, and plannedDrawCents, which falls back to the same
+  // settings figure, doesn't change at all). A key derived from that value
+  // would miss exactly that case, leaving the box blank while the model
+  // still resolves to the fallback. Bumping a generation counter on every
+  // new `months` reference — not on whether any particular value changed —
+  // and folding it into each row's key forces every draw input to remount
+  // and re-read `defaultValue` after every refresh, so the box can never
+  // disagree with the model it just fetched.
+  const [refreshGen, setRefreshGen] = useState(0)
+  useEffect(() => {
+    setRefreshGen((g) => g + 1)
+  }, [months])
 
   return (
     <div className="overflow-x-auto">
@@ -93,12 +116,18 @@ export default function ForecastTable({
                     read-only, only for the current month.
                   */}
                   <input
+                    key={`${m.month}:${refreshGen}`}
                     aria-label={`Planned draw for ${monthLabel(m.month)}`}
                     inputMode="decimal"
                     className={`${FIELD_FULL} tabular text-right`}
                     defaultValue={(m.plannedDrawCents / 100).toFixed(2)}
-                    disabled={pending}
+                    disabled={savingMonth === m.month}
                     onBlur={(e) => {
+                      // Clear any stale error from a PRIOR row's failed save
+                      // before anything else runs, so tabbing through
+                      // unchanged cells starts from a clean banner instead
+                      // of leaving yesterday's failure on screen.
+                      setError(null)
                       const raw = e.target.value.trim()
                       const cents = raw === '' ? null : Math.round(Number(raw) * 100)
                       if (cents !== null && !Number.isFinite(cents)) return
@@ -119,10 +148,12 @@ export default function ForecastTable({
                       // while skipping it would risk silently ignoring a
                       // real clear against an existing plan.
                       if (cents === m.plannedDrawCents) return
+                      setSavingMonth(m.month)
                       startTransition(async () => {
                         const res = await setDrawPlan(m.month, cents)
                         if ('error' in res) setError(res.error)
-                        else { setError(null); router.refresh() }
+                        else router.refresh()
+                        setSavingMonth(null)
                       })
                     }}
                   />
