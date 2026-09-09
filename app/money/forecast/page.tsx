@@ -478,15 +478,7 @@ export default async function MoneyForecastPage() {
     : []
   const startingBalanceCents = workingBalanceCents - reservedCents(reserveRows)
 
-  // Only the current month, only outflows: what he has already paid himself
-  // this month, which month 0's draw is charged NET of.
   const thisMonth = today.slice(0, 7)
-  const ownerPayDrawnThisMonthCents = txnRows.reduce(
-    (sum, t) => (t.kind === 'owner_pay' && t.date.slice(0, 7) === thisMonth && t.amount_cents < 0
-      ? sum - t.amount_cents
-      : sum),
-    0,
-  )
 
   const clients: ForecastClient[] = (clientRows ?? []).map((c) => ({
     id: c.id, name: c.name, terms_days: c.terms_days,
@@ -555,6 +547,23 @@ export default async function MoneyForecastPage() {
     date: line.date, amount_cents: line.amountCents, kind: line.kind,
   }))
   const computedOverheadCents = computeOverheadCents(overheadTxns, today)
+
+  // Only the current month, only outflows: what he has already paid himself
+  // this month, which month 0's draw is charged NET of. Reads `overheadTxns`
+  // — the SAME exploded lines computeOverheadCents just used above — rather
+  // than raw `txnRows`, for the identical reason stated on RawTxnRow: a
+  // split parent's own `kind` is unchanged by splitting (only category_id is
+  // forced null), so an owner_pay parent split into an owner_pay leg + an
+  // expense leg (lib/ledgerSplits.ts's $400 case) must not have its FULL
+  // amount counted as drawn — and the mirror case, an owner_pay leg under a
+  // non-owner_pay parent, must still be counted. Reading the parent's own
+  // kind off `txnRows` got both directions wrong.
+  const ownerPayDrawnThisMonthCents = overheadTxns.reduce(
+    (sum, t) => (t.kind === 'owner_pay' && t.date.slice(0, 7) === thisMonth && t.amount_cents < 0
+      ? sum - t.amount_cents
+      : sum),
+    0,
+  )
   const overheadCents = overheadOverrideCents ?? computedOverheadCents
   const taxRateBp = settingsRow?.tax_setaside_bp ?? 0
   const billingLagDays = settingsRow?.billing_lag_days ?? 7
