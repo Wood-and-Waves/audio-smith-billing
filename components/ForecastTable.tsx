@@ -23,20 +23,22 @@ export default function ForecastTable({
   /** YYYY-MM — the last month carrying booked work, or null. */
   bookedThrough: string | null
 }) {
-  // buildForecast's month walk stops the instant it hits an uncovered month
-  // (lib/forecast.ts, the `if (!covered) { ...; break }`), so the returned
-  // array holds at most one uncovered month and it is always the last row —
-  // no separate search needed.
-  const lastIndex = months.length - 1
+  // EVERY short month is marked, not just the last row. Until 2026-09-09 the
+  // walk stopped at the first uncovered month, so the array held at most one
+  // and it was always last — `i === lastIndex && !m.covered` was a valid
+  // shorthand. The walk now runs the whole horizon (one short month was
+  // hiding every month after it), so that shorthand would mark a row red
+  // only when the LAST of 24 months happens to be short. In the case this
+  // table exists to show — September short, October recovering on booked
+  // work — it would have marked nothing at all, silently dropping the very
+  // warning the change was meant to surface. Read `!m.covered` per row.
 
-  // bookedThrough now names the month WORK ends (lib/forecast.ts), which is
-  // computed independently of the walk and can fall on a month past the
-  // last rendered row when the walk broke early on an uncovered month first
-  // (a thin balance biting before the calendar does). The check below
-  // (`m.month === bookedThrough`) simply never matches in that case, so the
-  // marker is silently omitted rather than mismarking some other row or
-  // needing a fallback — the headline's own "Booked work runs out after…"
-  // line still names the month correctly either way, so nothing is lost.
+  // bookedThrough names the month WORK ends (lib/forecast.ts), computed
+  // independently of the walk. It can still fall past the last rendered row
+  // when work is booked beyond the 24-month horizon; the check below simply
+  // never matches then, so the marker is omitted rather than mismarking some
+  // other row — the headline's own "Booked work runs out after…" line still
+  // names the month correctly either way.
 
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -63,7 +65,7 @@ export default function ForecastTable({
         </thead>
         <tbody>
           {months.map((m, i) => {
-            const uncovered = i === lastIndex && !m.covered
+            const uncovered = !m.covered
             const isBookedThrough = m.month === bookedThrough
             return (
               <tr
