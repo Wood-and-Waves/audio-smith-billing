@@ -554,8 +554,14 @@ export function buildForecast(input: {
   const months: ForecastMonth[] = []
   const startMonth = today.slice(0, 7)
   let balance = startingBalanceCents
-  let coveredThrough: string | null = null
-  let beyondHorizon = false
+  // The index of the FIRST month the balance goes negative, or null if none
+  // does. Recorded rather than acted on: the walk used to `break` here, which
+  // meant one short month blanked every month after it — and once reserved
+  // money came out of the starting balance (2026-09-09) month 0 goes short
+  // often, so the table went dark exactly when Dan most needed to see the
+  // work landing next month. `coveredThrough` still means what it always
+  // meant: the last month before the first shortfall.
+  let firstUncovered: number | null = null
 
   for (let i = 0; i < HORIZON_MONTHS; i++) {
     const month = addMonths(startMonth, i)
@@ -588,15 +594,14 @@ export function buildForecast(input: {
       endingBalanceCents: balance, covered,
     })
 
-    if (!covered) {
-      coveredThrough = i === 0 ? null : addMonths(startMonth, i - 1)
-      break
-    }
-    if (i === HORIZON_MONTHS - 1) {
-      coveredThrough = month
-      beyondHorizon = true
-    }
+    if (!covered && firstUncovered === null) firstUncovered = i
   }
+
+  const coveredThrough: string | null =
+    firstUncovered === null ? addMonths(startMonth, HORIZON_MONTHS - 1)
+    : firstUncovered === 0 ? null
+    : addMonths(startMonth, firstUncovered - 1)
+  const beyondHorizon = firstUncovered === null
 
   return { months, coveredThrough, beyondHorizon, bookedThrough, inflows, notProjected, showProjections }
 }

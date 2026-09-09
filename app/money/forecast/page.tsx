@@ -589,11 +589,13 @@ export default async function MoneyForecastPage() {
 
   const overdueInflows = forecast?.inflows.filter((f) => f.overdue) ?? []
   const bookedShowsTotalCents = forecast?.showProjections.reduce((sum, sp) => sum + sp.totalCents, 0) ?? 0
-  // ForecastTable stops rendering at the first uncovered month (or the
-  // horizon), but bookedShowsTotalCents above sums EVERY showProjection
-  // regardless of whether the table below has a row for the month it lands
-  // in — so this can be the last month actually on the page, not the last
-  // month with booked work. Used to flag individual Booked-shows rows whose
+  // Since 2026-09-09 the table runs the WHOLE horizon — the walk no longer
+  // stops at the first uncovered month, because one short month was hiding
+  // every month after it. So this is now the horizon's last month in every
+  // case, and a show still lands past it only when its cash arrives beyond
+  // the horizon itself. bookedShowsTotalCents above sums EVERY
+  // showProjection regardless of whether the table has a row for the month
+  // it lands in. Used to flag individual Booked-shows rows whose
   // cash lands past it (see BookedShowRow's "beyond the table" marker);
   // does not change any arithmetic.
   const lastRenderedMonth = forecast && forecast.months.length > 0

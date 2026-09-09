@@ -681,7 +681,9 @@ test('the first uncovered month is identified exactly, and coveredThrough is the
   assert.equal(result.months[0].covered, true)
   assert.equal(result.months[1].endingBalanceCents, -150000)
   assert.equal(result.months[1].covered, false)
-  assert.equal(result.months.length, 2)
+  // The walk no longer stops at the first shortfall (2026-09-09) — it runs the
+  // whole horizon so a bad month cannot hide the months after it.
+  assert.equal(result.months.length, HORIZON_MONTHS)
   assert.equal(result.coveredThrough, '2026-08')
 })
 
@@ -690,7 +692,7 @@ test('coveredThrough is null when the very first month is already uncovered', ()
     startingBalanceCents: 0,
     assumptions: assumptions({ overheadCents: 500000, takeHomeCents: 500000, taxRateBp: 0 }),
   }))
-  assert.equal(result.months.length, 1)
+  assert.equal(result.months.length, HORIZON_MONTHS)
   assert.equal(result.months[0].covered, false)
   assert.equal(result.coveredThrough, null)
 })
@@ -1261,4 +1263,47 @@ test('reservedCents floors each category at zero rather than netting negatives',
 
 test('reservedCents is zero for an empty ledger', () => {
   assert.equal(reservedCents([]), 0)
+})
+
+// ---------------------------------------------------------------------------
+// A short month must not blank the rest of the table. Dan, seeing September
+// alone and red on 2026-09-09 with $11,544 of booked October work listed
+// directly beneath it: the walk used to `break` at the first uncovered month,
+// so one bad month hid every good one after it. That truncation was survivable
+// while the runway started from the whole bank balance; once reserved money
+// came out of the starting figure, month 0 goes short often and the table went
+// dark exactly when it was most worth reading.
+
+test('a short first month does not truncate the walk — later months still project', () => {
+  const bigInvoice = invoice({ id: 'i1', status: 'sent', total_cents: 5_000_000, sent_at: '2026-08-13T00:00:00Z' })
+  const result = buildForecast(baseInput({
+    startingBalanceCents: 0,
+    invoices: [bigInvoice],
+    assumptions: assumptions({ overheadCents: 100_000, takeHomeCents: 100_000, taxRateBp: 0, billingLagDays: 0 }),
+  }))
+  // Month 0 is short with no income: 0 - 100,000 - 100,000.
+  assert.equal(result.months[0].endingBalanceCents, -200_000)
+  assert.equal(result.months[0].covered, false)
+  // ...and the walk continues anyway, so the invoice landing in month 1 shows.
+  assert.equal(result.months.length, HORIZON_MONTHS)
+  assert.equal(result.months[1].incomeCents, 5_000_000)
+  assert.equal(result.months[1].endingBalanceCents, 4_600_000)
+  assert.equal(result.months[1].covered, true)
+  // coveredThrough still names the month before the FIRST uncovered one.
+  assert.equal(result.coveredThrough, null)
+})
+
+test('coveredThrough is the month before the first uncovered one even when later months recover', () => {
+  const late = invoice({ id: 'i1', status: 'sent', total_cents: 5_000_000, sent_at: '2026-09-13T00:00:00Z' })
+  const result = buildForecast(baseInput({
+    startingBalanceCents: 150_000,
+    invoices: [late],
+    assumptions: assumptions({ overheadCents: 100_000, takeHomeCents: 0, taxRateBp: 0, billingLagDays: 0 }),
+  }))
+  // 150,000 -> 50,000 (covered) -> -50,000 (first uncovered) -> recovers later.
+  assert.equal(result.months[0].covered, true)
+  assert.equal(result.months[1].covered, false)
+  assert.equal(result.coveredThrough, '2026-08')
+  assert.equal(result.months.length, HORIZON_MONTHS)
+  assert.equal(result.beyondHorizon, false)
 })
