@@ -1407,3 +1407,67 @@ that number. `/money/matches` keeps its own copies; nothing it does changed.
 home-screen web app. Safe-area padding did nothing and was reverted; the
 remaining fix is viewport-fit/status-bar-style, which `app/layout.tsx` records
 as having caused an iPhone collision. *"It is merely cosmetic."*
+
+## Forecast: reserved money and planned draws — SHIPPED 2026-09-09 (0051)
+
+Dan asked how the forecast works and whether it reflected what he had spent
+and budgeted. Reading it against live data found two things, and both are now
+fixed. Full reasoning, with his own words on each decision, is in
+`docs/superpowers/specs/2026-09-09-forecast-reserves-and-draws-design.md`.
+
+**1. It counted reserved money as runway.** The starting balance was the whole
+working balance — this file's predecessor comment on `app/money/forecast/
+page.tsx` already recorded the gap as deferred. Measured the day he asked: of
+an $18,350.27 balance, **$15,802.47 was reserved**, including **$13,000 held
+for taxes**. The forecast was offering him the taxman's money as runway.
+
+Now: `startingBalance = workingBalance − reservedCents(...)`, where reserved is
+every category's available EXCEPT the owner-pay envelope, each floored at zero.
+
+**Owner pay is the one exception and the reason is structural, not a
+preference** — its balance funds the very outflow the forecast already
+subtracts (the draw), so hiding it while still charging the draw would count it
+twice. Taxes and Retained Earnings fund obligations the forecast models
+nowhere, which is exactly why leaving them in inflated the runway. Dan: *"That
+available is set aside for the next time I pay myself ... it needs to remain on
+the forecast."*
+
+**2. The current month's draw was pro-rated by calendar day.** His draws are
+lumpy on purpose — $14,936 in July, $0 in August, $925 in September because he
+took the rest from Wood and Waves that month. Dan: *"Proration is just flat out
+incorrect for how this should be calculated."*
+
+Now each month carries its own planned draw (`forecast_draw_plans`, editable
+directly on the forecast table), and the current month charges
+`max(0, planned − alreadyDrawnThisMonth)`. A month with no plan falls back to
+`settings.monthly_take_home_cents`; **absence means "the usual", never zero**,
+which is why the fallback is `??` and must never become `||`.
+
+Overhead does NOT get the "what's left" treatment and is charged in full every
+month: with Dan's manual override in force, "overhead spent so far" has no
+clean definition, and most of a month's real spend is reimbursable gig cost
+that is not overhead at all.
+
+### Two things worth keeping
+
+- **The current-month draw reads imported bank data.** If Dan pays himself and
+  does not import, that line runs OPTIMISTIC until he does. Every other part of
+  this change errs pessimistic; this one does not.
+- **The budget cannot supply the draw plan**, which is why the table exists.
+  September assigns $3,784.65 to owner pay while he intended to take $925 — the
+  envelope accumulates toward future draws and also carries personal expenses.
+  Checked before building, not assumed.
+
+### Found in review, worth remembering
+
+The owner-pay-drawn read originally summed raw ledger rows, so a split parent's
+own kind stood in for its legs'. Now a repo-wide convention in CLAUDE.md: any
+kind-shaped read goes through `explodeForReports`.
+
+**Deferred, not built:** overhead derived from budgeted targets. Dan keeps his
+manual override. Doing it properly needs a per-category "counts as overhead"
+flag, because his groups cannot express it — Savings holds Tax Prep (a real
+future payment) beside Taxes (already modelled) and Retained Earnings (not a
+cost at all). His true non-reimbursable overhead measured **$657.60/month**
+against an **$800** override, and a flat figure survives lumpy annual bills
+better than a trailing average does.

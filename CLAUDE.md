@@ -102,6 +102,15 @@ status.
   comments mark both. `app/layout.tsx` holds the app's ONLY inline script
   (pre-paint theme read), safe only because next.config deliberately ships
   no script-src CSP — adding one breaks theming.
+- **Any kind-shaped read of ledger rows must go through `explodeForReports`.**
+  A split parent keeps its own `kind` (only its `category_id` is nulled), so
+  reading raw rows lets a parent's kind stand in for its legs'. Caught in
+  review on 2026-09-09: the forecast's owner-pay-drawn read summed split
+  parents, so an owner_pay parent split into owner_pay + expense legs counted
+  the FULL parent as drawn — shrinking the projected draw and OVERSTATING the
+  runway. Dan has exactly one split in prod and its parent IS owner_pay
+  ($2,912.60, March). `computeOverheadCents` on the same page already did it
+  correctly; the new read did not.
 - **The app header's width is LOCKED at `max-w-5xl`** and must NOT follow the
   page's `wide` flag. It followed it for one day (2026-09-09) so the nav would
   not end before a wide table — but only some pages are wide, so the logo moved
@@ -416,8 +425,23 @@ status.
 
 ## Current state (2026-09-09) & where things are written
 
-- **Prod migrations through 0050. 1,009 tests.** Nothing is pending: no
+- **Prod migrations through 0051. 1,021 tests.** Nothing is pending: no
   migration waiting, no branch open.
+- **The forecast is budget-aware (2026-09-09, 0051).** Three changes, all in
+  `lib/forecast.ts` plus the page: it starts from UNRESERVED cash (working
+  balance minus every category's available except the owner-pay envelope,
+  each floored at zero — `reservedCents`); the current month charges what is
+  LEFT to draw (`max(0, planned - alreadyDrawnThisMonth)`) instead of a
+  calendar fraction, Dan: *"Proration is just flat out incorrect for how this
+  should be calculated"*; and each month carries its own planned draw
+  (`forecast_draw_plans`, editable on the table), falling back to
+  `settings.monthly_take_home_cents`. **Absence means "the usual", never
+  zero** — the fallback is `??`, never `||`, or a planned zero would silently
+  become the take-home figure. Owner pay is the ONE reserve left in the
+  runway, and structurally so: its balance funds the draw line the forecast
+  already subtracts, while Taxes and Retained Earnings fund obligations it
+  models nowhere. Reasoning in
+  docs/superpowers/specs/2026-09-09-forecast-reserves-and-draws-design.md.
 - **Shipped 2026-09-08/09, all live:** the settled-invoice dot; **receipts by
   email** (0050 — verified on real mail, everything arrives with its
   document); **reconciled rows editable except the amount** (the lock narrowed
