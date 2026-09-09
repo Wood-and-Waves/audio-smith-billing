@@ -1292,3 +1292,29 @@ side-by-side window.
 Recommend 2, with 1 as a cheap belt-and-braces. Verify by dragging the window
 across the 640-820px band, not by checking one width — a single screenshot at
 either end shows nothing wrong.
+
+## Home-screen quick action for Snap a receipt — DEAD END (2026-09-08)
+
+Dan asked whether a home-screen web app can carry the long-press contextual
+menu a native iPhone app has. It cannot, and there is nothing worth building
+here. Recorded so it is not investigated again.
+
+- **Safari does not implement the manifest `shortcuts` member.** It is the web
+  equivalent of a native Quick Action, works on Android and desktop Chrome,
+  and is still absent on iOS through iOS 26. Long-pressing a home-screen web
+  app gives Apple's own menu (Edit Home Screen / Share / Delete) and nothing
+  an author can add to. Adding `shortcuts` to `app/manifest.ts` would cost
+  little and change nothing on his phone.
+- **A deep link cannot open the camera either.** `SnapReceipt` fires a hidden
+  file input's `.click()`, which browsers honour only inside a real user
+  gesture; a page that tried it on load is blocked. The best a link can do is
+  land on a page with a button.
+- **Which is already where he is.** `AppShell` renders SnapReceipt `sm:hidden`
+  in the header of every mobile page, deliberately under his thumb on open.
+  Icon → camera is two taps, and a second home-screen icon (or a real native
+  quick action, which still has to launch the app) would also be two.
+
+The only real saving is outside the app: an iOS Shortcut bound to the Action
+Button or Back Tap skips hunting for the icon. Nothing to build.
+
+Dan's call: *"It's not worth it. It's a nice to have, not a necessity."*
