@@ -551,6 +551,18 @@ export function buildForecast(input: {
   const incomeByMonth = new Map<string, number>()
   for (const f of inflows) incomeByMonth.set(f.month, (incomeByMonth.get(f.month) ?? 0) + f.amountCents)
 
+  // The last month any money is expected to arrive. Dan's stop rule
+  // (2026-09-09) needs BOTH halves — "only run until after the ending balance
+  // go below zero AND the income drops to 0" — so a short month with work
+  // still landing later must not end the walk: those later months are exactly
+  // what say whether he recovers. Derived from the whole inflow map rather
+  // than from `bookedThrough`, so a gap month with no income in the middle of
+  // a booked run cannot be mistaken for the end of the money.
+  let lastIncomeMonth: string | null = null
+  for (const [m, cents] of incomeByMonth) {
+    if (cents !== 0 && (lastIncomeMonth === null || m > lastIncomeMonth)) lastIncomeMonth = m
+  }
+
   const months: ForecastMonth[] = []
   const startMonth = today.slice(0, 7)
   let balance = startingBalanceCents
@@ -595,6 +607,13 @@ export function buildForecast(input: {
     })
 
     if (!covered && firstUncovered === null) firstUncovered = i
+
+    // Stop once the balance is under AND nothing further is coming in: every
+    // month after that is the same subtraction repeated, and 24 rows of it
+    // buries the months that still say something. Until 2026-09-09 this broke
+    // at the FIRST uncovered month regardless of income, which meant one short
+    // September hid $11,544 of booked October work sitting right beneath it.
+    if (!covered && (lastIncomeMonth === null || month >= lastIncomeMonth)) break
   }
 
   const coveredThrough: string | null =

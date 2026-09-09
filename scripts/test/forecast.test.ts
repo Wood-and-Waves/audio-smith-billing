@@ -681,9 +681,9 @@ test('the first uncovered month is identified exactly, and coveredThrough is the
   assert.equal(result.months[0].covered, true)
   assert.equal(result.months[1].endingBalanceCents, -150000)
   assert.equal(result.months[1].covered, false)
-  // The walk no longer stops at the first shortfall (2026-09-09) — it runs the
-  // whole horizon so a bad month cannot hide the months after it.
-  assert.equal(result.months.length, HORIZON_MONTHS)
+  // Stops after month 1: it is under AND there is no income anywhere in this
+  // fixture, so nothing further is worth projecting.
+  assert.equal(result.months.length, 2)
   assert.equal(result.coveredThrough, '2026-08')
 })
 
@@ -692,7 +692,7 @@ test('coveredThrough is null when the very first month is already uncovered', ()
     startingBalanceCents: 0,
     assumptions: assumptions({ overheadCents: 500000, takeHomeCents: 500000, taxRateBp: 0 }),
   }))
-  assert.equal(result.months.length, HORIZON_MONTHS)
+  assert.equal(result.months.length, 1)
   assert.equal(result.months[0].covered, false)
   assert.equal(result.coveredThrough, null)
 })
@@ -1306,4 +1306,39 @@ test('coveredThrough is the month before the first uncovered one even when later
   assert.equal(result.coveredThrough, '2026-08')
   assert.equal(result.months.length, HORIZON_MONTHS)
   assert.equal(result.beyondHorizon, false)
+})
+
+// Dan's rule, 2026-09-09: "The forecast should only run until after the ending
+// balance go below zero and the income drops to 0." Both halves matter — a
+// short month with work still landing later is worth showing, because the
+// months after it are what say whether he recovers.
+
+test('a short month with income still to come does NOT stop the walk', () => {
+  // 300,000 lands in month 1. Month 0 is short, but stopping there would hide
+  // the very month that answers the question.
+  const inv = invoice({ id: 'i1', status: 'sent', total_cents: 300_000, sent_at: '2026-08-13T00:00:00Z' })
+  const result = buildForecast(baseInput({
+    startingBalanceCents: 0,
+    invoices: [inv],
+    assumptions: assumptions({ overheadCents: 100_000, takeHomeCents: 0, taxRateBp: 0, billingLagDays: 0 }),
+  }))
+  assert.equal(result.months[0].endingBalanceCents, -100_000)
+  assert.equal(result.months[0].covered, false)
+  assert.equal(result.months[1].incomeCents, 300_000)
+  assert.equal(result.months[1].covered, true)
+  // ...and it runs on until the balance is under with nothing left to arrive:
+  // month 2 lands exactly on zero (still covered), month 3 goes under.
+  assert.equal(result.months[2].endingBalanceCents, 0)
+  assert.equal(result.months[3].endingBalanceCents, -100_000)
+  assert.equal(result.months.length, 4)
+  assert.equal(result.coveredThrough, null) // month 0 was the FIRST shortfall
+})
+
+test('with no income at all, the walk stops at the first month under', () => {
+  const result = buildForecast(baseInput({
+    startingBalanceCents: 50_000,
+    assumptions: assumptions({ overheadCents: 100_000, takeHomeCents: 0, taxRateBp: 0 }),
+  }))
+  assert.equal(result.months.length, 1)
+  assert.equal(result.months[0].covered, false)
 })
