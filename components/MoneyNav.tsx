@@ -43,7 +43,14 @@ export type MoneyNavKey = (typeof ITEMS)[number]['key']
 export default function MoneyNav({ current }: { current: MoneyNavKey }) {
   return (
     <nav aria-label="Money sections" className="-mx-6 px-6 mb-8 overflow-x-auto">
-      <div className="flex items-center gap-2 min-w-max">
+      {/* -ml-3 cancels the first chip's own px-3 so its TEXT lines up with the
+          page title and every row beneath it, instead of sitting 12px inside
+          the page's left edge. The active pill still keeps its padding and
+          bleeds those 12px leftward, which is how a chip nav is meant to sit.
+          Dan spotted it across five screenshots (2026-09-09): the offset is
+          constant, but because the highlighted pill moves from page to page,
+          it reads as the alignment changing. */}
+      <div className="flex items-center gap-2 min-w-max -ml-3">
         {ITEMS.map((item) => {
           const active = item.key === current
           return (

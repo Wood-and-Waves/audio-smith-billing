@@ -393,7 +393,10 @@ export default async function MoneyBudgetPage({
               keeps the chips from stretching to match BudgetHistory's own
               height once its Recent Moves disclosure opens and grows tall. */}
           <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
-            <nav aria-label="Filter categories" className="flex flex-wrap gap-2">
+            {/* -ml-3 for the same reason as MoneyNav's: the first chip's px-3
+                otherwise sets its text 12px inside the page's own left edge,
+                which every heading and row below it honours. */}
+            <nav aria-label="Filter categories" className="flex flex-wrap gap-2 -ml-3">
               {FILTER_CHIPS.map((chip) => {
                 const active = chip.key === filter
                 const label =
