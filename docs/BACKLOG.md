@@ -1318,3 +1318,45 @@ The only real saving is outside the app: an iOS Shortcut bound to the Action
 Button or Back Tap skips hunting for the icon. Nothing to build.
 
 Dan's call: *"It's not worth it. It's a nice to have, not a necessity."*
+
+## Gross earnings by month and by quarter — predicted and actual (2026-09-09, Dan)
+
+*"I would like to get per month and per quarter gross earnings predictions
+and reports."* Filed, not built. Part of this already exists, so whoever
+picks it up should start by reading what is here rather than building fresh.
+
+**What exists today:**
+
+- **Actual, per month.** `monthlyTotals` (`lib/ledgerReports.ts:89`) returns
+  `{ month, incomeCents, expenseCents }` for all twelve months of one calendar
+  year, rendered as the "By month" section of `/money/reports`. Its
+  `incomeCents` IS gross earnings for that month — it sums only
+  `kind === 'income'`, so owner pay and transfers are correctly excluded.
+- **Predicted, per month.** `/money/forecast` already projects booked shows
+  into the month each one lands in (`ShowProjection.landsMonth`,
+  `forecast.months`), with "Expected now", "Booked shows" and an Assumptions
+  block. That is the prediction half, already per month.
+
+**What is genuinely missing:**
+
+1. **Quarters. There is no quarter concept anywhere in the codebase** — a
+   grep finds only "quarter hour" in the punch clock, which is unrelated.
+   Both the actual and the predicted side would need it.
+2. **Predicted and actual in one view.** Forecast and Reports are separate
+   screens with separate mental models; nothing puts "we expected X, we
+   earned Y" side by side for a month or a quarter, which is what makes a
+   prediction worth keeping.
+3. **A window that is not one calendar year.** `monthlyTotals` takes a `year`
+   and always emits twelve months. Quarters spanning a year boundary, or a
+   trailing-four-quarters view, need a different shape.
+
+**Ask Dan before designing:** whether the driver is estimated quarterly taxes
+(the obvious guess for an S-Corp, and it would make calendar quarters and
+gross-income-only the right definitions) or business planning (which might
+want rolling quarters and net rather than gross). The answer changes the
+shape enough that it should not be assumed.
+
+**Watch out for:** a split leg's kind can differ from its parent's — see the
+comment at `app/money/reports/page.tsx:67`. Any new total must go through
+`explodeForReports` like the existing ones, never re-derive from
+`ledger_transactions` alone.
