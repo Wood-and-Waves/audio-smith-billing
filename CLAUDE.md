@@ -496,13 +496,15 @@ status.
   serves a transaction CSV (`lib/reportCsv.ts`, one row per split leg, RFC 4180
   escaped, formula-injection guarded for untrusted payees, UTF-8 BOM); reads are
   paged (PostgREST silently caps plain `.select()` at 1000 rows — a short
-  spreadsheet to an accountant is the worst failure); scoped to the open checking
-  account, returning header-only when there is none. **`lib/profitLossPdf.ts`**
-  builds a QuickBooks-style P&L using the `lib/invoicePdf.ts` pattern (createElement
+  spreadsheet to an accountant is the worst failure); the transactions read is
+  scoped to the open checking account, returning header-only when there is
+  none, while the split-leg read is owner-wide and unscoped (correct — legs
+  are joined back by `transaction_id`). **`lib/profitLossPdf.ts`** builds a
+  QuickBooks-style P&L using the `lib/invoicePdf.ts` pattern (createElement
   with injected PDF primitives, no library import, testable under `node --test`);
-  renders per-group subtotals, per-group Uncategorized lines when nonzero, and memo
-  lines strictly below Net Income (owner pay and deductible totals are equity, not
-  expenses). `lib/dates.ts` gained `formatDateFull` ("July 1, 2026") for
+  renders per-group subtotals, one Uncategorized line per section (Income,
+  Expenses) when nonzero, and memo lines strictly below Net Income (owner pay
+  and deductible totals are equity, not expenses). `lib/dates.ts` gained `formatDateFull` ("July 1, 2026") for
   document-audience dates. **`ReportLine` now carries `payee` and `isSplitLeg`**,
   so a split leg can be identified in the CSV without re-implementing the split
   rule. Phase 3 (year-end package — mileage, blocked on MileIQ, and any 1099/W-9

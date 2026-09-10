@@ -23,7 +23,11 @@ export default function DownloadPlButton({ data }: { data: PlDocumentData }) {
       a.href = url
       a.download = plFilename(data.from, data.to)
       a.click()
-      URL.revokeObjectURL(url)
+      // Deferred, not inline — see components/DownloadInvoiceButton.tsx:
+      // Firefox and some WebViews abort an in-flight download if its blob
+      // URL is revoked before the click finishes dispatching. The timeout
+      // still frees the memory, just not too early.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
     } catch {
       setError('Could not build the PDF.')
     } finally {

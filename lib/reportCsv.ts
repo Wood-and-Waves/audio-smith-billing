@@ -8,8 +8,11 @@
 //
 // One row per split leg, by Dan's decision (2026-09-09): the file exists so
 // his accountant can check the categorization, and a single parent row would
-// show one category for money that went two places. The amount column then
-// sums to the real total and reconciles against the P&L.
+// show one category for money that went two places. The Amount column sums
+// to the net movement across every kind on the ledger (income, expense,
+// owner_pay and transfer) — it reconciles to the P&L's Net Income only if the
+// reader filters to the income and expense kinds first, which is what the
+// Kind column is for.
 //
 // No '@/' imports and no JSX — exercised by node --test.
 

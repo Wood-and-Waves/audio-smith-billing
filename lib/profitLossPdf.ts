@@ -117,7 +117,7 @@ export function buildProfitLossPdf(parts: PdfParts, data: PlDocumentData) {
 
   body.push(h(View, { key: 'memos', style: S.memoBlock },
     line('Owner pay (not an expense)', data.ownerPayCents, S.memo, 'memo-owner'),
-    line('Deductible expenses so far', data.deductibleCents, S.memo, 'memo-ded')))
+    line('Deductible expenses in this period', data.deductibleCents, S.memo, 'memo-ded')))
 
   return h(Document, null, h(Page, { size: 'LETTER', style: S.page }, ...(body as never[])))
 }
