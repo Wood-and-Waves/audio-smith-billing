@@ -62,6 +62,7 @@ console.log(`Target: ${prod ? 'PRODUCTION' : 'local'}`)
 console.log(commit ? 'Mode:   COMMIT — this writes.\n' : 'Mode:   DRY RUN — nothing will be written.\n')
 
 const usd = (c) => `$${(c / 100).toFixed(2)}`
+const cents = (dollars) => Math.round(Number(dollars) * 100)
 
 // --- Gmail, over plain fetch --------------------------------------------------
 // lib/gmail.ts is `import 'server-only'` and cannot be pulled into a script, so
@@ -227,11 +228,33 @@ try {
     const pages = await pageRows(got.bytes)
     console.log(`   ${got.filename}  ${(got.bytes.length / 1024 / 1024).toFixed(2)} MB, ${pages.length} pages`)
 
-    // The manifest is the first page that parses as one.
     let manifest = null
-    for (const rows of pages) {
-      const m = parseExpenseManifest(rows)
-      if (m.items.length > 0) { manifest = m; break }
+    if (Array.isArray(b.items)) {
+      // Read by hand. Two bundles need this and neither is worth code: Chosen
+      // Con's expense sheet lives in a Google Sheet and was never IN the PDF,
+      // and SBC's is a one-off experiment with expense software Dan is not
+      // using again — he invoices from this app now, so no future bundle will
+      // arrive in either shape.
+      //
+      // The self-check is the same one the parser gets: the items must add up
+      // to the total he stated, or the bundle files nothing.
+      const items = b.items.map(i => ({
+        vendor: i.vendor, amountCents: cents(i.amount), column: i.column,
+      }))
+      const sum = (column) => items.reduce((n, i) => (i.column === column ? n + i.amountCents : n), 0)
+      const stated = cents(b.statedTotal)
+      manifest = {
+        items,
+        totals: { food: sum('food'), ride: sum('ride'), baggage: sum('baggage'), stated },
+        foots: items.reduce((n, i) => n + i.amountCents, 0) === stated,
+      }
+      console.log(`   ${items.length} items read by hand, stated total ${usd(stated)}`)
+    } else {
+      // Otherwise the manifest is the first page that parses as one.
+      for (const rows of pages) {
+        const m = parseExpenseManifest(rows)
+        if (m.items.length > 0) { manifest = m; break }
+      }
     }
     if (manifest === null) {
       // Travel-only, per Dan's reimbursement model: every client but Streamline
