@@ -39,6 +39,7 @@ type RawReportTxnRow = {
   amount_cents: number
   kind: string
   category_id: string | null
+  payee: string | null
 }
 
 async function fetchAllReportTxns(
@@ -50,7 +51,7 @@ async function fetchAllReportTxns(
   for (;;) {
     const { data, error } = await supabase
       .from('ledger_transactions')
-      .select('id, date, amount_cents, kind, category_id')
+      .select('id, date, amount_cents, kind, category_id, payee')
       .eq('account_id', accountId)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
@@ -233,6 +234,7 @@ export default async function MoneyReportsPage({
     amountCents: t.amount_cents,
     kind: t.kind,
     categoryId: t.category_id,
+    payee: t.payee ?? '',
     legs: legsByTxnId.get(t.id),
   }))
   const allTxns: ReportTxn[] = explodeForReports(explodableTxns).map((line) => ({

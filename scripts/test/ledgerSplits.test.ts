@@ -321,7 +321,7 @@ test('an unsplit row passes through byte-identical, kind included', () => {
     { date: '2026-03-05', categoryId: 'cat-1', amountCents: -5_000, kind: 'expense' },
   ]
   assert.deepEqual(explodeForReports(txns), [
-    { date: '2026-03-05', categoryId: 'cat-1', amountCents: -5_000, kind: 'expense' },
+    { date: '2026-03-05', categoryId: 'cat-1', amountCents: -5_000, kind: 'expense', payee: '', isSplitLeg: false },
   ])
 })
 
@@ -335,7 +335,7 @@ test('an unreviewed row yields its line, kind included — nothing is dropped', 
     { date: '2026-08-09', categoryId: 'cat-1', amountCents: -59_200, kind: 'expense' },
   ]
   assert.deepEqual(explodeForReports(txns), [
-    { date: '2026-08-09', categoryId: 'cat-1', amountCents: -59_200, kind: 'expense' },
+    { date: '2026-08-09', categoryId: 'cat-1', amountCents: -59_200, kind: 'expense', payee: '', isSplitLeg: false },
   ])
 })
 
@@ -357,8 +357,8 @@ test('the $400 case: a split parent yields its legs, each with its OWN kind — 
     },
   ]
   assert.deepEqual(explodeForReports(txns), [
-    { date: '2026-03-05', categoryId: 'owner-pay-cat', amountCents: -6_000, kind: 'owner_pay' },
-    { date: '2026-03-05', categoryId: 'temp-transfer-cat', amountCents: -4_000, kind: 'expense' },
+    { date: '2026-03-05', categoryId: 'owner-pay-cat', amountCents: -6_000, kind: 'owner_pay', payee: '', isSplitLeg: true },
+    { date: '2026-03-05', categoryId: 'temp-transfer-cat', amountCents: -4_000, kind: 'expense', payee: '', isSplitLeg: true },
   ])
 })
 
@@ -376,8 +376,8 @@ test('an unreviewed split parent yields its legs, each with its own kind', () =>
     },
   ]
   assert.deepEqual(explodeForReports(txns), [
-    { date: '2026-08-09', categoryId: 'owner-pay-cat', amountCents: -1_800, kind: 'owner_pay' },
-    { date: '2026-08-09', categoryId: 'temp-transfer-cat', amountCents: -1_200, kind: 'expense' },
+    { date: '2026-08-09', categoryId: 'owner-pay-cat', amountCents: -1_800, kind: 'owner_pay', payee: '', isSplitLeg: true },
+    { date: '2026-08-09', categoryId: 'temp-transfer-cat', amountCents: -1_200, kind: 'expense', payee: '', isSplitLeg: true },
   ])
 })
 
@@ -388,7 +388,7 @@ test('a row with an empty legs array passes through with the parent\'s own kind'
     },
   ]
   assert.deepEqual(explodeForReports(txns), [
-    { date: '2026-03-05', categoryId: null, amountCents: 200_000, kind: 'income' },
+    { date: '2026-03-05', categoryId: null, amountCents: 200_000, kind: 'income', payee: '', isSplitLeg: false },
   ])
 })
 
@@ -431,4 +431,29 @@ test('the gate cannot come back quietly: a row carrying entered_at still yields 
     month: '2026-08', categoryId: 'cat-a', amountCents: -59210, kind: 'expense', enteredAt: null,
   } as unknown as ReportTxnForExplode
   assert.equal(explodeForReports([unreviewedReport]).length, 1)
+})
+
+test('explodeForReports carries the parent payee onto every leg and marks them', () => {
+  // Dan's real March split: $2,912.60 = Owner Investment 2,512.60 + Temporary
+  // Transfer 400. A leg with no way back to the payee is a CSV row an
+  // accountant cannot identify.
+  const txns = [{
+    date: '2026-03-05', amountCents: -291260, kind: 'owner_pay',
+    categoryId: null, payee: 'Transfer to owner',
+    legs: [
+      { categoryId: 'owner', amountCents: -251260, kind: 'owner_pay' },
+      { categoryId: 'temp', amountCents: -40000, kind: 'expense' },
+    ],
+  }]
+  assert.deepEqual(explodeForReports(txns), [
+    { date: '2026-03-05', categoryId: 'owner', amountCents: -251260, kind: 'owner_pay', payee: 'Transfer to owner', isSplitLeg: true },
+    { date: '2026-03-05', categoryId: 'temp', amountCents: -40000, kind: 'expense', payee: 'Transfer to owner', isSplitLeg: true },
+  ])
+})
+
+test('explodeForReports gives an unsplit row isSplitLeg false and an empty payee when none was supplied', () => {
+  const txns = [{ date: '2026-05-01', amountCents: -1000, kind: 'expense', categoryId: 'meals' }]
+  assert.deepEqual(explodeForReports(txns), [
+    { date: '2026-05-01', categoryId: 'meals', amountCents: -1000, kind: 'expense', payee: '', isSplitLeg: false },
+  ])
 })

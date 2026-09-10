@@ -203,6 +203,12 @@ export type ReportLine = {
   amountCents: number
   kind: string
   categoryId: string | null
+  /** The parent transaction's payee. Empty when the caller supplied none —
+   *  the forecast page reads no payee and does not need one. */
+  payee: string
+  /** True for a line that came from a split leg. The CSV marks these so a
+   *  reader can see why two rows share a date and payee. */
+  isSplitLeg: boolean
 }
 
 /**
@@ -239,6 +245,7 @@ export type ReportTxnForExplode = {
   amountCents: number
   kind: string
   categoryId: string | null
+  payee?: string
   legs?: { categoryId: string | null; amountCents: number; kind: string }[]
 }
 
@@ -248,12 +255,18 @@ export function explodeForReports(txns: ReportTxnForExplode[]): ReportLine[] {
   for (const txn of txns) {
     if (txn.legs && txn.legs.length > 0) {
       for (const leg of txn.legs) {
-        lines.push({ date: txn.date, categoryId: leg.categoryId, amountCents: leg.amountCents, kind: leg.kind })
+        lines.push({
+          date: txn.date, categoryId: leg.categoryId, amountCents: leg.amountCents,
+          kind: leg.kind, payee: txn.payee ?? '', isSplitLeg: true,
+        })
       }
       continue // the parent's own line is suppressed
     }
 
-    lines.push({ date: txn.date, categoryId: txn.categoryId, amountCents: txn.amountCents, kind: txn.kind })
+    lines.push({
+      date: txn.date, categoryId: txn.categoryId, amountCents: txn.amountCents,
+      kind: txn.kind, payee: txn.payee ?? '', isSplitLeg: false,
+    })
   }
 
   return lines
