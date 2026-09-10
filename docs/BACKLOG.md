@@ -1365,10 +1365,18 @@ comment at `app/money/reports/page.tsx:67`. Any new total must go through
 `docs/superpowers/specs/2026-09-09-accountant-reports-design.md`. `/money/reports`
 now takes any date range via `?from=&to=` (`lib/reportRange.ts`), with
 calendar-quarter and all-year shortcut chips; totals, spend by category, and
-the by-month table all follow that one range. **Still remaining: Phase 2 (a
-CSV of transactions for the range, and a printable P&L — the half that makes
-this a deliverable rather than a screen) and Phase 3 (the year-end
-package).**
+the by-month table all follow that one range.
+
+**Phase 2 SHIPPED 2026-09-09** — design and reasoning in
+`docs/superpowers/specs/2026-09-09-accountant-reports-phase-2-design.md`: a
+transaction CSV export (`/money/reports/export`, one row per split leg, RFC
+4180 escaped, formula-injection guarded, UTF-8 BOM, paged to avoid the 1000-row
+silent cap) and a QuickBooks-style P&L PDF (`lib/profitLossPdf.ts`, built on
+the testable `lib/invoicePdf.ts` pattern). Deliberately absent: emailing either
+file, and a balance sheet.
+
+**Phase 3 — the year-end package (mileage, blocked on MileIQ, and any
+1099/W-9 bits) remains.**
 
 ## Money navigation and layout — SHIPPED 2026-09-09
 

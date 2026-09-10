@@ -492,6 +492,21 @@ status.
   shortcuts;** `lib/reportRange.ts` owns quarters and range resolution; **the
   app reports profit and never computes a tax figure**, and carries no IRS
   payment due dates because they shift for weekends and holidays.
+- **Accountant reports Phase 2 SHIPPED 2026-09-09:** `/money/reports/export`
+  serves a transaction CSV (`lib/reportCsv.ts`, one row per split leg, RFC 4180
+  escaped, formula-injection guarded for untrusted payees, UTF-8 BOM); reads are
+  paged (PostgREST silently caps plain `.select()` at 1000 rows — a short
+  spreadsheet to an accountant is the worst failure); scoped to the open checking
+  account, returning header-only when there is none. **`lib/profitLossPdf.ts`**
+  builds a QuickBooks-style P&L using the `lib/invoicePdf.ts` pattern (createElement
+  with injected PDF primitives, no library import, testable under `node --test`);
+  renders per-group subtotals, per-group Uncategorized lines when nonzero, and memo
+  lines strictly below Net Income (owner pay and deductible totals are equity, not
+  expenses). `lib/dates.ts` gained `formatDateFull` ("July 1, 2026") for
+  document-audience dates. **`ReportLine` now carries `payee` and `isSplitLeg`**,
+  so a split leg can be identified in the CSV without re-implementing the split
+  rule. Phase 3 (year-end package — mileage, blocked on MileIQ, and any 1099/W-9
+  bits) remains. Deliberately absent: emailing either file, and a balance sheet.
 - **What is waiting on DAN, not on code:** he has entered **2 of his budget
   targets** (Tax Prep $500 by 2027-04-01, State License Fee $75) and the rest
   remain. September is budgeted in both tools and now agrees except for
