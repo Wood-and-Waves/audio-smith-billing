@@ -339,6 +339,13 @@ export default async function MoneyReportsPage({
             </Link>
           )
         })()}
+        <a
+          href={`/money/reports/export?from=${from}&to=${to}`}
+          className="rounded-pill px-3 py-1.5 text-xs font-semibold uppercase tracking-wider
+                     text-muted hover:text-ink transition-colors"
+        >
+          Download CSV
+        </a>
       </nav>
 
       {uncategorizedCount > 0 && (
