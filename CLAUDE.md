@@ -423,10 +423,38 @@ status.
   merging — that double-counts $400; merge-then-split is the sanctioned
   path, parity re-run after).
 
-## Current state (2026-09-09) & where things are written
+## Current state (2026-09-10) & where things are written
 
-- **Prod migrations through 0051. 1,025 tests.** Nothing is pending: no
+- **Prod migrations through 0051. 1,087 tests.** Nothing is pending: no
   migration waiting, no branch open.
+- **Jan-July 2026 shows were backfilled 2026-09-10** (data only, no
+  migration). Those months had invoices from the Google Sheet load and NO
+  shows at all, so 295 of his 323 2026 expense rows had nothing to carry a
+  `show_id`. 20 shows and 79 `show_days` now exist, each linked to the
+  invoice that billed it; 220 of the 274 untagged Jan-Jul expense rows
+  ($8,843) now fall inside a show window.
+  - `lib/showBackfill.ts` reads the frozen rate card and day counts off an
+    invoice's own lines — `#383`'s `5 x 780.00 Day Rate` IS a five-day show at
+    his Streamline card. Dates are the one thing an invoice never carries;
+    those came from his calendar export.
+  - `scripts/import/propose-show-windows.mjs` reconciles window against
+    invoice and must report **zero problems** before
+    `scripts/import/show-backfill.mjs` is worth running. Day counts are
+    checked per INVOICE, never per show: two invoices each billed two Journey
+    visits, and checking a leg alone reports a false shortfall.
+  - Direct SQL, because neither app path fits: `createShow` refuses a client
+    with no `client_rate_cards` row, and `billShows` — the only code that sets
+    `shows.invoice_id` — creates a NEW invoice and allocates a fresh number.
+  - **His old software issued three invoices numbered 382.** The DB cannot
+    hold that (`invoices_owner_number_uniq`, 0001), so IllumiNations and
+    Praxis took **#368 and #369** from the never-used 368-376 gap, with the
+    truth in `invoices.notes`. That gap is NOT evidence of missing invoices —
+    those numbers were simply burned.
+  - The input lives at `scripts/import/out/shows-2026.json`, which is
+    **gitignored on purpose** — real client names and billing history.
+  - Reading a generated PDF needs no new dependency and no poppler:
+    `pdfjs-dist`'s text layer via `getTextContent` is exact, and the app's own
+    read-only Gmail grant can fetch attachments that the MCP connector cannot.
 - **The forecast is budget-aware (2026-09-09, 0051).** Three changes, all in
   `lib/forecast.ts` plus the page: it starts from UNRESERVED cash (working
   balance minus every category's available except the owner-pay envelope,
