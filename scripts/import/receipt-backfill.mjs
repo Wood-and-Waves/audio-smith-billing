@@ -45,6 +45,11 @@ const argv = process.argv.slice(2)
 const prod = argv.includes('--prod')
 const commit = argv.includes('--commit')
 const only = argv.includes('--only') ? argv[argv.indexOf('--only') + 1] : null
+// A bundle marked done in the JSON has already been imported. Every write here
+// is guarded anyway — the file update refuses a row that already has a receipt
+// and the queue insert is ON CONFLICT DO NOTHING — but re-reading a done bundle
+// still costs a model call for nothing.
+const redo = argv.includes('--redo')
 
 const url = prod ? process.env.DATABASE_URL_PROD : process.env.DATABASE_URL
 if (!url) throw new Error(`No ${prod ? 'DATABASE_URL_PROD' : 'DATABASE_URL'} in the environment.`)
@@ -195,7 +200,9 @@ async function mapPages(bytes, pageCount) {
 
 // --- run ----------------------------------------------------------------------
 const plan = JSON.parse(readFileSync(new URL('./out/receipt-bundles-2026.json', import.meta.url), 'utf8'))
-const bundles = plan.bundles.filter(b => only === null || b.show.toLowerCase().includes(only.toLowerCase()))
+const bundles = plan.bundles
+  .filter(b => redo || b.done !== true)
+  .filter(b => only === null || b.show.toLowerCase().includes(only.toLowerCase()))
 
 const db = new pg.Client({ connectionString: url })
 await db.connect()
