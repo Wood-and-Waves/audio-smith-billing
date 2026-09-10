@@ -98,6 +98,13 @@ export type LedgerTxnRow = {
   balanceCents: number
   receipt_path: string | null
   receipt_original: string | null
+  /**
+   * A signed link to receipt_original, set only when there is no image to show
+   * instead. Signed on the server so the glyph can be a real anchor: a PDF
+   * cannot go in the lightbox's <img>, an <iframe> is not dependable on iOS,
+   * and a scripted window.open after an await is blocked as a popup.
+   */
+  receiptOriginalUrl?: string | null
   invoiceNumbers: number[]          // linked invoices ([] = none)
   expenseLinked: boolean            // has expense-link rows
   linkedReceiptPath: string | null  // a linked expense's receipt, display-time join
@@ -298,7 +305,7 @@ function ReceiptControl({
   // app/money/page.tsx (first linked expense with a receipt_path wins). Own
   // receipt still takes priority; openReceipt below signs whichever this
   // branch used.
-  if (row.receipt_path || row.linkedReceiptPath || row.receipt_original) {
+  if (row.receipt_path || row.linkedReceiptPath) {
     return (
       <button
         type="button"
@@ -311,15 +318,29 @@ function ReceiptControl({
       </button>
     )
   }
+  // A PDF receipt: a real link, opened by the browser's own viewer.
+  if (row.receiptOriginalUrl) {
+    return (
+      <a
+        href={row.receiptOriginalUrl} target="_blank" rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        aria-label={`View receipt: ${row.payee || 'this transaction'}`}
+        className="flex items-center justify-center text-ink hover:text-accent"
+      >
+        <ReceiptIcon />
+      </a>
+    )
+  }
   // Attach is only ever offered when BOTH receipt columns are null — the
   // action itself refuses otherwise (attachLedgerReceipt's own guard).
   //
   // receipt_original ALONE is normal, not a broken pair: an emailed or
-  // backfilled receipt is a PDF and has no rasterized copy. This used to
-  // render an empty span, so 88 rows carrying a real receipt showed nothing at
-  // all — no glyph to open it and no plus either, which reads as a row that
-  // simply lost its receipt. They now show the glyph and open in the lightbox
-  // as a PDF.
+  // backfilled receipt is a PDF and has no rasterized copy. It is handled by
+  // the anchor branch above. Reaching here means the row has an original that
+  // could not be signed — gone from storage — so offer neither icon: a grid
+  // child must still exist, or every later cell in the fixed 9-column template
+  // shifts a column.
+  if (row.receipt_original) return <span />
   return (
     <button
       type="button"
@@ -643,7 +664,7 @@ export default function MoneyRegister({
 
   // Tapping the receipt icon (view) opens the ENHANCED copy in a lightbox —
   // same component ExpenseLog shares, ported unchanged.
-  const [viewer, setViewer] = useState<{ url: string; label: string; pdf: boolean } | null>(null)
+  const [viewer, setViewer] = useState<{ url: string; label: string } | null>(null)
 
   // Fix-later: re-adjusting a SAVED transaction's corners from its untouched
   // original. Ported from ExpenseLog with expenseId -> txnId; same shape,
@@ -1447,10 +1468,7 @@ export default function MoneyRegister({
     // Own receipt wins over a linked expense's — mirrors ReceiptControl's own
     // precedence above, so this always signs whichever path made the glyph
     // show up in the first place.
-    // receipt_original is the fallback, and for an emailed or backfilled
-    // receipt it is the ONLY column set: a PDF has no rasterized copy to put
-    // in an <img>, which is why the pair is not always written together.
-    const path = row.receipt_path || row.linkedReceiptPath || row.receipt_original
+    const path = row.receipt_path || row.linkedReceiptPath
     if (!path) return
     setError(null)
     start(async () => {
@@ -1460,7 +1478,7 @@ export default function MoneyRegister({
         setError('That receipt is no longer in storage.')
         return
       }
-      setViewer({ url, label: row.payee || 'this transaction', pdf: /\.pdf$/i.test(path) })
+      setViewer({ url, label: row.payee || 'this transaction' })
     })
   }
 
@@ -2474,12 +2492,7 @@ export default function MoneyRegister({
         />
       )}
 
-      {viewer && (
-        <ReceiptLightbox
-          url={viewer.url} label={viewer.label} pdf={viewer.pdf}
-          onClose={() => setViewer(null)}
-        />
-      )}
+      {viewer && <ReceiptLightbox url={viewer.url} label={viewer.label} onClose={() => setViewer(null)} />}
 
       <header className="flex flex-wrap items-start justify-between gap-4 mb-8">
         <div className="min-w-0">

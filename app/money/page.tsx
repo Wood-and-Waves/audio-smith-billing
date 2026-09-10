@@ -654,7 +654,33 @@ export default async function MoneyPage({
     expenseLinked: expenseLinkedTxnIds.has(t.id),
     linkedReceiptPath: linkedReceiptPathByTxnId.get(t.id) ?? null,
   })
-  const transactions: LedgerTxnRow[] = filtered.map(toRow)
+  // A PDF receipt gets a REAL link, signed here.
+  //
+  // An emailed or backfilled receipt is a PDF with no rasterized copy, so it
+  // cannot go in the lightbox's <img>, and an <iframe> is not dependable —
+  // iOS Safari in particular will show a blank frame. A plain anchor to the
+  // signed URL is handled natively by every browser, and unlike a scripted
+  // window.open it cannot be swallowed as a popup, because it never leaves the
+  // user's gesture. Only these rows are signed, in ONE call, not every receipt
+  // on the page.
+  const preliminary: LedgerTxnRow[] = filtered.map(toRow)
+  const pdfPaths = [...new Set(
+    preliminary
+      .filter((r) => r.receipt_path === null && r.linkedReceiptPath === null && r.receipt_original !== null)
+      .map((r) => r.receipt_original as string),
+  )]
+  const pdfUrls = new Map<string, string>()
+  if (pdfPaths.length > 0) {
+    const { data: signedPdfs } = await supabase.storage
+      .from('receipts').createSignedUrls(pdfPaths, 3600)
+    for (const u of signedPdfs ?? []) {
+      if (u.signedUrl && u.path) pdfUrls.set(u.path, u.signedUrl)
+    }
+  }
+  const transactions: LedgerTxnRow[] = preliminary.map((r) => ({
+    ...r,
+    receiptOriginalUrl: r.receipt_original ? pdfUrls.get(r.receipt_original) ?? null : null,
+  }))
   // Unreviewed ids from the UNFILTERED set: the review count and Enter All
   // must never shrink because a display filter is on.
   const toReviewIds: string[] = sorted.filter((t) => t.entered_at === null).map((t) => t.id)
