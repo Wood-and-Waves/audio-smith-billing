@@ -29,10 +29,12 @@ const DATA: PlDocumentData = {
   from: '2026-07-01',
   to: '2026-09-30',
   income: [{ name: 'Show Income', amountCents: 2640776 }],
+  uncategorizedIncomeCents: 0,
   totalIncomeCents: 2640776,
   expenseGroups: [
     { group: 'Bills', rows: [{ name: 'Insurance', amountCents: 42700 }], subtotalCents: 42700 },
   ],
+  uncategorizedExpenseCents: 0,
   totalExpensesCents: 42700,
   netCents: 2598076,
   ownerPayCents: 750000,
@@ -99,6 +101,46 @@ test('with two expense groups, each gets its own subtotal, distinct from the gra
   assert.ok(all.includes('$500.00'), "Travel's own subtotal amount must render")
 })
 
+// spendByCategory/incomeByCategory keep uncategorized activity OUT of
+// `rows` and hand it back separately as `uncategorizedCents`, but plSummary's
+// totals include it — so without its own line, the statement's listed rows
+// stop summing to the totals printed beneath them the instant anything is
+// uncategorized. This proves the Income section carries that line, inside
+// the section, before Total Income.
+test('an uncategorized income figure renders inside Income, before Total Income', () => {
+  const withUncat: PlDocumentData = { ...DATA, uncategorizedIncomeCents: 12345, totalIncomeCents: 2653121 }
+  const all = texts(buildProfitLossPdf(PARTS, withUncat))
+  const showIncome = all.indexOf('Show Income')
+  const uncat = all.indexOf('Uncategorized')
+  const total = all.indexOf('Total Income')
+  assert.ok(showIncome > -1 && uncat > -1 && total > -1, 'all three lines must render')
+  assert.ok(uncat > showIncome, 'Uncategorized must come after the other income rows')
+  assert.ok(uncat < total, 'Uncategorized must come before Total Income')
+  assert.ok(all.includes('$123.45'), 'the uncategorized income amount must render')
+})
+
+// Same as above, expense side: the line must sit after the section's own
+// rows and groups (so it reads as part of the section) but before the grand
+// Total Expenses.
+test('an uncategorized expense figure renders inside Expenses, before Total Expenses', () => {
+  const withUncat: PlDocumentData = { ...DATA, uncategorizedExpenseCents: 6789, totalExpensesCents: 49489 }
+  const all = texts(buildProfitLossPdf(PARTS, withUncat))
+  const billsSubtotal = all.indexOf('Total Bills')
+  const uncat = all.indexOf('Uncategorized')
+  const total = all.indexOf('Total Expenses')
+  assert.ok(billsSubtotal > -1 && uncat > -1 && total > -1, 'all three lines must render')
+  assert.ok(uncat > billsSubtotal, 'Uncategorized must come after the expense groups')
+  assert.ok(uncat < total, 'Uncategorized must come before Total Expenses')
+  assert.ok(all.includes('$67.89'), 'the uncategorized expense amount must render')
+})
+
+// The common case is zero (no uncategorized activity in the period), and a
+// statement should not carry a $0.00 row for something that did not happen.
+test('neither uncategorized line appears when its figure is zero', () => {
+  const all = texts(buildProfitLossPdf(PARTS, DATA))
+  assert.equal(all.includes('Uncategorized'), false)
+})
+
 // Owner draws are equity, not an expense. They must not be inside Expenses or
 // they would understate profit; they sit below the statement as a memo.
 test('owner pay appears as a memo, after Net Income', () => {
@@ -117,8 +159,8 @@ test('no tax figure and no payment due date appear anywhere', () => {
 
 test('an empty period still renders a statement with zero totals', () => {
   const empty: PlDocumentData = {
-    ...DATA, income: [], totalIncomeCents: 0, expenseGroups: [],
-    totalExpensesCents: 0, netCents: 0, ownerPayCents: 0, deductibleCents: 0,
+    ...DATA, income: [], uncategorizedIncomeCents: 0, totalIncomeCents: 0, expenseGroups: [],
+    uncategorizedExpenseCents: 0, totalExpensesCents: 0, netCents: 0, ownerPayCents: 0, deductibleCents: 0,
   }
   const all = texts(buildProfitLossPdf(PARTS, empty))
   assert.ok(all.includes('Net Income'))

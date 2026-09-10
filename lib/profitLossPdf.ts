@@ -25,8 +25,18 @@ export type PlDocumentData = {
   from: string
   to: string
   income: { name: string; amountCents: number }[]
+  // Activity with no category assigned. spendByCategory/incomeByCategory
+  // (lib/ledgerReports.ts) deliberately keep this OUT of `income`/
+  // `expenseGroups`, but plSummary folds it INTO totalIncomeCents/
+  // totalExpensesCents — so without a line for it here, the statement's
+  // listed rows stop summing to its own printed totals the moment any
+  // activity is uncategorized. Rendered only when nonzero; see
+  // buildProfitLossPdf.
+  uncategorizedIncomeCents: number
   totalIncomeCents: number
   expenseGroups: { group: string; rows: { name: string; amountCents: number }[]; subtotalCents: number }[]
+  // Expense-side counterpart of uncategorizedIncomeCents, above.
+  uncategorizedExpenseCents: number
   totalExpensesCents: number
   netCents: number
   ownerPayCents: number
@@ -84,6 +94,11 @@ export function buildProfitLossPdf(parts: PdfParts, data: PlDocumentData) {
   body.push(h(Text, { key: 'inc-h', style: S.section }, 'Income'))
   data.income.forEach((r, i) =>
     body.push(line(r.name, r.amountCents, { ...S.row, ...S.account }, `inc-${i}`)))
+  // Omitted when zero: a statement should not carry a $0.00 row for
+  // something that did not happen, and the common case is zero.
+  if (data.uncategorizedIncomeCents !== 0) {
+    body.push(line('Uncategorized', data.uncategorizedIncomeCents, { ...S.row, ...S.account }, 'inc-uncat'))
+  }
   body.push(line('Total Income', data.totalIncomeCents, S.subtotal, 'inc-total'))
 
   body.push(h(Text, { key: 'exp-h', style: S.section }, 'Expenses'))
@@ -93,6 +108,9 @@ export function buildProfitLossPdf(parts: PdfParts, data: PlDocumentData) {
       body.push(line(r.name, r.amountCents, { ...S.row, ...S.account }, `exp-${gi}-${i}`)))
     body.push(line(`Total ${g.group}`, g.subtotalCents, S.groupSubtotal, `exp-${gi}-subtotal`))
   })
+  if (data.uncategorizedExpenseCents !== 0) {
+    body.push(line('Uncategorized', data.uncategorizedExpenseCents, { ...S.row, ...S.account }, 'exp-uncat'))
+  }
   body.push(line('Total Expenses', data.totalExpensesCents, S.subtotal, 'exp-total'))
 
   body.push(line('Net Income', data.netCents, S.net, 'net'))
