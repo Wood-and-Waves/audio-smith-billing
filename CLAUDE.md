@@ -425,8 +425,39 @@ status.
 
 ## Current state (2026-09-10) & where things are written
 
-- **Prod migrations through 0051. 1,087 tests.** Nothing is pending: no
+- **Prod migrations through 0052. 1,121 tests.** Nothing is pending: no
   migration waiting, no branch open.
+- **Receipts were backfilled 2026-09-10** (0052 + `scripts/import/receipt-backfill.mjs`).
+  34 bank rows gained a receipt ($1,017.93); 2026 coverage went 6 rows -> 40.
+  16 items sit in `/money/receipts` for hand filing.
+  - **The bundles are TEXT, not scans — there is no OCR anywhere in this.** When
+    Dan bills Streamline he sends ONE PDF: invoice, an expense spreadsheet, then
+    a page per receipt. `lib/expenseManifest.ts` reads that spreadsheet, and its
+    column totals FOOT exactly — so the document checks itself and a bundle that
+    does not add up is refused whole rather than half-filed.
+  - It takes POSITIONED cells, not text lines. The Ride column is empty on most
+    sheets, so `The Well $19.98 United $60.00` is ambiguous flattened — only x
+    says whether that second amount is Ride or Baggage. Anchors are read off
+    each page: the sheets sit at different scales, and PwC heads its first
+    column "Expenses Total" while the rest say "Food Total". IMC carries an
+    HOURS block to the LEFT that must not be swept into a vendor name.
+  - **His sheet names the PLACE, the bank names the MERCHANT** — "HMS" files
+    against "Brioche Dorée", "Garrets" against "GPS O'Hare Terminal 1". Both
+    right, and the reason matching is on amount and never on name.
+  - **A receipt with no bank row is NORMAL.** Five Starbucks receipts have no
+    charge because a single $25.00 card reload covers them. Never force one onto
+    a near-miss.
+  - `lib/receiptAutoFile.ts` files only an unambiguous match;
+    `lib/receiptPairing.ts` dissolves the common tie by pairing SETS (two $24.38
+    receipts against exactly two free $24.38 charges) — counts must match
+    exactly or it pairs nothing.
+  - `RECEIPT_MATCH_DAYS` stays 10. Measured: 4 and 10 give identical results,
+    because the candidate set is already bounded by the show's window.
+  - **Only Streamline reimburses everything.** Every other client reimburses
+    travel and settles the rest by per diem, so their bundles carry a few
+    airline/baggage documents and no spreadsheet — those queue WHOLE. A
+    non-Streamline show having no meal receipts is correct, not a gap.
+  - Five 2026 shows have no expense email at all (#363, #364, #365, #377, #383).
 - **Jan-July 2026 shows were backfilled 2026-09-10** (data only, no
   migration). Those months had invoices from the Google Sheet load and NO
   shows at all, so 295 of his 323 2026 expense rows had nothing to carry a
