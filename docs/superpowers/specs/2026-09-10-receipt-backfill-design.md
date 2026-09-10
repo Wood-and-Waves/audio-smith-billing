@@ -61,20 +61,49 @@ The ambiguous cases are genuine ties — two Auntie Anne's charges four days
 apart, two United bag fees at $60.00. Dan's decision (2026-09-10): **auto-file
 exact matches, queue the rest.**
 
-## The window is 4 days, everywhere
+## The window stays at 10 days
 
-Dan chose 4 over the existing `RECEIPT_MATCH_DAYS = 10`. Measured on his 323
-2026 expense rows, the share with no same-amount neighbour inside the window:
+Dan first chose 4 over the existing `RECEIPT_MATCH_DAYS = 10`, then settled on
+keeping 10. Measured on both real bundles, **the two windows give identical
+results** — 6/2/6 for IllumiNations and 10/3/0 for Praxis either way:
 
-| window | unambiguous |
-|---|---|
-| ±10 days | 83.0% |
-| ±4 days | **87.3%** |
+| window | IllumiNations | Praxis |
+|---|---|---|
+| ±4 days | 6 filed / 2 ambiguous / 6 no charge | 10 / 3 / 0 |
+| ±10 days | 6 filed / 2 ambiguous / 6 no charge | 10 / 3 / 0 |
 
-**This changes the live `/money/receipts` page too**, not only the backfill.
-That is intended — it is one rule, not two — and it is called out here because
-`scripts/test/receiptMatch.test.ts` pins the 10/11-day boundary and must change
-with it.
+The constant never bites, because the candidate set is already bounded by the
+show's own window and his receipts cluster inside it. So `RECEIPT_MATCH_DAYS`
+is **unchanged**, the live `/money/receipts` page is untouched, and
+`scripts/test/receiptMatch.test.ts` keeps its 10/11-day boundary tests.
+
+## Who reimburses what — and why that shapes the bundles
+
+Dan, 2026-09-10: *"Only Streamline directly reimburses all expenses. Everyone
+else only reimburses the travel expenses. Other items are handled via Per
+Diem."* His invoices bear this out exactly:
+
+- **Streamline** — 17 meal/food/expense lines across 2026, $2,706.64, billed
+  straight through. This is why only their bundles carry a Food column at all.
+- **Signature #382** — `Perdiem $344.00`, two baggage fees, three Ubers, and
+  **no meal line**. (#391 carries one $40.25 meal, so it is a convention rather
+  than a rule.)
+- **Crescent #381** — four Ubers, no meals, plus a separate $360 per diem
+  advance paid ahead of the show (2026-04-29 in the ledger).
+
+Two consequences for this build:
+
+1. **A non-Streamline bundle holds travel receipts only** — a handful of
+   airline, baggage and rideshare documents, no spreadsheet. That is exactly
+   the shape B case, and it is why queueing them by hand costs little.
+2. **His meal spending on a non-Streamline show has no receipt anywhere**, by
+   design: he was never submitting those. Their absence is not a gap to chase.
+
+Worth recording but out of scope: per diem money is income he keeps, and the
+meals it funds are a cost he bears — a different tax picture from a reimbursed
+meal, which is a wash. That distinction is the substance of his earlier question
+about how his accountant tells reimbursed from deductible, and neither reaches
+the CSV export today.
 
 ## Architecture
 

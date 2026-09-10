@@ -142,23 +142,22 @@ git commit -m "Parse the expense spreadsheet Dan attaches to an invoice"
 
 ---
 
-### Task 2: The 4-day window and the auto-file rule
+### Task 2: The auto-file rule
 
 **Files:**
-- Modify: `lib/receiptMatch.ts` (one constant)
-- Modify: `scripts/test/receiptMatch.test.ts` (the boundary tests)
 - Create: `lib/receiptAutoFile.ts`
 - Test: `scripts/test/receiptAutoFile.test.ts`
+- **Do NOT touch `lib/receiptMatch.ts`.** `RECEIPT_MATCH_DAYS` stays at 10.
 
 **Interfaces:**
 - Consumes: `ReceiptMatch` from `./receiptMatch.ts`.
 - Produces: `decideReceiptFiling(matches: readonly ReceiptMatch[]): FilingDecision`
   where `FilingDecision = { action: 'file'; txnId: string } | { action: 'queue'; reason: 'no-charge' | 'ambiguous' | 'taken' }`.
 
-**This changes the LIVE `/money/receipts` page as well as the backfill.** That is
-intended: one rule, not two. Dan chose 4 days over 10; measured on his 323 2026
-expense rows, ±4 leaves 87.3% of rows with no same-amount neighbour against
-83.0% at ±10.
+The window is NOT changing. Dan considered 4 days and settled on keeping 10,
+and measurement says it makes no difference here: both real bundles give
+identical results at ±4 and ±10 (IllumiNations 6/2/6, Praxis 10/3/0), because
+the candidate set is already bounded by the show's own window.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -229,23 +228,16 @@ export function decideReceiptFiling(matches: readonly ReceiptMatch[]): FilingDec
 }
 ```
 
-- [ ] **Step 4: Narrow the window**
+- [ ] **Step 4: Green**
 
-In `lib/receiptMatch.ts` change `RECEIPT_MATCH_DAYS` from `10` to `4`, and update
-its doc comment to record that Dan chose it and why (87.3% vs 83.0%).
+Run: `npm test` — all pass, output pristine. `receiptMatch.test.ts` is untouched
+and its 10/11-day boundary tests still pass.
 
-In `scripts/test/receiptMatch.test.ts`, the boundary tests currently assert that
-10 days matches and 11 does not. Move them to 4 and 5. Do not delete them.
-
-- [ ] **Step 5: Green**
-
-Run: `npm test` — all pass, including the moved boundary tests.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add lib/receiptAutoFile.ts lib/receiptMatch.ts scripts/test/
-git commit -m "Auto-file only an unambiguous receipt, and narrow the window to 4 days"
+git add lib/receiptAutoFile.ts scripts/test/receiptAutoFile.test.ts
+git commit -m "Auto-file only an unambiguous receipt"
 ```
 
 ---
@@ -386,7 +378,12 @@ git commit -m "Let one email hold many receipts (0052)"
 
 **Interfaces:**
 - Consumes: `parseExpenseManifest`, `decideReceiptFiling`, `readPageMap`,
-  `proposeReceiptMatches`, `RECEIPT_MATCH_DAYS`.
+  `proposeReceiptMatches`, `RECEIPT_MATCH_DAYS` (unchanged, 10).
+
+**Only Streamline bundles carry a spreadsheet.** Every other client reimburses
+travel only and settles the rest by per diem, so their bundles hold a few
+airline/baggage/rideshare documents and no manifest — those queue whole. A
+non-Streamline show having no meal receipts is correct, not a gap.
 
 Read `scripts/import/ynab-backfill.mjs` first and follow its shape exactly.
 Import pure modules by relative path; `lib/gmail.ts` is `import 'server-only'`
@@ -470,7 +467,6 @@ git commit -m "Backfill a year of receipts onto the bank rows they belong to"
 ## Risks
 
 - **This writes to Dan's live books.** The dry run is not optional.
-- The window change affects the live receipts page, not just the backfill.
 - A wrong page map attaches the wrong image to a real charge. That is why the
   map is validated, the manifest must foot, and a disagreeing count queues the
   whole bundle rather than guessing.
