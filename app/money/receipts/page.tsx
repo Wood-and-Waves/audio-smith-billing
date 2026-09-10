@@ -17,6 +17,20 @@ export const dynamic = 'force-dynamic'
  */
 const CANDIDATE_DAYS = 180
 
+/**
+ * How long a document link stays good.
+ *
+ * The links are signed HERE, on the server, and rendered as ordinary anchors.
+ * They used to be buttons that signed on click and then called window.open —
+ * which never worked, because the open happens after an await and is no longer
+ * inside the user's gesture, so every browser blocks it as a popup. Silently:
+ * no error, no tab, nothing.
+ *
+ * An hour is long enough for any session on this page; the page is
+ * force-dynamic, so a refresh signs fresh ones.
+ */
+const LINK_TTL_SECONDS = 3600
+
 export default async function ReceiptInboxPage() {
   const supabase = await createClient()
 
@@ -49,6 +63,18 @@ export default async function ReceiptInboxPage() {
   const txns = (txnRes.data ?? []) as unknown as ReceiptCandidateTxn[]
 
   // Matching happens here, not in the browser: the candidate rows are money
+  // Every document, signed once, in one round trip rather than one per file.
+  const rawRows = (inboxRes.data ?? []) as unknown as { attachments: { path: string }[] }[]
+  const paths = [...new Set(rawRows.flatMap((r) => (r.attachments ?? []).map((a) => a.path)))]
+  const signed = new Map<string, string>()
+  if (paths.length > 0) {
+    const { data: urls } = await supabase.storage
+      .from('receipts').createSignedUrls(paths, LINK_TTL_SECONDS)
+    for (const u of urls ?? []) {
+      if (u.signedUrl && u.path) signed.set(u.path, u.signedUrl)
+    }
+  }
+
   // data and there is no reason to ship several hundred of them to the client
   // when only the handful that match need to be seen.
   const items: InboxItem[] = ((inboxRes.data ?? []) as unknown as {
@@ -64,7 +90,9 @@ export default async function ReceiptInboxPage() {
     vendor: r.vendor,
     amountCents: r.amount_cents,
     spentOn: r.spent_on,
-    attachments: r.attachments ?? [],
+    // A url of null means the file is gone from storage. Rendering the name
+    // as dead text says so; a link that goes nowhere does not.
+    attachments: (r.attachments ?? []).map((a) => ({ ...a, url: signed.get(a.path) ?? null })),
     primaryPath: r.primary_path,
     matches:
       r.amount_cents !== null && r.spent_on !== null

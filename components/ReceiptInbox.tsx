@@ -6,7 +6,7 @@ import { formatUSD } from '@/lib/money'
 import { formatDateShort } from '@/lib/dates'
 import type { ReceiptMatch } from '@/lib/receiptMatch'
 import {
-  syncReceiptInbox, fileReceiptToTransaction, dismissReceipt, signInboxDocument,
+  syncReceiptInbox, fileReceiptToTransaction, dismissReceipt,
 } from '@/app/money/receipts/actions'
 
 export type InboxItem = {
@@ -17,7 +17,9 @@ export type InboxItem = {
   vendor: string | null
   amountCents: number | null
   spentOn: string | null
-  attachments: { filename: string; mimeType: string; path: string; size: number }[]
+  attachments: { filename: string; mimeType: string; path: string; size: number
+    /** Signed on the server. Null when the file is missing from storage. */
+    url: string | null }[]
   primaryPath: string | null
   matches: ReceiptMatch[]
 }
@@ -75,15 +77,6 @@ export default function ReceiptInbox({ items }: { items: InboxItem[] }) {
     })
   }
 
-  function open(path: string) {
-    setError(null)
-    start(async () => {
-      const r = await signInboxDocument(path)
-      if ('error' in r) { setError(r.error); return }
-      window.open(r.url, '_blank', 'noopener')
-    })
-  }
-
   return (
     <section>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -133,14 +126,20 @@ export default function ReceiptInbox({ items }: { items: InboxItem[] }) {
               {item.attachments.length > 0 && (
                 <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                   {item.attachments.map((a) => (
-                    <button
-                      key={a.path} type="button" disabled={pending} onClick={() => open(a.path)}
-                      className={`underline hover:opacity-80 disabled:opacity-40 ${
-                        a.path === item.primaryPath ? 'text-accent font-semibold' : 'text-muted'
-                      }`}
-                    >
-                      {a.filename}
-                    </button>
+                    a.url === null ? (
+                      <span key={a.path} className="text-muted line-through" title="Missing from storage">
+                        {a.filename}
+                      </span>
+                    ) : (
+                      <a
+                        key={a.path} href={a.url} target="_blank" rel="noopener noreferrer"
+                        className={`underline hover:opacity-80 ${
+                          a.path === item.primaryPath ? 'text-accent font-semibold' : 'text-muted'
+                        }`}
+                      >
+                        {a.filename}
+                      </a>
+                    )
                   ))}
                 </p>
               )}

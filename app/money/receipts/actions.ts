@@ -254,20 +254,3 @@ export async function dismissReceipt(inboxId: string): Promise<Fail | { ok: true
   return { ok: true }
 }
 
-/**
- * A short-lived URL for one inbox document.
- *
- * Minted on demand rather than at render: the inbox page would otherwise sign
- * a URL for every attachment on every load, most of which are never opened,
- * and each one is a round trip to Storage.
- */
-export async function signInboxDocument(path: string): Promise<Fail | { url: string }> {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not signed in.' }
-  if (!path.startsWith(`${user.id}/`)) return { error: 'That document is not yours.' }
-
-  const { data, error } = await supabase.storage.from('receipts').createSignedUrl(path, 60)
-  if (error || !data?.signedUrl) return { error: 'That document could not be opened.' }
-  return { url: data.signedUrl }
-}
