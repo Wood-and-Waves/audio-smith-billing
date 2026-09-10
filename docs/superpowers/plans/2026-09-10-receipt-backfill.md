@@ -30,13 +30,38 @@
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `parseExpenseManifest(textLines: readonly string[]): ManifestParse`, with
+- Produces: `parseExpenseManifest(rows: readonly (readonly ManifestCell[])[]): ManifestParse`, with
+  `ManifestCell = { x: number; text: string }`,
   `ManifestItem = { vendor: string; amountCents: number; column: 'food' | 'ride' | 'baggage' }`
   and `ManifestParse = { items: ManifestItem[]; totals: { food: number; ride: number; baggage: number; stated: number | null }; foots: boolean }`.
 
-The input is the text lines of ONE PDF page, in visual order, as
-`scripts/import/receipt-backfill.mjs` will produce them from `pdfjs`. This module
-never touches a PDF.
+**CORRECTED 2026-09-10, mid-implementation.** This plan originally specified
+`(textLines: readonly string[])`. That interface CANNOT work, and the reason is
+worth keeping: with the Ride column empty — which it is on every bundle examined
+— the flattened line
+
+    The Well $19.98 United $60.00
+
+is ambiguous. The second amount could be Ride or Baggage, and only its x
+position (564, under Baggage's Amount anchor at 560) decides. Text alone loses
+the columns the whole document is built on.
+
+So the module takes POSITIONED cells: one array per visual row, each cell
+`{ x, text }`, x ascending — exactly what `page.getTextContent()` yields when
+items are grouped by rounded `transform[5]` and sorted by `transform[4]`.
+Reading the PDF still stays outside this module.
+
+**Column assignment is by nearest anchor, never by fixed coordinates.** The two
+bundles use different scales (Praxis's Food amounts sit at x≈204, IllumiNations'
+at x≈164), so anchors must be read from the page:
+- The `Where / Amount / Rcpt` row gives three groups of sub-anchors, in x order:
+  food, ride, baggage. A data cell belongs to the group minimising
+  `min(|x - whereX|, |x - amountX|)`.
+- The `Food Total / Ride Total / Baggage Total [/ Total]` row gives the anchors
+  for the stated-totals row directly beneath it. The fourth `Total` column is
+  OPTIONAL — Praxis has it, IllumiNations does not.
+- Within a row and group: the cell matching `/^\$[\d,]+\.\d{2}$/` is the
+  amount; the remaining cells joined with a space are the vendor.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -47,30 +72,61 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseExpenseManifest } from '../../lib/expenseManifest.ts'
 
-// Praxis, exactly as pdfjs reads page 1. Note "United $10.00" sits in the FOOD
-// column — an inflight snack, not a bag fee — which is why column is taken from
-// position, never from the vendor's name.
-const PRAXIS = [
-  'Food Total Ride Total Baggage Total Total',
-  '$266.21 $0.00 $120.00 $386.21',
-  'Where Amount Rcpt Where Amount Rcpt Where Amount Rcpt',
-  'The Well $19.98 United $60.00',
-  "Auntie Anne's $12.28 United $60.00",
-  'Meritage Blend Cafe $8.98',
-  'Meritage Blend Cafe $8.98',
-  'Butters Burgers $35.23',
-  'The Meritage Resort $24.38',
-  "Ben & Jerry's $12.65",
-  'The Meritage Resort $62.20',
-  'The Meritage Resort $24.38',
-  'The Meritage Resort $47.15',
-  'United $10.00',
+// Praxis page 1 and IllumiNations page 2, captured verbatim from pdfjs on
+// 2026-09-10. Do not tidy these: the differing x scales are the point, and
+// "United $10.00" on the last Praxis row is an inflight snack sitting in the
+// FOOD column, which is why column comes from position and never from a name.
+const c = (x: number, text: string): ManifestCell => ({ x, text })
+
+const PRAXIS: ManifestCell[][] = [
+  [c(153, "Food Total"), c(351, "Ride Total"), c(507, "Baggage Total"), c(671, "Total")],
+  [c(160, "$266.21"), c(363, "$0.00"), c(523, "$120.00"), c(665, "$386.21")],
+  [c(111, "Where"), c(200, "Amount"), c(260, "Rcpt"), c(308, "Where"), c(380, "Amount"), c(440, "Rcpt"), c(488, "Where"), c(560, "Amount"), c(620, "Rcpt")],
+  [c(106, "The Well"), c(204, "$19.98"), c(489, "United"), c(564, "$60.00")],
+  [c(96, "Auntie Anne's"), c(204, "$12.28"), c(489, "United"), c(564, "$60.00")],
+  [c(81, "Meritage Blend Cafe"), c(206, "$8.98")],
+  [c(81, "Meritage Blend Cafe"), c(206, "$8.98")],
+  [c(92, "Butters Burgers"), c(204, "$35.23")],
+  [c(81, "The Meritage Resort"), c(204, "$24.38")],
+  [c(97, "Ben & Jerry's"), c(204, "$12.65")],
+  [c(81, "The Meritage Resort"), c(204, "$62.20")],
+  [c(81, "The Meritage Resort"), c(204, "$24.38")],
+  [c(81, "The Meritage Resort"), c(204, "$47.15")],
+  [c(111, "United"), c(204, "$10.00")],
+]
+
+// No fourth "Total" column, and a different x scale entirely.
+const ILLUMINATIONS: ManifestCell[][] = [
+  [c(124, "Food Total"), c(295, "Ride Total"), c(433, "Baggage Total")],
+  [c(130, "$190.34"), c(305, "$0.00"), c(447, "$120.00")],
+  [c(86, "Where"), c(160, "Amount"), c(214, "Rcpt"), c(256, "Where"), c(320, "Amount"), c(373, "Rcpt"), c(416, "Where"), c(480, "Amount"), c(533, "Rcpt")],
+  [c(79, "Empanada"), c(164, "$13.39"), c(416, "United"), c(483, "$60.00")],
+  [c(62, "Dave's Hot Chicken"), c(164, "$23.09"), c(416, "United"), c(483, "$60.00")],
+  [c(84, "Fiddlers"), c(164, "$67.25")],
+  [c(76, "Dairy Queen"), c(166, "$7.90")],
+  [c(64, "Southern Grounds"), c(166, "$5.18")],
+  [c(74, "Auntie Annes"), c(164, "$11.16")],
+  [c(85, "Hudson"), c(164, "$31.19")],
+  [c(80, "Starbucks"), c(166, "$4.76")],
+  [c(80, "Starbucks"), c(164, "$12.14")],
+  [c(80, "Starbucks"), c(166, "$4.76")],
+  [c(80, "Starbucks"), c(166, "$4.76")],
+  [c(80, "Starbucks"), c(166, "$4.76")],
 ]
 
 test('every line is read, with its amount in cents', () => {
   const m = parseExpenseManifest(PRAXIS)
   assert.equal(m.items.length, 13)
   assert.deepEqual(m.items[0], { vendor: 'The Well', amountCents: 1998, column: 'food' })
+})
+
+test('a bundle with no fourth Total column reads the same way', () => {
+  const m = parseExpenseManifest(ILLUMINATIONS)
+  assert.equal(m.items.length, 14)
+  assert.equal(m.totals.food, 19034)
+  assert.equal(m.totals.baggage, 12000)
+  assert.equal(m.totals.stated, null)
+  assert.equal(m.foots, true)
 })
 
 test('the columns foot, which is the check the whole backfill leans on', () => {
@@ -90,8 +146,8 @@ test('the two baggage lines are baggage and the inflight United is food', () => 
 })
 
 test('a table that does not foot says so rather than throwing', () => {
-  const bad = [...PRAXIS]
-  bad[1] = '$999.99 $0.00 $120.00 $386.21'
+  const bad = PRAXIS.map(r => [...r])
+  bad[1][0] = c(160, '$999.99')
   const m = parseExpenseManifest(bad)
   assert.equal(m.foots, false)
   assert.equal(m.items.length, 13)
@@ -104,7 +160,7 @@ test('an empty page is empty, not an error', () => {
 })
 
 test('a page that is not a manifest at all yields nothing', () => {
-  const m = parseExpenseManifest(['Thanks!', 'Dan Smith', '269.217.8400'])
+  const m = parseExpenseManifest([[c(70, 'Thanks!')], [c(70, 'Dan Smith')]])
   assert.deepEqual(m.items, [])
 })
 ```
@@ -117,15 +173,17 @@ Expected: FAIL — `Cannot find module '../../lib/expenseManifest.ts'`.
 - [ ] **Step 3: Implement**
 
 Parse rules, in order:
-1. Find the header row containing `Food Total` — everything before it is noise.
-2. The next line holds the stated totals, in the order the header names them.
-3. Skip the `Where Amount Rcpt` row.
-4. For each remaining line, match every `\$[\d,]+\.\d{2}` occurrence. A line with
-   two amounts is two items: the first belongs to the leftmost column present,
-   the second to the next. The vendor for each is the text preceding its amount.
-5. Column assignment comes from POSITION in the header, never from the vendor
-   name — `United $10.00` in the Food column is a meal.
-6. `foots` is `items summed per column === stated totals per column`.
+1. Find the header row containing a `Food Total` cell — anything before it is
+   noise. Record each header cell's x as that column's total-anchor.
+2. The next row holds the stated totals; assign each to the nearest
+   total-anchor. A fourth `Total` anchor, when present, fills `totals.stated`.
+3. Find the `Where / Amount / Rcpt` row and record three groups of sub-anchors
+   in x order: food, ride, baggage.
+4. For every row after it, assign each cell to the group minimising
+   `min(|x - whereX|, |x - amountX|)`. Within a row+group, the money-shaped cell
+   is the amount and the rest joined by a space is the vendor. A group with no
+   amount yields no item.
+5. `foots` is `items summed per column === stated totals per column`.
 
 Return zeros and an empty list for any page without the header row.
 
