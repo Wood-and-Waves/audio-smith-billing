@@ -72,6 +72,21 @@ test('a field that a spreadsheet would execute is neutralised', () => {
   }
 })
 
+// The two guards interact, and the order they run in matters. A payee that
+// both looks like a formula AND needs RFC 4180 quoting must be neutralised
+// BEFORE it is quoted, not after: neutralise-then-quote puts the apostrophe
+// INSIDE the quotes ("'=SUM(A1),B"), which is what a CSV parser and then a
+// spreadsheet actually see — the parser strips the structural quotes first,
+// leaving '=SUM(A1),B as the cell content, and the spreadsheet reads the
+// leading apostrophe as a text marker and hides it on display. Quote-then-
+// neutralise would instead produce '"=SUM(A1),B" — the apostrophe sitting
+// outside the quotes, which is not a text marker at all and corrupts the
+// field. Assert the whole row, not a substring, so an inverted order fails.
+test('a field needing both the formula guard and RFC 4180 quoting gets the guard first, inside the quotes', () => {
+  assert.equal(lines(transactionsCsv([L({ payee: '=SUM(A1),B' })], CATS))[1],
+    '2026-05-01,"\'=SUM(A1),B",Meals and Entertainment,Expenses,expense,-10.00,')
+})
+
 // A negative amount must NOT be mistaken for a formula — it is the common case.
 test('a negative amount is not treated as a formula', () => {
   assert.equal(lines(transactionsCsv([L({ amountCents: -1000 })], CATS))[1].endsWith(',-10.00,'), true)
