@@ -16,6 +16,10 @@ const LONG = new Intl.DateTimeFormat('en-US', {
   month: 'numeric', day: 'numeric', year: 'numeric', timeZone: 'UTC',
 })
 
+const FULL = new Intl.DateTimeFormat('en-US', {
+  month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC',
+})
+
 const asUTC = (iso: string) => new Date(iso + 'T00:00:00Z')
 
 /** "8/10/26" */
@@ -23,6 +27,9 @@ export const formatDateShort = (iso: string) => SHORT.format(asUTC(iso))
 
 /** "8/10/2026" */
 export const formatDateLong = (iso: string) => LONG.format(asUTC(iso))
+
+/** "July 1, 2026" — long form, for documents a third party reads. */
+export const formatDateFull = (iso: string) => FULL.format(asUTC(iso))
 
 /**
  * Today where Dan bills from. `new Date().toISOString()` is UTC, which rolls

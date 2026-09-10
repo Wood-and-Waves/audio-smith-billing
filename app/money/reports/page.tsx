@@ -4,12 +4,13 @@ import { todayInChicago, formatDateShort } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
 import { resolveRange, quarterRange, yearRange } from '@/lib/reportRange'
 import {
-  filterRange, plSummary, spendByCategory, monthlyTotals,
+  filterRange, plSummary, spendByCategory, incomeByCategory, monthlyTotals,
   type ReportTxn, type ReportCategory, type CategorySpend,
 } from '@/lib/ledgerReports'
 import { explodeForReports, type ReportTxnForExplode } from '@/lib/ledgerSplits'
 import AppShell from '@/components/AppShell'
 import MoneyNav from '@/components/MoneyNav'
+import DownloadPlButton from '@/components/DownloadPlButton'
 import { FIELD } from '@/components/ui/field'
 
 export const dynamic = 'force-dynamic'
@@ -153,7 +154,7 @@ export default async function MoneyReportsPage({
 
   // One wave, not four trips in a line — same fix and reason as
   // app/money/page.tsx. Guards keep their original order below.
-  const [accountRes, categoriesRes, splitLegsRes] = await Promise.all([
+  const [accountRes, categoriesRes, splitLegsRes, settingsRes] = await Promise.all([
     // Same single-account model as the register: the one open checking
     // account this ledger runs from, "first" by creation, same tie-break the
     // rest of the app uses.
@@ -172,6 +173,10 @@ export default async function MoneyReportsPage({
       .order('grp', { ascending: true })
       .order('sort', { ascending: true }),
     fetchAllReportSplitLegs(supabase),
+    // For the P&L PDF's heading only. Never select('*') here: that row also
+    // holds ach_details and w9_path, and this page has no business reading
+    // either.
+    supabase.from('settings').select('business_name').maybeSingle(),
   ])
   const { data: accountRow, error: accountError } = accountRes
   // The one read that needs an id from that wave.
@@ -200,6 +205,9 @@ export default async function MoneyReportsPage({
   const { data: categoryRows, error: categoryError } = categoriesRes
   if (categoryError) return <LoadError message={categoryError.message} />
   const categories: ReportCategory[] = categoryRows ?? []
+
+  const { data: settingsRow, error: settingsError } = settingsRes
+  if (settingsError) return <LoadError message={settingsError.message} />
 
   const { rows: rawTxns, error: txnError } = txnsRes
   if (txnError) return <LoadError message={txnError} />
@@ -264,6 +272,7 @@ export default async function MoneyReportsPage({
   const rangeTxns = filterRange(allTxns, from, to)
   const pl = plSummary(rangeTxns, categories)
   const spend = spendByCategory(rangeTxns, categories)
+  const incomeRows = incomeByCategory(rangeTxns, categories)
   const months = monthlyTotals(allTxns, from, to)
   // `months` starts wherever the range starts (Task f330b9f made it
   // range-shaped, not calendar-year-shaped), so a row's label has to come
@@ -346,6 +355,24 @@ export default async function MoneyReportsPage({
         >
           Download CSV
         </a>
+        <DownloadPlButton
+          data={{
+            businessName: settingsRow?.business_name ?? 'Smith Audio, LLC',
+            from,
+            to,
+            income: incomeRows.rows.map((r) => ({ name: r.category.name, amountCents: r.earnedCents })),
+            totalIncomeCents: pl.incomeCents,
+            expenseGroups: groups.map((g) => ({
+              group: g.grp,
+              rows: g.rows.map((r) => ({ name: r.category.name, amountCents: r.spentCents })),
+              subtotalCents: g.rows.reduce((s, r) => s + r.spentCents, 0),
+            })),
+            totalExpensesCents: pl.expenseCents,
+            netCents: pl.netCents,
+            ownerPayCents: pl.ownerPayCents,
+            deductibleCents: pl.deductibleCents,
+          }}
+        />
       </nav>
 
       {uncategorizedCount > 0 && (
