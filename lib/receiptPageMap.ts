@@ -25,6 +25,14 @@ export type PageEntry = {
   page: number
   vendor: string
   amountCents: number
+  /**
+   * The date printed on the receipt, or null where none is legible.
+   *
+   * Shape-checked only — deliberately NOT run through normalizeSpentOn, whose
+   * MAX_RECEIPT_AGE_DAYS window would reject every date in a backfill of last
+   * year's shows.
+   */
+  spentOn: string | null
 }
 
 export const PAGE_MAP_SCHEMA: { type: 'json_schema'; schema: Record<string, unknown> } = {
@@ -40,8 +48,9 @@ export const PAGE_MAP_SCHEMA: { type: 'json_schema'; schema: Record<string, unkn
             page: { type: 'integer' },
             vendor: { type: 'string' },
             amount: { type: 'string' },
+            date: { anyOf: [{ type: 'string' }, { type: 'null' }] },
           },
-          required: ['page', 'vendor', 'amount'],
+          required: ['page', 'vendor', 'amount', 'date'],
           additionalProperties: false,
         },
       },
@@ -85,8 +94,42 @@ export function readPageMap(
       return { error: `Page ${page} has no readable amount: ${JSON.stringify(entry.amount)}.` }
     }
 
-    pages.push({ page, vendor, amountCents })
+    const spentOn = typeof entry.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(entry.date)
+      ? entry.date
+      : null
+
+    pages.push({ page, vendor, amountCents, spentOn })
   }
 
   return { pages }
+}
+
+/**
+ * Collapse a receipt that spans consecutive pages into one.
+ *
+ * A forwarded-email bundle prints one receipt across two pages often enough
+ * that the map reports it twice: PepsiCo's nine "receipts" are really five, the
+ * same Uber landing on pages 5 and 6, 8 and 9, 10 and 11.
+ *
+ * Only ADJACENT pages with an identical vendor AND an identical amount are
+ * collapsed, and the first page wins. Two genuinely separate receipts for the
+ * same amount from the same vendor on the same trip are possible — two $60 bag
+ * fees, one each way — but they do not print back to back inside one bundle;
+ * the outbound and return receipts have pages between them.
+ */
+export function collapseRepeatedPages(pages: readonly PageEntry[]): PageEntry[] {
+  const kept: PageEntry[] = []
+  // Compared against the page BEFORE this one, not the last one kept: a
+  // receipt running across three pages must collapse to one, and the third
+  // page is adjacent to the second, never to the first.
+  let previous: PageEntry | null = null
+  for (const page of pages) {
+    const repeats = previous !== null
+      && previous.vendor === page.vendor
+      && previous.amountCents === page.amountCents
+      && page.page === previous.page + 1
+    if (!repeats) kept.push(page)
+    previous = page
+  }
+  return kept
 }
