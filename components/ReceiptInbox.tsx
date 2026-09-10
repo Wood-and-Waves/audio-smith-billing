@@ -32,7 +32,9 @@ export type InboxItem = {
  *
  * An item with no amount still appears, with its matches empty. Extraction
  * failing is not a reason to hide a receipt he can still file by hand, and
- * hiding it would leave him wondering where the mail went.
+ * hiding it would leave him wondering where the mail went. The same is true of
+ * a whole EXPENSE BUNDLE — one email holding a dozen receipts has no single
+ * amount to match on, which is a shape rather than a failure.
  */
 export default function ReceiptInbox({ items }: { items: InboxItem[] }) {
   const router = useRouter()
@@ -123,7 +125,9 @@ export default function ReceiptInbox({ items }: { items: InboxItem[] }) {
               </div>
               <p className="mt-1 text-xs text-muted truncate">
                 {item.spentOn ? formatDateShort(item.spentOn) : 'no date read'}
-                {' · '}{item.subject}
+                {/* The subject IS the heading when nothing read a vendor, so
+                    repeating it here just prints the same line twice. */}
+                {item.vendor !== null && <>{' · '}{item.subject}</>}
               </p>
 
               {item.attachments.length > 0 && (
@@ -145,7 +149,7 @@ export default function ReceiptInbox({ items }: { items: InboxItem[] }) {
                 {item.matches.length === 0 ? (
                   <p className="text-xs text-muted">
                     {item.amountCents === null
-                      ? 'No amount read — file this one from the register.'
+                      ? 'No single amount to match on — open the document above and file it from the register.'
                       : 'No matching charge in the last 180 days.'}
                   </p>
                 ) : (
