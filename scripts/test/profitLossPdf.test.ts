@@ -54,6 +54,51 @@ test('income and expenses each carry a total, and Net Income appears', () => {
   assert.ok(all.includes('$25,980.76'))
 })
 
+// QuickBooks-style P&Ls subtotal each expense group beneath its own rows,
+// distinct from the one grand Total Expenses at the end. PlDocumentData
+// already carries subtotalCents per group; this proves it actually renders.
+test('each expense group prints its own subtotal, after its rows and before Total Expenses', () => {
+  const all = texts(buildProfitLossPdf(PARTS, DATA))
+  const insurance = all.indexOf('Insurance')
+  const groupSubtotal = all.indexOf('Total Bills')
+  const grandTotal = all.indexOf('Total Expenses')
+  assert.ok(insurance > -1 && groupSubtotal > -1 && grandTotal > -1, 'all three lines must render')
+  assert.ok(groupSubtotal > insurance, 'the group subtotal must come after its own rows')
+  assert.ok(groupSubtotal < grandTotal, 'the group subtotal must come before the grand total')
+})
+
+test('with two expense groups, each gets its own subtotal, distinct from the grand total', () => {
+  const twoGroups: PlDocumentData = {
+    ...DATA,
+    expenseGroups: [
+      { group: 'Bills', rows: [{ name: 'Insurance', amountCents: 42700 }], subtotalCents: 42700 },
+      {
+        group: 'Travel',
+        rows: [{ name: 'Airfare', amountCents: 30000 }, { name: 'Hotel', amountCents: 20000 }],
+        subtotalCents: 50000,
+      },
+    ],
+    totalExpensesCents: 92700,
+  }
+  const all = texts(buildProfitLossPdf(PARTS, twoGroups))
+  const insurance = all.indexOf('Insurance')
+  const billsSubtotal = all.indexOf('Total Bills')
+  const airfare = all.indexOf('Airfare')
+  const hotel = all.indexOf('Hotel')
+  const travelSubtotal = all.indexOf('Total Travel')
+  const grandTotal = all.indexOf('Total Expenses')
+
+  for (const i of [insurance, billsSubtotal, airfare, hotel, travelSubtotal, grandTotal]) {
+    assert.ok(i > -1, 'every expected line must render')
+  }
+  assert.ok(billsSubtotal > insurance, 'Total Bills must follow its own rows')
+  assert.ok(billsSubtotal < airfare, "Total Bills must precede the next group's rows")
+  assert.ok(travelSubtotal > hotel, 'Total Travel must follow its own rows')
+  assert.ok(travelSubtotal < grandTotal, 'both group subtotals must precede the grand total')
+  assert.ok(all.includes('$427.00'), "Bills' own subtotal amount must render")
+  assert.ok(all.includes('$500.00'), "Travel's own subtotal amount must render")
+})
+
 // Owner draws are equity, not an expense. They must not be inside Expenses or
 // they would understate profit; they sit below the statement as a memo.
 test('owner pay appears as a memo, after Net Income', () => {

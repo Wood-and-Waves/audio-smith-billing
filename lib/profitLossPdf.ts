@@ -51,6 +51,15 @@ const S = {
     flexDirection: 'row' as const, justifyContent: 'space-between' as const,
     borderTopWidth: 1, borderTopColor: LINE, marginTop: 4, paddingTop: 3, fontWeight: 700,
   },
+  // A per-group subtotal (e.g. "Total Bills"). Same subtotal rule as
+  // Total Income/Total Expenses, but indented to match S.group's heading
+  // indent, so it reads as belonging to — and subordinate to — its group,
+  // never mistaken for the grand "Total Expenses" below.
+  groupSubtotal: {
+    flexDirection: 'row' as const, justifyContent: 'space-between' as const,
+    borderTopWidth: 1, borderTopColor: LINE, marginTop: 3, paddingTop: 2,
+    paddingLeft: 7, fontWeight: 700,
+  },
   net: {
     flexDirection: 'row' as const, justifyContent: 'space-between' as const,
     borderTopWidth: 1, borderTopColor: INK, marginTop: 10, paddingTop: 5,
@@ -82,6 +91,7 @@ export function buildProfitLossPdf(parts: PdfParts, data: PlDocumentData) {
     body.push(h(Text, { key: `grp-${gi}`, style: S.group }, g.group))
     g.rows.forEach((r, i) =>
       body.push(line(r.name, r.amountCents, { ...S.row, ...S.account }, `exp-${gi}-${i}`)))
+    body.push(line(`Total ${g.group}`, g.subtotalCents, S.groupSubtotal, `exp-${gi}-subtotal`))
   })
   body.push(line('Total Expenses', data.totalExpensesCents, S.subtotal, 'exp-total'))
 
