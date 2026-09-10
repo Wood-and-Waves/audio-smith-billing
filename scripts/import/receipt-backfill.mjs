@@ -35,6 +35,7 @@ import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { parseExpenseManifest } from '../../lib/expenseManifest.ts'
 import { readPageMap, PAGE_MAP_SCHEMA } from '../../lib/receiptPageMap.ts'
 import { decideReceiptFiling } from '../../lib/receiptAutoFile.ts'
+import { pairExactSets } from '../../lib/receiptPairing.ts'
 import { proposeReceiptMatches, RECEIPT_MATCH_DAYS } from '../../lib/receiptMatch.ts'
 
 pg.types.setTypeParser(20, (v) => Number(v))
@@ -278,7 +279,17 @@ try {
       receipt_path: t.receipt_path ?? t.receipt_original,
     }))
 
-    const claimedTxn = new Set()
+    // Where a whole set balances — two $24.38 receipts against exactly two free
+    // $24.38 charges — pair them off rather than calling every one a tie.
+    const paired = pairExactSets(
+      manifest.items,
+      candidates.map(t => ({
+        id: t.id, date: t.date, amountCents: -t.amount_cents,
+        hasReceipt: t.receipt_path !== null && t.receipt_path !== '',
+      })),
+    )
+
+    const claimedTxn = new Set(paired.values())
     const claimedPage = new Set()
     const actions = []
 
@@ -288,14 +299,20 @@ try {
       const page = mapped.find(p => p.amountCents === item.amountCents && !claimedPage.has(p.page))
       if (page) claimedPage.add(page.page)
 
-      const open = candidates.filter(t => !claimedTxn.has(t.id))
-      const matches = proposeReceiptMatches(
-        { amountCents: item.amountCents, spentOn: b.windowStart }, open,
-      ).filter(m => m.daysApart <= RECEIPT_MATCH_DAYS)
-      const decision = decideReceiptFiling(matches)
-      if (decision.action === 'file') claimedTxn.add(decision.txnId)
+      const pairedTxn = paired.get(index)
+      let decision
+      if (pairedTxn !== undefined) {
+        decision = { action: 'file', txnId: pairedTxn }
+      } else {
+        const open = candidates.filter(t => !claimedTxn.has(t.id))
+        const matches = proposeReceiptMatches(
+          { amountCents: item.amountCents, spentOn: b.windowStart }, open,
+        ).filter(m => m.daysApart <= RECEIPT_MATCH_DAYS)
+        decision = decideReceiptFiling(matches)
+        if (decision.action === 'file') claimedTxn.add(decision.txnId)
+      }
 
-      actions.push({ index, item, page: page ?? null, decision, matches })
+      actions.push({ index, item, page: page ?? null, decision })
     }
 
     for (const a of actions) {
