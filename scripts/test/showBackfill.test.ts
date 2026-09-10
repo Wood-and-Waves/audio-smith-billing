@@ -81,32 +81,76 @@ test('an empty invoice is zeros, not a crash', () => {
 })
 
 // --- planShowDays -----------------------------------------------------------
+//
+// Since migration 0005 every show_days row is a WORK day and travel is a flag
+// on the day. computeShowLines counts legs (travel_in + travel_out, so one date
+// can carry two) separately from worked days, and a travel flag never
+// suppresses a day rate.
 
-test('Praxis: travel in, five show days, travel out', () => {
+const shapeOf = (days) => days.map(d =>
+  `${d.date}${d.travel_in ? ' in' : ''}${d.travel_out ? ' out' : ''}${d.travel_works ? ' works' : ''}`)
+
+test('Praxis: fly in, work, fly home', () => {
   const { days, problems } = planShowDays('2026-05-16', '2026-05-21', 'own-day', 'own-day')
   assert.deepEqual(problems, [])
-  assert.deepEqual(days.map(d => `${d.date} ${d.day_type}`), [
-    '2026-05-16 travel',
-    '2026-05-17 show',
-    '2026-05-18 show',
-    '2026-05-19 show',
-    '2026-05-20 show',
-    '2026-05-21 travel',
+  assert.deepEqual(shapeOf(days), [
+    '2026-05-16 in',
+    '2026-05-17',
+    '2026-05-18',
+    '2026-05-19',
+    '2026-05-20',
+    '2026-05-21 out',
   ])
+  // Four worked days and two travel legs, which is what the window should hold.
+  assert.deepEqual(windowProblems({ showDays: 4, travelDays: 2 }, days), [])
 })
 
-test('a local show with no travel is all show days', () => {
+test('a local show with no travel carries no flags', () => {
   const { days } = planShowDays('2026-06-01', '2026-06-03', 'none', 'none')
-  assert.deepEqual(days.map(d => d.day_type), ['show', 'show', 'show'])
+  assert.deepEqual(shapeOf(days), ['2026-06-01', '2026-06-02', '2026-06-03'])
+  assert.deepEqual(windowProblems({ showDays: 3, travelDays: 0 }, days), [])
 })
 
-test('a single-day show is one day', () => {
+test('a single-day show is one unflagged row', () => {
   const { days, problems } = planShowDays('2026-03-05', '2026-03-05', 'none', 'none')
-  assert.deepEqual(days, [{ date: '2026-03-05', day_type: 'show' }])
+  assert.deepEqual(days, [
+    { date: '2026-03-05', travel_in: false, travel_out: false, travel_works: false },
+  ])
   assert.deepEqual(problems, [])
 })
 
-test('a one-day window cannot hold travel both ways — say so, do not truncate', () => {
+test('Chosen Con: he worked the last Sunday and flew home that night', () => {
+  const { days, problems } = planShowDays('2026-02-16', '2026-02-22', 'own-day', 'same-day')
+  assert.deepEqual(problems, [])
+  assert.deepEqual(shapeOf(days), [
+    '2026-02-16 in',
+    '2026-02-17',
+    '2026-02-18',
+    '2026-02-19',
+    '2026-02-20',
+    '2026-02-21',
+    '2026-02-22 out works',
+  ])
+  // Six worked days and two travel legs across seven dates — exactly what
+  // invoice #365 billed.
+  assert.deepEqual(windowProblems({ showDays: 6, travelDays: 2 }, days), [])
+})
+
+test('travel_works never appears without a travel flag — 0037 forbids it', () => {
+  const { days } = planShowDays('2026-02-16', '2026-02-22', 'own-day', 'same-day')
+  for (const d of days) {
+    if (d.travel_works) assert.ok(d.travel_in || d.travel_out, `${d.date} works without a leg`)
+  }
+})
+
+test('one day, drove out and back, worked it: two legs on a worked day', () => {
+  const { days, problems } = planShowDays('2026-03-05', '2026-03-05', 'same-day', 'same-day')
+  assert.deepEqual(problems, [])
+  assert.deepEqual(shapeOf(days), ['2026-03-05 in out works'])
+  assert.deepEqual(windowProblems({ showDays: 1, travelDays: 2 }, days), [])
+})
+
+test('one day of pure travel at both ends is no show at all — report it', () => {
   const { days, problems } = planShowDays('2026-03-05', '2026-03-05', 'own-day', 'own-day')
   assert.equal(days.length, 1)
   assert.equal(problems.length, 1)
@@ -128,11 +172,6 @@ test('a malformed date is reported', () => {
 
 // --- windowProblems ---------------------------------------------------------
 
-test('the invoice and the window agreeing is silence', () => {
-  const { days } = planShowDays('2026-05-16', '2026-05-21', 'own-day', 'own-day')
-  assert.deepEqual(windowProblems({ showDays: 4, travelDays: 2 }, days), [])
-})
-
 test('a window too short for the days the invoice billed is reported', () => {
   const { days } = planShowDays('2026-05-16', '2026-05-18', 'own-day', 'own-day')
   const problems = windowProblems({ showDays: 4, travelDays: 2 }, days)
@@ -140,32 +179,14 @@ test('a window too short for the days the invoice billed is reported', () => {
   assert.match(problems[0], /billed 4 show/i)
 })
 
-test('travel billed but no travel day planned is reported', () => {
+test('travel billed but no leg planned is reported', () => {
   const { days } = planShowDays('2026-06-01', '2026-06-03', 'none', 'none')
   const problems = windowProblems({ showDays: 3, travelDays: 2 }, days)
   assert.equal(problems.length, 1)
   assert.match(problems[0], /travel/i)
 })
 
-test('Chosen Con: he worked the last Sunday and flew home that night', () => {
-  const { days, problems } = planShowDays('2026-02-16', '2026-02-22', 'own-day', 'same-day')
-  assert.deepEqual(problems, [])
-  assert.deepEqual(days.map(d => `${d.date} ${d.day_type}`), [
-    '2026-02-16 travel',
-    '2026-02-17 show',
-    '2026-02-18 show',
-    '2026-02-19 show',
-    '2026-02-20 show',
-    '2026-02-21 show',
-    '2026-02-22 show',
-    '2026-02-22 travel',
-  ])
-  // Which is the eight days invoice #365 billed across a seven-day window.
-  assert.deepEqual(windowProblems({ showDays: 6, travelDays: 2 }, days), [])
-})
-
-test('a same-day leg on a one-day show is legal — he drove out and back', () => {
-  const { days, problems } = planShowDays('2026-03-05', '2026-03-05', 'same-day', 'same-day')
-  assert.deepEqual(problems, [])
-  assert.deepEqual(days.map(d => d.day_type), ['show', 'travel'])
+test('a window longer than the invoice billed is silence, not a problem', () => {
+  const { days } = planShowDays('2026-05-16', '2026-05-21', 'own-day', 'own-day')
+  assert.deepEqual(windowProblems({ showDays: 2, travelDays: 2 }, days), [])
 })

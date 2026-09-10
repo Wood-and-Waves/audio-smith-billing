@@ -36,16 +36,28 @@ export type ShowRates = {
 
 export type DayCounts = { showDays: number; travelDays: number }
 
-export type ShowDayPlan = { date: string; day_type: 'show' | 'travel' }
+/**
+ * One `show_days` row, in the shape the table has had since migration 0005:
+ * every row is a work day and travel is a FLAG on the day, not a row of its own.
+ */
+export type ShowDayPlan = {
+  date: string
+  travel_in: boolean
+  travel_out: boolean
+  /** 0036: a travel day he also worked. Requires a travel flag (0037's trigger). */
+  travel_works: boolean
+}
 
 /**
  * How a travel leg lands on the calendar.
  *
  * `same-day` is the one that is easy to miss and Dan hits regularly: Chosen Con
- * finished on the Sunday and he flew home the same night, so 2026-02-22 is a
- * show day AND a travel day. `show_days` is unique on (show, date, day_type),
- * so that date carries two rows — which is exactly why invoice #365 billed
- * eight days across a seven-day window.
+ * finished on the Sunday and he flew home that night, so 2026-02-22 carries the
+ * travel-out leg AND counts as a worked day. That is why invoice #365 billed
+ * eight days — 6 day rates + 2 travel legs — across a seven-date window.
+ *
+ * `computeShowLines` counts legs and worked days independently (a travel flag
+ * never suppresses a day rate), so this maps straight onto the billing model.
  */
 export type TravelLeg = 'none' | 'own-day' | 'same-day'
 
@@ -112,33 +124,30 @@ export function planShowDays(
     return { days: [], problems: [`End ${endDate} is before start ${startDate}.`] }
   }
 
-  const dates: string[] = []
-  for (let iso = startDate; iso <= endDate; iso = addDays(iso, 1)) dates.push(iso)
+  const days: ShowDayPlan[] = []
+  for (let iso = startDate; iso <= endDate; iso = addDays(iso, 1)) {
+    days.push({ date: iso, travel_in: false, travel_out: false, travel_works: false })
+  }
 
   const problems: string[] = []
-  const bothOwnDays = travelIn === 'own-day' && travelOut === 'own-day'
-  if (dates.length === 1 && bothOwnDays) {
-    problems.push(`A one day window (${startDate}) cannot hold travel in and travel out.`)
+  const first = days[0]
+  const last = days[days.length - 1]
+  if (travelIn !== 'none') {
+    first.travel_in = true
+    if (travelIn === 'same-day') first.travel_works = true
+  }
+  if (travelOut !== 'none') {
+    last.travel_out = true
+    if (travelOut === 'same-day') last.travel_works = true
   }
 
-  // A date is a show day unless a travel leg claims it outright; `same-day`
-  // adds its travel row beside the show row rather than replacing it.
-  const claimed = new Set<string>()
-  const travel: string[] = []
-  const leg = (mode: TravelLeg, iso: string) => {
-    if (mode === 'none') return
-    travel.push(iso)
-    if (mode === 'own-day') claimed.add(iso)
-  }
-  if (!(dates.length === 1 && bothOwnDays)) {
-    leg(travelIn, dates[0])
-    leg(travelOut, dates[dates.length - 1])
-  }
-
-  const days: ShowDayPlan[] = []
-  for (const iso of dates) {
-    if (!claimed.has(iso)) days.push({ date: iso, day_type: 'show' })
-    if (travel.includes(iso)) days.push({ date: iso, day_type: 'travel' })
+  // A single date carrying both legs is legal — he drives out and back the same
+  // day — but only if he actually worked it. Two pure travel legs on one date
+  // would mean a day with no work at all, which is not a show.
+  if (days.length === 1 && travelIn === 'own-day' && travelOut === 'own-day') {
+    problems.push(
+      `A one day window (${startDate}) cannot hold two travel legs and no worked day.`,
+    )
   }
   return { days, problems }
 }
@@ -146,21 +155,25 @@ export function planShowDays(
 /**
  * Does the window hold the days the invoice billed?
  *
+ * Counted the way `computeShowLines` counts: a travel LEG is a flag, so one
+ * date can carry two, and a day rate is earned by working, which a travel flag
+ * never suppresses. A backfilled show has no punches, so a travel day counts as
+ * worked only when `travel_works` says he worked it.
+ *
  * Only shortfalls are reported. A window LONGER than the billed days is normal
  * and not a problem — he is regularly on site a day he did not bill for.
  */
 export function windowProblems(counts: DayCounts, days: readonly ShowDayPlan[]): string[] {
-  const planned = (want: ShowDayPlan['day_type']) =>
-    days.reduce((n, d) => (d.day_type === want ? n + 1 : n), 0)
-
   const problems: string[] = []
-  const show = planned('show')
-  const travel = planned('travel')
+  const show = days.reduce(
+    (n, d) => (!d.travel_in && !d.travel_out) || d.travel_works ? n + 1 : n, 0,
+  )
+  const travel = days.reduce((n, d) => n + (d.travel_in ? 1 : 0) + (d.travel_out ? 1 : 0), 0)
   if (counts.showDays > show) {
     problems.push(`Invoice billed ${counts.showDays} show days but the window holds ${show}.`)
   }
   if (counts.travelDays > travel) {
-    problems.push(`Invoice billed ${counts.travelDays} travel days but the window holds ${travel}.`)
+    problems.push(`Invoice billed ${counts.travelDays} travel legs but the window holds ${travel}.`)
   }
   return problems
 }

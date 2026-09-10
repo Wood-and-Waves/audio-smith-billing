@@ -25,8 +25,13 @@ console.log(`Target: ${prod ? 'PRODUCTION' : 'local'}\n`)
 
 const plan = JSON.parse(readFileSync(new URL('./out/shows-2026.json', import.meta.url), 'utf8'))
 const usd = (c) => `$${(c / 100).toFixed(2)}`
-const shape = (days) => `${days.filter(d => d.day_type === 'show').length} show`
-  + ` + ${days.filter(d => d.day_type === 'travel').length} travel`
+// Counted the way computeShowLines counts: legs are flags (one date can carry
+// two) and a travel day counts as worked only when travel_works says so.
+const shape = (days) => {
+  const worked = days.filter(d => (!d.travel_in && !d.travel_out) || d.travel_works).length
+  const legs = days.reduce((n, d) => n + (d.travel_in ? 1 : 0) + (d.travel_out ? 1 : 0), 0)
+  return `${worked} worked + ${legs} travel`
+}
 
 const client = new pg.Client({ connectionString: url })
 await client.connect()
@@ -59,7 +64,7 @@ try {
     console.log(head)
     for (const m of members) {
       console.log(`         ${m.show.startDate} to ${m.show.endDate}`
-        + `  (${m.days.length} rows: ${shape(m.days)})`)
+        + `  (${m.days.length} dates: ${shape(m.days)})`)
     }
 
     const groupIssues = members.flatMap(m => m.issues)
@@ -82,7 +87,7 @@ try {
           ? 'flat fee, no day rate'
           : `day ${usd(rates.dayRateCents)} / travel ${usd(rates.travelRateCents)}`
             + `${rates.pmRateCents ? ` / PM ${usd(rates.pmRateCents)}` : ''}`
-        console.log(`         invoice billed ${counts.showDays} show + ${counts.travelDays} travel`
+        console.log(`         invoice billed ${counts.showDays} day + ${counts.travelDays} travel`
           + `   ${rateNote}   total ${usd(inv.rows[0].total_cents)}`)
       }
     }
