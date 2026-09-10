@@ -409,3 +409,23 @@ export function removeSuperseded(paths: string[]) {
   const supabase = createClient()
   void supabase.storage.from('receipts').remove(paths).catch(() => {})
 }
+
+/**
+ * The first page of a stored PDF receipt, as an image the lightbox can show.
+ *
+ * An emailed or backfilled receipt is a PDF with no rasterized copy, and there
+ * is no dependable way to put one in an overlay: an <iframe> renders blank on
+ * iOS Safari, and a new tab is not the overlay Dan asked for. So the page is
+ * drawn here, by the same pdf.js path a PDF upload already takes — every
+ * receipt filed this way is a single page, which is exactly what this returns.
+ *
+ * JPEG rather than PNG: this is a photograph of a paper receipt, and a PNG of
+ * one is several times the bytes for no visible gain.
+ */
+export async function pdfFirstPageImage(url: string): Promise<string> {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`Could not fetch the receipt (HTTP ${response.status}).`)
+  const blob = await response.blob()
+  const canvas = await pdfFirstPageToCanvas(new File([blob], 'receipt.pdf', { type: 'application/pdf' }))
+  return canvas.toDataURL('image/jpeg', 0.9)
+}

@@ -318,17 +318,20 @@ function ReceiptControl({
       </button>
     )
   }
-  // A PDF receipt: a real link, opened by the browser's own viewer.
+  // A PDF receipt opens the same overlay. Its URL was signed at render, so
+  // there is nothing to await here and no window to be blocked — the lightbox
+  // draws the page itself.
   if (row.receiptOriginalUrl) {
     return (
-      <a
-        href={row.receiptOriginalUrl} target="_blank" rel="noopener noreferrer"
-        onClick={(e) => e.stopPropagation()}
+      <button
+        type="button"
+        disabled={pending}
+        onClick={(e) => { e.stopPropagation(); onView(row) }}
         aria-label={`View receipt: ${row.payee || 'this transaction'}`}
-        className="flex items-center justify-center text-ink hover:text-accent"
+        className="flex items-center justify-center text-ink hover:text-accent disabled:opacity-40"
       >
         <ReceiptIcon />
-      </a>
+      </button>
     )
   }
   // Attach is only ever offered when BOTH receipt columns are null — the
@@ -664,7 +667,7 @@ export default function MoneyRegister({
 
   // Tapping the receipt icon (view) opens the ENHANCED copy in a lightbox —
   // same component ExpenseLog shares, ported unchanged.
-  const [viewer, setViewer] = useState<{ url: string; label: string } | null>(null)
+  const [viewer, setViewer] = useState<{ url: string; label: string; pdf: boolean } | null>(null)
 
   // Fix-later: re-adjusting a SAVED transaction's corners from its untouched
   // original. Ported from ExpenseLog with expenseId -> txnId; same shape,
@@ -1468,6 +1471,14 @@ export default function MoneyRegister({
     // Own receipt wins over a linked expense's — mirrors ReceiptControl's own
     // precedence above, so this always signs whichever path made the glyph
     // show up in the first place.
+    // A PDF receipt is already signed — page.tsx did it at render — so it goes
+    // straight to the overlay with nothing to await.
+    if (!row.receipt_path && !row.linkedReceiptPath && row.receiptOriginalUrl) {
+      setError(null)
+      setViewer({ url: row.receiptOriginalUrl, label: row.payee || 'this transaction', pdf: true })
+      return
+    }
+
     const path = row.receipt_path || row.linkedReceiptPath
     if (!path) return
     setError(null)
@@ -1478,7 +1489,7 @@ export default function MoneyRegister({
         setError('That receipt is no longer in storage.')
         return
       }
-      setViewer({ url, label: row.payee || 'this transaction' })
+      setViewer({ url, label: row.payee || 'this transaction', pdf: false })
     })
   }
 
@@ -2492,7 +2503,12 @@ export default function MoneyRegister({
         />
       )}
 
-      {viewer && <ReceiptLightbox url={viewer.url} label={viewer.label} onClose={() => setViewer(null)} />}
+      {viewer && (
+        <ReceiptLightbox
+          url={viewer.url} label={viewer.label} pdf={viewer.pdf}
+          onClose={() => setViewer(null)}
+        />
+      )}
 
       <header className="flex flex-wrap items-start justify-between gap-4 mb-8">
         <div className="min-w-0">
