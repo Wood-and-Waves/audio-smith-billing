@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  filterRange, plSummary, spendByCategory, monthlyTotals,
+  filterRange, plSummary, spendByCategory, incomeByCategory, monthlyTotals,
   type ReportTxn, type ReportCategory,
 } from '../../lib/ledgerReports.ts'
 
@@ -103,4 +103,32 @@ test('monthlyTotals respects the day boundaries, not just the months', () => {
   const months = monthlyTotals(rows, '2026-05-10', '2026-05-31')
   assert.equal(months.length, 1)
   assert.equal(months[0].incomeCents, 50000)
+})
+
+test('incomeByCategory totals income per category, skipping every other kind', () => {
+  const rows: ReportTxn[] = [
+    { date: '2026-05-01', amount_cents: 60000, kind: 'income', category_id: 'inc' },
+    { date: '2026-05-02', amount_cents: 40000, kind: 'income', category_id: 'inc' },
+    { date: '2026-05-03', amount_cents: -1000, kind: 'expense', category_id: 'meals' },
+    { date: '2026-05-04', amount_cents: -200000, kind: 'owner_pay', category_id: null },
+  ]
+  const { rows: out, uncategorizedCents } = incomeByCategory(rows, CATS)
+  assert.equal(out.length, 1)
+  assert.equal(out[0].category.id, 'inc')
+  assert.equal(out[0].earnedCents, 100000)
+  assert.equal(uncategorizedCents, 0)
+})
+
+test('incomeByCategory collects uncategorized income separately', () => {
+  const rows: ReportTxn[] = [
+    { date: '2026-05-01', amount_cents: 25000, kind: 'income', category_id: null },
+  ]
+  const { rows: out, uncategorizedCents } = incomeByCategory(rows, CATS)
+  assert.deepEqual(out, [])
+  assert.equal(uncategorizedCents, 25000)
+})
+
+test('incomeByCategory omits categories with no income in range', () => {
+  const { rows: out } = incomeByCategory([], CATS)
+  assert.deepEqual(out, [])
 })

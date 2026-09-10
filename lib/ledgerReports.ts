@@ -95,6 +95,30 @@ export function spendByCategory(
   return { rows, uncategorizedCents }
 }
 
+export type CategoryIncome = { category: ReportCategory; earnedCents: number }
+
+/**
+ * spendByCategory's mirror for the income half of a P&L. Income amounts are
+ * stored POSITIVE, so unlike spendByCategory there is no sign flip here — the
+ * asymmetry is in the ledger, not in this pair of functions.
+ */
+export function incomeByCategory(
+  txns: ReportTxn[], categories: ReportCategory[],
+): { rows: CategoryIncome[]; uncategorizedCents: number } {
+  const earned = new Map<string, number>()
+  let uncategorizedCents = 0
+  for (const t of txns) {
+    if (t.kind !== 'income') continue
+    if (t.category_id === null) { uncategorizedCents += t.amount_cents; continue }
+    earned.set(t.category_id, (earned.get(t.category_id) ?? 0) + t.amount_cents)
+  }
+  const rows = categories
+    .filter((c) => (earned.get(c.id) ?? 0) !== 0)
+    .sort((a, b) => a.grp.localeCompare(b.grp) || a.sort - b.sort)
+    .map((category) => ({ category, earnedCents: earned.get(category.id) as number }))
+  return { rows, uncategorizedCents }
+}
+
 export type MonthTotals = { month: string; incomeCents: number; expenseCents: number }
 
 /**
