@@ -298,7 +298,7 @@ function ReceiptControl({
   // app/money/page.tsx (first linked expense with a receipt_path wins). Own
   // receipt still takes priority; openReceipt below signs whichever this
   // branch used.
-  if (row.receipt_path || row.linkedReceiptPath) {
+  if (row.receipt_path || row.linkedReceiptPath || row.receipt_original) {
     return (
       <button
         type="button"
@@ -312,12 +312,14 @@ function ReceiptControl({
     )
   }
   // Attach is only ever offered when BOTH receipt columns are null — the
-  // action itself refuses otherwise (attachLedgerReceipt's own guard). A row
-  // with only one column set (shouldn't happen: the upload pair is written
-  // together) shows neither icon rather than risk offering a second attach.
-  // A grid child must exist even when empty, or every later cell in
-  // the register's fixed 9-column template shifts a column.
-  if (row.receipt_original) return <span />
+  // action itself refuses otherwise (attachLedgerReceipt's own guard).
+  //
+  // receipt_original ALONE is normal, not a broken pair: an emailed or
+  // backfilled receipt is a PDF and has no rasterized copy. This used to
+  // render an empty span, so 88 rows carrying a real receipt showed nothing at
+  // all — no glyph to open it and no plus either, which reads as a row that
+  // simply lost its receipt. They now show the glyph and open in the lightbox
+  // as a PDF.
   return (
     <button
       type="button"
@@ -641,7 +643,7 @@ export default function MoneyRegister({
 
   // Tapping the receipt icon (view) opens the ENHANCED copy in a lightbox —
   // same component ExpenseLog shares, ported unchanged.
-  const [viewer, setViewer] = useState<{ url: string; label: string } | null>(null)
+  const [viewer, setViewer] = useState<{ url: string; label: string; pdf: boolean } | null>(null)
 
   // Fix-later: re-adjusting a SAVED transaction's corners from its untouched
   // original. Ported from ExpenseLog with expenseId -> txnId; same shape,
@@ -1445,7 +1447,10 @@ export default function MoneyRegister({
     // Own receipt wins over a linked expense's — mirrors ReceiptControl's own
     // precedence above, so this always signs whichever path made the glyph
     // show up in the first place.
-    const path = row.receipt_path || row.linkedReceiptPath
+    // receipt_original is the fallback, and for an emailed or backfilled
+    // receipt it is the ONLY column set: a PDF has no rasterized copy to put
+    // in an <img>, which is why the pair is not always written together.
+    const path = row.receipt_path || row.linkedReceiptPath || row.receipt_original
     if (!path) return
     setError(null)
     start(async () => {
@@ -1455,7 +1460,7 @@ export default function MoneyRegister({
         setError('That receipt is no longer in storage.')
         return
       }
-      setViewer({ url, label: row.payee || 'this transaction' })
+      setViewer({ url, label: row.payee || 'this transaction', pdf: /\.pdf$/i.test(path) })
     })
   }
 
@@ -2469,7 +2474,12 @@ export default function MoneyRegister({
         />
       )}
 
-      {viewer && <ReceiptLightbox url={viewer.url} label={viewer.label} onClose={() => setViewer(null)} />}
+      {viewer && (
+        <ReceiptLightbox
+          url={viewer.url} label={viewer.label} pdf={viewer.pdf}
+          onClose={() => setViewer(null)}
+        />
+      )}
 
       <header className="flex flex-wrap items-start justify-between gap-4 mb-8">
         <div className="min-w-0">
