@@ -7,19 +7,12 @@
  * ExpenseLog so the register's receipt column can reuse it unchanged; the
  * signed URL goes straight into the <img>, nothing is downloaded or revoked
  * here.
- *
- * A receipt is not always an image. An emailed or backfilled one is a PDF with
- * no rasterized copy, and those show in an <iframe> instead — with a plain
- * anchor to open it properly, which is deliberately an <a> and not a scripted
- * window.open: opening a tab after an await is no longer inside the user's
- * gesture and every browser blocks it silently.
  */
 export default function ReceiptLightbox({
-  url, label, pdf = false, onClose,
+  url, label, onClose,
 }: {
   url: string
   label: string
-  pdf?: boolean
   onClose: () => void
 }) {
   return (
@@ -50,30 +43,11 @@ export default function ReceiptLightbox({
       >
         ×
       </button>
-      {pdf ? (
-        <div
-          className="flex h-[90vh] w-full max-w-3xl flex-col gap-2"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <iframe
-            src={url}
-            title={`Receipt from ${label}`}
-            className="min-h-0 flex-1 rounded-field bg-white"
-          />
-          <a
-            href={url} target="_blank" rel="noopener noreferrer"
-            className="self-center text-sm text-white/90 underline hover:text-white"
-          >
-            Open this receipt in a new tab
-          </a>
-        </div>
-      ) : (
-        <img
-          src={url}
-          alt={`Receipt from ${label}`}
-          className="max-h-[90vh] max-w-full object-contain rounded-field"
-        />
-      )}
+      <img
+        src={url}
+        alt={`Receipt from ${label}`}
+        className="max-h-[90vh] max-w-full object-contain rounded-field"
+      />
     </div>
   )
 }
