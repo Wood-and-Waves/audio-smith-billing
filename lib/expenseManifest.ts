@@ -61,6 +61,18 @@ const MONEY = /^\$[\d,]+\.\d{2}$/
 
 const COLUMNS: readonly ManifestColumn[] = ['food', 'ride', 'baggage']
 
+// The first column is headed "Food Total" on most of his sheets and "Expenses
+// Total" on the PwC one. Same column, same meaning.
+const FIRST_COLUMN_HEADERS = ['Food Total', 'Expenses Total']
+
+// How far left of the first "Where" a cell may sit and still be part of the
+// expense table. His IMC sheet carries an HOURS block to the left — Date, Day,
+// Time, Notes, Total OT — whose cells would otherwise be swept into the first
+// vendor name by nearest-anchor. Measured across the real sheets: vendors
+// overhang their "Where" header by up to ~30 (a long name like "Meritage Blend
+// Cafe"), while IMC's hours block ends 51 short of it.
+const LEFT_OVERHANG = 40
+
 const empty = (): ManifestParse => ({
   items: [],
   totals: { food: 0, ride: 0, baggage: 0, stated: null },
@@ -99,13 +111,15 @@ function nearestColumn(x: number, groups: readonly Group[]): number {
 export function parseExpenseManifest(
   rows: readonly (readonly ManifestCell[])[],
 ): ManifestParse {
-  const headerIndex = rows.findIndex(r => r.some(c => c.text === 'Food Total'))
+  const headerIndex = rows.findIndex(
+    r => r.some(c => FIRST_COLUMN_HEADERS.includes(c.text)),
+  )
   if (headerIndex === -1 || headerIndex + 1 >= rows.length) return empty()
 
   // "Baggage Total" ends in "Total" too, so these are matched whole, in order.
   const headerAnchors: { name: ManifestColumn | 'stated'; x: number }[] = []
   for (const cell of rows[headerIndex]) {
-    if (cell.text === 'Food Total') headerAnchors.push({ name: 'food', x: cell.x })
+    if (FIRST_COLUMN_HEADERS.includes(cell.text)) headerAnchors.push({ name: 'food', x: cell.x })
     else if (cell.text === 'Ride Total') headerAnchors.push({ name: 'ride', x: cell.x })
     else if (cell.text === 'Baggage Total') headerAnchors.push({ name: 'baggage', x: cell.x })
     else if (cell.text === 'Total') headerAnchors.push({ name: 'stated', x: cell.x })
@@ -143,9 +157,15 @@ export function parseExpenseManifest(
   }
   if (groups.length === 0) return empty()
 
+  // Anything this far left of the first column is not in the table at all.
+  const leftBound = groups[0].whereX - LEFT_OVERHANG
+
   for (const row of rows.slice(subIndex + 1)) {
     const buckets: ManifestCell[][] = groups.map(() => [])
-    for (const cell of row) buckets[nearestColumn(cell.x, groups)].push(cell)
+    for (const cell of row) {
+      if (cell.x < leftBound) continue
+      buckets[nearestColumn(cell.x, groups)].push(cell)
+    }
 
     for (let i = 0; i < buckets.length; i++) {
       const column = COLUMNS[i]

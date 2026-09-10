@@ -109,3 +109,69 @@ test('a page that is not a manifest at all yields nothing', () => {
   assert.deepEqual(m.items, [])
   assert.equal(m.foots, false)
 })
+
+// PwC page 1: the same layout, but the first column is labelled "Expenses
+// Total" rather than "Food Total". Nothing else differs.
+const PWC: ManifestCell[][] = [
+  [c(120, 'Expenses Total'), c(300, 'Ride Total'), c(440, 'Baggage Total'), c(600, 'Total')],
+  [c(126, '$352.14'), c(310, '$0.00'), c(455, '$0.00'), c(596, '$352.14')],
+  [c(84, 'Where'), c(158, 'Amount'), c(212, 'Rcpt'), c(254, 'Where'), c(318, 'Amount'), c(371, 'Rcpt'), c(414, 'Where'), c(478, 'Amount'), c(531, 'Rcpt')],
+  [c(70, 'HMS Host'), c(162, '$8.21')],
+  [c(70, 'HMS Host'), c(162, '$26.69')],
+  [c(74, 'Hudson'), c(162, '$24.45')],
+  [c(66, 'The Market'), c(162, '$15.80')],
+  [c(62, 'Home Depot'), c(160, '$129.78')],
+  [c(70, 'Starbucks'), c(162, '$17.32')],
+  [c(78, 'Fed Ex'), c(164, '$4.00')],
+  [c(68, 'Strarbucks'), c(162, '$13.31')],
+  [c(70, 'HMS Host'), c(162, '$27.46')],
+  [c(72, 'Amazon'), c(162, '$85.12')],
+]
+
+test('a sheet headed "Expenses Total" reads the same as one headed "Food Total"', () => {
+  const m = parseExpenseManifest(PWC)
+  assert.equal(m.items.length, 10)
+  assert.equal(m.totals.food, 35214)
+  assert.equal(m.totals.stated, 35214)
+  assert.equal(m.foots, true)
+  assert.deepEqual(m.items[0], { vendor: 'HMS Host', amountCents: 821, column: 'food' })
+})
+
+// IMC page 1: the richest layout. An HOURS block sits to the LEFT of the
+// expense columns — Date / Day / Time / Notes / Total OT — and its cells must
+// not be swept into a vendor name. This one also has a real Ride column.
+const IMC: ManifestCell[][] = [
+  [c(730, 'IMC 3/26')],
+  [c(143, 'Hours'), c(315, 'Food Total'), c(461, 'Ride Total'), c(580, 'Baggage Total'), c(704, 'Total')],
+  [c(55, 'Date'), c(80, 'Day'), c(121, 'Time'), c(176, 'Notes'), c(218, 'Total OT'), c(320, '$118.99'), c(470, '$6.55'), c(592, '$100.00'), c(699, '$225.54')],
+  [c(56, '3/13'), c(82, 'Fri'), c(119, 'Travel'), c(232, '0'), c(283, 'Where'), c(346, 'Amount'), c(392, 'Rcpt'), c(428, 'Where'), c(483, 'Amount'), c(528, 'Rcpt'), c(565, 'Where'), c(620, 'Amount'), c(665, 'Rcpt')],
+  [c(56, '3/14'), c(81, 'Sat'), c(114, '7:30a- 8p'), c(169, '1 hr Lunch'), c(232, '2'), c(282, 'Garrets'), c(349, '$12.78'), c(428, 'To Yolk'), c(487, '$3.03'), c(566, 'United'), c(623, '$50.00')],
+  [c(56, '3/15'), c(80, 'Sun'), c(113, '9a-11:20p'), c(232, '5'), c(286, 'HMS'), c(349, '$10.93'), c(423, 'From Yolk'), c(487, '$3.52'), c(566, 'United'), c(623, '$50.00')],
+  [c(56, '3/16'), c(79, 'Mon'), c(110, '6:30a-6:30p'), c(232, '2'), c(273, 'Open Market'), c(349, '$25.90')],
+  [c(56, '3/17'), c(81, 'Tue'), c(110, '5:50a-7:45p'), c(232, '4'), c(275, 'Open Pallet'), c(349, '$34.23')],
+  [c(56, '3/18'), c(79, 'Wed'), c(113, '6:30a-10p'), c(232, '6'), c(287, 'Yolk'), c(349, '$35.15')],
+  [c(56, '3/19'), c(80, 'Thu'), c(119, 'Travel'), c(232, '0')],
+]
+
+test('an hours block to the left is not mistaken for a vendor', () => {
+  const m = parseExpenseManifest(IMC)
+  const garrets = m.items.find(i => i.amountCents === 1278)
+  assert.deepEqual(garrets, { vendor: 'Garrets', amountCents: 1278, column: 'food' })
+  const hms = m.items.find(i => i.amountCents === 1093)
+  assert.equal(hms.vendor, 'HMS')
+})
+
+test('IMC has a real Ride column, and it reads as rides', () => {
+  const m = parseExpenseManifest(IMC)
+  const rides = m.items.filter(i => i.column === 'ride')
+  assert.deepEqual(rides.map(r => r.amountCents), [303, 352])
+  assert.deepEqual(rides.map(r => r.vendor), ['To Yolk', 'From Yolk'])
+  assert.equal(m.totals.ride, 655)
+})
+
+test('IMC foots across all three columns', () => {
+  const m = parseExpenseManifest(IMC)
+  assert.equal(m.totals.food, 11899)
+  assert.equal(m.totals.baggage, 10000)
+  assert.equal(m.foots, true)
+})
