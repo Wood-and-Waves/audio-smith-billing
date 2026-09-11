@@ -6,6 +6,8 @@
 //
 // Pure: no database, no clock beyond the plain dates it is handed.
 
+import { isPlainDate, dateInChicago } from './dates.ts'
+
 export type ReceiptCandidateTxn = {
   id: string
   date: string          // YYYY-MM-DD
@@ -92,4 +94,36 @@ export function proposeReceiptMatches(
     // Deterministic tail, so a reload cannot reshuffle two equally close rows.
     return a.txnId < b.txnId ? -1 : 1
   })
+}
+
+/** The date a receipt should be matched on, and whether it had to be guessed. */
+export type ReceiptMatchDate = { date: string; inferred: boolean }
+
+/**
+ * Which date to match a receipt on.
+ *
+ * Prefers the date the parser read off the document. Falls back to the day the
+ * EMAIL ARRIVED when there is none — which is the case this exists for: an
+ * order confirmation carries an expected-delivery date in the future,
+ * normalizeSpentOn refuses a future date (rightly), and the receipt lands with
+ * spent_on null. The page then short-circuited to an empty match list, so a
+ * receipt whose charge was sitting in the ledger to the cent could never be
+ * paired, no matter how many statements were imported. Dan hit exactly this
+ * with a $193.90 NuPhy order on 2026-09-11.
+ *
+ * An inferred date is NOT as good as a read one, and the caller is expected to
+ * say so on screen. It is safe to propose on because the other two gates do
+ * not move: the amount must still match to the cent, and the gap must still be
+ * inside RECEIPT_MATCH_DAYS. Nothing auto-files — Dan confirms every pairing —
+ * so the worst case is a proposal he declines, against a present cost of a
+ * receipt that can never be paired at all.
+ */
+export function matchDateFor(
+  spentOn: string | null,
+  receivedAt: string | null,
+): ReceiptMatchDate | null {
+  if (spentOn !== null && isPlainDate(spentOn)) return { date: spentOn, inferred: false }
+  if (receivedAt === null) return null
+  const fallback = dateInChicago(receivedAt)
+  return fallback === null ? null : { date: fallback, inferred: true }
 }

@@ -17,6 +17,10 @@ export type InboxItem = {
   vendor: string | null
   amountCents: number | null
   spentOn: string | null
+  /** The date matching actually used — the arrival date when the document had none. */
+  matchDate: string | null
+  /** True when matchDate is the arrival date rather than one read off the receipt. */
+  dateInferred: boolean
   attachments: { filename: string; mimeType: string; path: string; size: number
     /** Signed on the server. Null when the file is missing from storage. */
     url: string | null }[]
@@ -117,7 +121,15 @@ export default function ReceiptInbox({ items }: { items: InboxItem[] }) {
                 </span>
               </div>
               <p className="mt-1 text-xs text-muted truncate">
-                {item.spentOn ? formatDateShort(item.spentOn) : 'no date read'}
+                {/* An inferred date SAYS so. It is the day the email arrived,
+                    used because the document carried none — weaker evidence
+                    than a date read off a receipt, and Dan is the one deciding
+                    whether the match below is really his purchase. */}
+                {item.spentOn
+                  ? formatDateShort(item.spentOn)
+                  : item.matchDate !== null
+                    ? <>{formatDateShort(item.matchDate)}{' '}<span className="italic">(from the email)</span></>
+                    : 'no date read'}
                 {/* The subject IS the heading when nothing read a vendor, so
                     repeating it here just prints the same line twice. */}
                 {item.vendor !== null && <>{' · '}{item.subject}</>}

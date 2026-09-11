@@ -44,6 +44,26 @@ export function todayInChicago(): string {
 }
 
 /**
+ * The Chicago calendar date an INSTANT fell on — todayInChicago's sibling, for
+ * a timestamptz that is already stored rather than the clock.
+ *
+ * Needed because a receipt email that arrives at 8pm Chicago is stored as the
+ * NEXT day in UTC, so slicing the ISO string would date it a day late. Inside
+ * a 10-day match window that changes no outcome, but the date is shown to Dan
+ * and a receipt labelled with the wrong day reads as a bug in the parser.
+ *
+ * Returns null on anything it cannot read, rather than Invalid Date.
+ */
+export function dateInChicago(instantIso: string): string | null {
+  const d = new Date(instantIso)
+  if (Number.isNaN(d.getTime())) return null
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Chicago',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d)
+}
+
+/**
  * Is this a real YYYY-MM-DD date?
  *
  * A cleared `<input type="date">` submits an empty string, and every date
