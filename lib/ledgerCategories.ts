@@ -42,7 +42,15 @@ export const DEFAULT_CATEGORIES: CategorySeed[] = [
   // Dan's own chart, lifted from the business YNAB budget he ran before this
   // module existed (ynab-reflect export, 2026-08-19) — his words, his groups.
   // Income is tracked per client via the PAYEE field, so two income
-  // categories suffice here. "Taxes" defaults NON-deductible on purpose:
+  // categories suffice here.
+  //
+  // The GROUPS are banded so they read down a P&L the way an accountant
+  // expects — earnings, running costs, professional fees, tax, and the
+  // owner's own money last — and because the budget orders its groups by the
+  // lowest sort among their members, the two screens agree only if this
+  // numbering is the single source of the order (2026-09-10).
+  //
+  // "Taxes" defaults NON-deductible on purpose:
   // federal estimates are not a business deduction, and overstating
   // deductions is the one direction this tool must never fail — his CPA can
   // flip it if his state taxes belong there.
@@ -51,28 +59,38 @@ export const DEFAULT_CATEGORIES: CategorySeed[] = [
   c('Insurance', 'Bills', 10),
   c('Workers Comp', 'Bills', 11),
   c('Spotify', 'Bills', 12),
-  c('Clear', 'Bills', 13),
-  c('Software', 'Bills', 14),
-  c('Mileage Reimbursement', 'Expenses', 20),
-  c('Meals and Entertainment', 'Expenses', 21),
-  c('Gig Expenses', 'Expenses', 22),
-  c('Transportation', 'Expenses', 23),
-  c('Flights', 'Expenses', 24),
-  c('Hotels', 'Expenses', 25),
-  c('Audio Tools', 'Purchases', 30, true, true),
-  c('Office Expenses', 'Purchases', 31),
-  c('Computers', 'Purchases', 32, true, true),
-  c('Education', 'Purchases', 33),
-  c('Misc Business Expenses', 'Purchases', 34),
-  c('Temporary Transfer', 'Owner Transactions', 40, false),
-  c('Loan to Wood and Waves', 'Owner Transactions', 41, false),
-  c('Charitable Giving', 'Owner Transactions', 42, false),
-  c(OWNER_PAY_CATEGORY_NAME, 'Owner Transactions', 43, false),
-  c('Money Due Wood and Waves', 'Owner Transactions', 44, false),
-  c('Tax Prep', 'Savings', 50),
-  c('State License Fee', 'Savings', 51),
-  c('Taxes', 'Savings', 52, false),
-  c('Retained Earnings', 'Savings', 53),
+  c('Software', 'Bills', 13),
+  c('Mileage Reimbursement', 'Travel and Meals', 20),
+  c('Meals and Entertainment', 'Travel and Meals', 21),
+  c('Gig Expenses', 'Travel and Meals', 22),
+  c('Transportation', 'Travel and Meals', 23),
+  c('Flights', 'Travel and Meals', 24),
+  c('Hotels', 'Travel and Meals', 25),
+  // Airport security, which is travel — it sat under Bills until 2026-09-10.
+  c('Clear', 'Travel and Meals', 26),
+  // NOT equipment. The flag exists to surface purchases needing a
+  // depreciation or 179 decision, and his audio buying does not qualify:
+  // 37 of 39 charges under $500 in 2026, the largest $577, against a de
+  // minimis threshold usually ten times that. Computers keeps the flag.
+  c('Audio Tools', 'Equipment and Supplies', 30),
+  c('Office Expenses', 'Equipment and Supplies', 31),
+  c('Computers', 'Equipment and Supplies', 32, true, true),
+  c('Education', 'Equipment and Supplies', 33),
+  c('Misc Business Expenses', 'Equipment and Supplies', 34),
+  // Paying someone to do the books is professional services, not a tax.
+  c('Tax Prep', 'Professional Services', 40),
+  c('State License Fee', 'Taxes and Licenses', 50),
+  c('Taxes', 'Taxes and Licenses', 51, false),
+  // Profit he is KEEPING. It should never carry a transaction — it was called
+  // "Retained Earnings" until three bank fees were filed against it and
+  // printed on the P&L as spent savings. A name that describes what it holds
+  // is the cheapest guard available.
+  c('Cash Reserve', 'Taxes and Licenses', 52),
+  c('Temporary Transfer', 'Owner Transactions', 60, false),
+  c('Loan to Wood and Waves', 'Owner Transactions', 61, false),
+  c('Charitable Giving', 'Owner Transactions', 62, false),
+  c(OWNER_PAY_CATEGORY_NAME, 'Owner Transactions', 63, false),
+  c('Money Due Wood and Waves', 'Owner Transactions', 64, false),
 ]
 
 /**

@@ -24,9 +24,40 @@ test('income categories are never deductions', () => {
   }
 })
 
-test('exactly Audio Tools and Computers carry the equipment flag', () => {
+// Computers alone, since 2026-09-10. The flag exists to surface purchases
+// needing a depreciation or 179 decision, and Audio Tools does not qualify:
+// 37 of 39 charges under $500 that year, the largest $577, against a de
+// minimis threshold usually ten times that. Flagging it only started a
+// conversation with his accountant that did not need to happen.
+test('only Computers carries the equipment flag', () => {
   const flagged = DEFAULT_CATEGORIES.filter((c) => c.is_equipment)
-  assert.deepEqual(flagged.map((c) => c.name), ['Audio Tools', 'Computers'])
+  assert.deepEqual(flagged.map((c) => c.name), ['Computers'])
+})
+
+// The budget orders its groups by the lowest sort among their members, and the
+// P&L follows the same numbering, so the bands ARE the order both screens use.
+test('the groups are banded, and read down a P&L in the right order', () => {
+  const lowest = new Map<string, number>()
+  for (const cat of DEFAULT_CATEGORIES) {
+    lowest.set(cat.grp, Math.min(lowest.get(cat.grp) ?? Infinity, cat.sort))
+  }
+  const order = [...lowest.entries()].sort((a, b) => a[1] - b[1]).map(([g]) => g)
+  assert.deepEqual(order, [
+    'Income', 'Bills', 'Travel and Meals', 'Equipment and Supplies',
+    'Professional Services', 'Taxes and Licenses', 'Owner Transactions',
+  ])
+})
+
+test('no group is split across two bands', () => {
+  const seen = new Map<string, number[]>()
+  DEFAULT_CATEGORIES.forEach((cat, i) => {
+    if (!seen.has(cat.grp)) seen.set(cat.grp, [])
+    seen.get(cat.grp)!.push(i)
+  })
+  for (const [grp, indexes] of seen) {
+    const contiguous = indexes[indexes.length - 1] - indexes[0] + 1 === indexes.length
+    assert.ok(contiguous, `${grp} is not contiguous in the seed`)
+  }
 })
 
 test('sort orders are unique so the editor renders deterministically', () => {

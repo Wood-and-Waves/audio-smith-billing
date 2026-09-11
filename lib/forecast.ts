@@ -393,7 +393,7 @@ export function computeOverheadCents(
  * Owner pay is excluded for a structural reason, not as a preference. Its
  * balance is reserved for the one outflow the forecast ALREADY subtracts —
  * the draw — so hiding it while still charging the draw would count it
- * twice. Taxes and Retained Earnings fund obligations the forecast models
+ * twice. Taxes and the Cash Reserve fund obligations the forecast models
  * nowhere, which is exactly why leaving them in inflates the runway.
  *
  * Each category floors at zero: an overspent category means money already
