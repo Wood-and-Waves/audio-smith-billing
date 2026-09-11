@@ -7,6 +7,14 @@
 // section, and Net Income under a rule.
 //
 // Owner pay and the deductible total sit BELOW the statement as memo lines.
+//
+// The spacing is tight ON PURPOSE. A full year of his categories comes to just
+// over one page at looser settings, which orphaned these two memo lines onto a
+// second page by themselves — measured: 18.4pt of room left where the block
+// needed 54. Row padding, the period gap and the memo margin were each trimmed
+// until a full year fits, verified by rendering the real 2026 statement and
+// counting pages. A year with several more categories will legitimately need a
+// second page; that is a longer statement, not this bug.
 // Draws are equity, not an expense — a real P&L omits them entirely — but the
 // accountant wants the figure, so it is present without being counted.
 //
@@ -52,9 +60,9 @@ const S = {
   centre: { textAlign: 'center' as const },
   business: { fontSize: 15, fontWeight: 700, textAlign: 'center' as const },
   title: { fontSize: 12, textAlign: 'center' as const, marginTop: 4 },
-  period: { fontSize: 10, textAlign: 'center' as const, marginTop: 2, color: MUTED, marginBottom: 24 },
+  period: { fontSize: 10, textAlign: 'center' as const, marginTop: 2, color: MUTED, marginBottom: 16 },
   section: { fontSize: 10, fontWeight: 700, marginTop: 14, marginBottom: 4 },
-  row: { flexDirection: 'row' as const, justifyContent: 'space-between' as const, paddingVertical: 2 },
+  row: { flexDirection: 'row' as const, justifyContent: 'space-between' as const, paddingVertical: 1.5 },
   account: { paddingLeft: 14 },
   group: { paddingLeft: 7, fontWeight: 700, marginTop: 6 },
   subtotal: {
@@ -76,7 +84,7 @@ const S = {
     fontSize: 11, fontWeight: 700,
   },
   memo: { flexDirection: 'row' as const, justifyContent: 'space-between' as const, marginTop: 3, color: MUTED },
-  memoBlock: { marginTop: 26 },
+  memoBlock: { marginTop: 14 },
 }
 
 export function buildProfitLossPdf(parts: PdfParts, data: PlDocumentData) {
@@ -116,7 +124,7 @@ export function buildProfitLossPdf(parts: PdfParts, data: PlDocumentData) {
   body.push(line('Net Income', data.netCents, S.net, 'net'))
 
   body.push(h(View, { key: 'memos', style: S.memoBlock },
-    line('Owner pay (not an expense)', data.ownerPayCents, S.memo, 'memo-owner'),
+    line('Owner pay', data.ownerPayCents, S.memo, 'memo-owner'),
     line('Deductible expenses in this period', data.deductibleCents, S.memo, 'memo-ded')))
 
   return h(Document, null, h(Page, { size: 'LETTER', style: S.page }, ...(body as never[])))
