@@ -16,6 +16,22 @@ export type ReportTxn = {
   category_id: string | null
 }
 
+/**
+ * The group his income categories live in. Everything else is a cost centre.
+ *
+ * A positive amount in a cost centre is a REFUND, not revenue: five Amazon
+ * refunds sat in Audio Tools and a Hartford refund in Insurance, and both
+ * printed in the Income section under an expense category's name. A refund
+ * reduces the expense it refunded — net income is identical either way, but
+ * the gross figures an accountant reads are not.
+ *
+ * The ledger has no is_income flag, so the group name is the signal available;
+ * matched case-insensitively and trimmed so a rename to "income" still works.
+ */
+const INCOME_GROUP = 'income'
+
+const isIncomeCategory = (c: ReportCategory) => c.grp.trim().toLowerCase() === INCOME_GROUP
+
 export type ReportCategory = {
   id: string
   name: string
@@ -40,7 +56,7 @@ export function filterRange<T extends { date: string }>(
 
 export type PlSummary = {
   incomeCents: number
-  /** All kind='expense' outflow, as a positive number. */
+  /** Outflow less refunds, as a positive number. */
   expenseCents: number
   netCents: number
   /** Positive; excluded from every other figure. */
@@ -53,11 +69,18 @@ export type PlSummary = {
 
 export function plSummary(txns: ReportTxn[], categories: ReportCategory[]): PlSummary {
   const deductible = new Set(categories.filter((c) => c.deductible).map((c) => c.id))
+  const earns = new Set(categories.filter(isIncomeCategory).map((c) => c.id))
   let income = 0, expense = 0, ownerPay = 0, deductibleSpend = 0, uncategorized = 0
   for (const t of txns) {
     if (t.kind === 'income') {
-      income += t.amount_cents
-      if (t.category_id === null) uncategorized += 1
+      // Uncategorized stays income: nothing can be assumed about a row nobody
+      // has looked at, and guessing it is a refund would hide real revenue.
+      if (t.category_id === null) { income += t.amount_cents; uncategorized += 1 }
+      else if (earns.has(t.category_id)) income += t.amount_cents
+      else {
+        expense -= t.amount_cents
+        if (deductible.has(t.category_id)) deductibleSpend -= t.amount_cents
+      }
     } else if (t.kind === 'expense') {
       expense += -t.amount_cents
       if (t.category_id === null) uncategorized += 1
@@ -81,9 +104,15 @@ export type CategorySpend = { category: ReportCategory; spentCents: number }
 export function spendByCategory(
   txns: ReportTxn[], categories: ReportCategory[],
 ): { rows: CategorySpend[]; uncategorizedCents: number } {
+  const earns = new Set(categories.filter(isIncomeCategory).map((c) => c.id))
   const spent = new Map<string, number>()
   let uncategorizedCents = 0
   for (const t of txns) {
+    // A refund — positive, in a cost centre — nets against what it refunded.
+    if (t.kind === 'income' && t.category_id !== null && !earns.has(t.category_id)) {
+      spent.set(t.category_id, (spent.get(t.category_id) ?? 0) - t.amount_cents)
+      continue
+    }
     if (t.kind !== 'expense') continue
     if (t.category_id === null) { uncategorizedCents += -t.amount_cents; continue }
     spent.set(t.category_id, (spent.get(t.category_id) ?? 0) + -t.amount_cents)
@@ -105,11 +134,14 @@ export type CategoryIncome = { category: ReportCategory; earnedCents: number }
 export function incomeByCategory(
   txns: ReportTxn[], categories: ReportCategory[],
 ): { rows: CategoryIncome[]; uncategorizedCents: number } {
+  const earns = new Set(categories.filter(isIncomeCategory).map((c) => c.id))
   const earned = new Map<string, number>()
   let uncategorizedCents = 0
   for (const t of txns) {
     if (t.kind !== 'income') continue
     if (t.category_id === null) { uncategorizedCents += t.amount_cents; continue }
+    // A refund belongs to spendByCategory, which nets it against its category.
+    if (!earns.has(t.category_id)) continue
     earned.set(t.category_id, (earned.get(t.category_id) ?? 0) + t.amount_cents)
   }
   const rows = categories

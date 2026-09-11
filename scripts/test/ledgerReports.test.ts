@@ -132,3 +132,66 @@ test('incomeByCategory omits categories with no income in range', () => {
   const { rows: out } = incomeByCategory([], CATS)
   assert.deepEqual(out, [])
 })
+
+// --- refunds -----------------------------------------------------------------
+//
+// A positive amount in an EXPENSE category is a refund, not revenue. Five
+// Amazon refunds sat in Audio Tools and a Hartford refund in Insurance, and
+// both printed in the Income section of his P&L under an expense category's
+// name (2026-09-10). A refund reduces the expense it refunded.
+
+const refundCats: ReportCategory[] = [
+  { id: 'show', name: 'Show Income', grp: 'Income', sort: 1, deductible: false },
+  { id: 'tools', name: 'Audio Tools', grp: 'Purchases', sort: 1, deductible: true },
+  { id: 'ins', name: 'Insurance', grp: 'Bills', sort: 1, deductible: true },
+]
+
+const refundTxns: ReportTxn[] = [
+  { date: '2026-03-01', amount_cents: 100000, kind: 'income', category_id: 'show' },
+  { date: '2026-03-02', amount_cents: -50000, kind: 'expense', category_id: 'tools' },
+  { date: '2026-03-03', amount_cents: 1947, kind: 'income', category_id: 'tools' },
+  { date: '2026-03-04', amount_cents: -20000, kind: 'expense', category_id: 'ins' },
+  { date: '2026-03-05', amount_cents: 3500, kind: 'income', category_id: 'ins' },
+]
+
+test('a refund reduces its category instead of appearing as income', () => {
+  const { rows } = spendByCategory(refundTxns, refundCats)
+  const tools = rows.find(r => r.category.id === 'tools')
+  assert.equal(tools?.spentCents, 50000 - 1947)
+  const income = incomeByCategory(refundTxns, refundCats)
+  assert.deepEqual(income.rows.map(r => r.category.id), ['show'])
+})
+
+test('income in an Income-group category is still income', () => {
+  const { rows } = incomeByCategory(refundTxns, refundCats)
+  assert.equal(rows.find(r => r.category.id === 'show')?.earnedCents, 100000)
+})
+
+test('the summary drops refunds from BOTH sides, leaving net untouched', () => {
+  const s = plSummary(refundTxns, refundCats)
+  assert.equal(s.incomeCents, 100000)
+  assert.equal(s.expenseCents, 70000 - 1947 - 3500)
+  assert.equal(s.netCents, 100000 - (70000 - 1947 - 3500))
+  // The whole point: treating them as income would give the same net.
+  assert.equal(s.netCents, (100000 + 1947 + 3500) - 70000)
+})
+
+test('a refund of a deductible purchase reduces the deductible total', () => {
+  const s = plSummary(refundTxns, refundCats)
+  assert.equal(s.deductibleCents, 70000 - 1947 - 3500)
+})
+
+test('uncategorized income is still income — nothing can be assumed about it', () => {
+  const s = plSummary(
+    [{ date: '2026-03-01', amount_cents: 5000, kind: 'income', category_id: null }], refundCats)
+  assert.equal(s.incomeCents, 5000)
+  assert.equal(s.uncategorizedCount, 1)
+})
+
+test('a category refunded to exactly zero drops out rather than printing $0.00', () => {
+  const { rows } = spendByCategory([
+    { date: '2026-03-02', amount_cents: -1947, kind: 'expense', category_id: 'tools' },
+    { date: '2026-03-03', amount_cents: 1947, kind: 'income', category_id: 'tools' },
+  ], refundCats)
+  assert.equal(rows.find(r => r.category.id === 'tools'), undefined)
+})
