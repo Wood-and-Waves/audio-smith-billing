@@ -63,8 +63,14 @@ const S = {
   period: { fontSize: 10, textAlign: 'center' as const, marginTop: 2, color: MUTED, marginBottom: 16 },
   section: { fontSize: 10, fontWeight: 700, marginTop: 14, marginBottom: 4 },
   row: { flexDirection: 'row' as const, justifyContent: 'space-between' as const, paddingVertical: 1.5 },
-  account: { paddingLeft: 14 },
-  group: { paddingLeft: 7, fontWeight: 700, marginTop: 6 },
+  // The indent is a STAIRCASE on purpose: section at 0, group at 7, accounts
+  // at 24, and the group's own total back at 14. Dan (2026-09-10): "The bold
+  // lines are hard to distinguish." They were — a group's total and the NEXT
+  // group's heading were both bold at the same indent with nothing between
+  // them, so they read as a pair. Now no two bold lines share a depth, and the
+  // total sits visibly inside the group it closes.
+  account: { paddingLeft: 24 },
+  group: { paddingLeft: 7, fontWeight: 700, marginTop: 8 },
   subtotal: {
     flexDirection: 'row' as const, justifyContent: 'space-between' as const,
     borderTopWidth: 1, borderTopColor: LINE, marginTop: 4, paddingTop: 3, fontWeight: 700,
@@ -76,7 +82,10 @@ const S = {
   groupSubtotal: {
     flexDirection: 'row' as const, justifyContent: 'space-between' as const,
     borderTopWidth: 1, borderTopColor: LINE, marginTop: 3, paddingTop: 2,
-    paddingLeft: 7, fontWeight: 700,
+    // The gap BELOW is what separates one group from the next — the rule above
+    // marks where the accounts stop, not where the group ends.
+    marginBottom: 7,
+    paddingLeft: 14, fontWeight: 700,
   },
   net: {
     flexDirection: 'row' as const, justifyContent: 'space-between' as const,
