@@ -223,7 +223,7 @@ export default function BudgetTable({
                 Same 3-up small-label idiom BudgetRow's own `sm:hidden` block
                 uses for a category row's own figures. */}
             <div className="sm:hidden border-b border-line pb-1.5 mb-1">
-              <h3 className="eyebrow">{section.name}</h3>
+              <h3 className="text-sm font-bold uppercase tracking-wider text-ink">{section.name}</h3>
               <div className="grid grid-cols-3 gap-2 mt-1">
                 <div>
                   <p className="text-xs text-muted">Assigned</p>
@@ -239,8 +239,18 @@ export default function BudgetTable({
                 </div>
               </div>
             </div>
-            <div className={`${GRID} border-b border-line pb-1.5 mb-1`}>
-              <h3 className="eyebrow">{section.name}</h3>
+            {/* A filled band, not a faint line. The group name used to be
+                `.eyebrow` — which globals.css itself calls "the least legible
+                combination on the screen" — muted, 12px, tracked, sitting on
+                a hairline rule between two rows of numbers. Dan (2026-09-10):
+                "the category headers are pretty hidden". They were.
+
+                `-mx-3 px-3` is what lets the background bleed past the
+                content without moving anything: the padding cancels the
+                negative margin, so every column still lines up with the rows
+                beneath, which a plain `px-3` would have shifted. */}
+            <div className={`${GRID} -mx-3 px-3 py-2 mb-2 rounded-field bg-surface`}>
+              <h3 className="text-sm font-bold uppercase tracking-wider text-ink">{section.name}</h3>
               <span className="tabular text-right text-xs text-muted">{formatUSD(sums.assigned)}</span>
               <span className="tabular text-right text-xs text-muted">{formatUSD(sums.activity)}</span>
               <span className="tabular text-right text-xs text-muted">{formatUSD(sums.available)}</span>

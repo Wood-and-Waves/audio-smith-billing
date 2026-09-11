@@ -29,12 +29,19 @@ export default function BudgetSummary({ month }: { month: MonthBudget }) {
   ]
 
   return (
-    <div className="rounded-card border border-line bg-surface p-5">
-      <dl className="space-y-2 text-sm">
+    <div className="rounded-card border border-line bg-surface px-5 py-4">
+      {/* Four figures ACROSS, not down. As a narrow stacked card this was a
+          tall block with two thirds of the page empty beside it; as label-
+          over-value columns it reads in one glance and gives the table back
+          the vertical space. Stacking the label above its own figure is also
+          what kills the old problem the 20rem cap existed to solve — a
+          `justify-between` pair at full width put each number a hand's width
+          from its label. Two columns on a phone, four from `sm`. */}
+      <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3">
         {lines.map((line) => (
-          <div key={line.label} className="flex items-baseline justify-between gap-3">
-            <dt className="text-muted">{line.label}</dt>
-            <dd className="tabular text-right">{formatUSD(line.cents)}</dd>
+          <div key={line.label}>
+            <dt className="text-xs text-muted">{line.label}</dt>
+            <dd className="tabular text-base mt-0.5">{formatUSD(line.cents)}</dd>
           </div>
         ))}
       </dl>

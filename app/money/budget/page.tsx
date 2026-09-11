@@ -282,10 +282,16 @@ export default async function MoneyBudgetPage({
        2026-09-09). */
     <AppShell current="money" wide>
       <MoneyNav current="budget" />
-      <h1 className="display text-3xl font-bold mb-8">Budget</h1>
-
-      <header className="flex flex-col items-center gap-5 mb-10">
-        <div className="flex items-center gap-3">
+      {/* One band, not four stacked blocks. The title, the month and the
+          Ready-to-Assign state used to run down the centre of the page with
+          the summary card below them and two thirds of the row empty beside
+          it — Dan (2026-09-10): "there is a lot of dead space". Everything
+          that describes WHICH month you are looking at now sits on one line,
+          and the table starts higher up. */}
+      <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-4 mb-6">
+        <div className="flex items-center gap-4">
+          <h1 className="display text-3xl font-bold">Budget</h1>
+          <div className="flex items-center gap-3">
           {/* Rendered always, greyed and non-interactive at the boundary
               rather than vanishing (YNAB greys these too, and a control
               that disappears shifts the layout right under the pointer). A
@@ -334,11 +340,12 @@ export default async function MoneyBudgetPage({
               ›
             </button>
           )}
+          </div>
         </div>
 
         {rta > 0 && (
-          <div className="rounded-card border border-good/40 bg-good/15 text-good px-8 py-4 text-center">
-            <p className="tabular text-2xl font-bold">{formatUSD(rta)}</p>
+          <div className="rounded-card border border-good/40 bg-good/15 text-good px-5 py-2.5 text-center">
+            <p className="tabular text-xl font-bold">{formatUSD(rta)}</p>
             <p className="eyebrow text-good">Ready to Assign</p>
           </div>
         )}
@@ -346,20 +353,20 @@ export default async function MoneyBudgetPage({
             a small lie on a month like August, where the remainder was not
             assigned at all — it rolled forward. */}
         {rta === 0 && monthClosed && (
-          <div className="rounded-card border border-line bg-accent-wash text-muted px-8 py-4 text-center">
-            <p className="tabular text-2xl font-bold">{formatUSD(0)}</p>
+          <div className="rounded-card border border-line bg-accent-wash text-muted px-5 py-2.5 text-center">
+            <p className="tabular text-xl font-bold">{formatUSD(0)}</p>
             <p className="eyebrow text-muted mt-1">Rolled Forward</p>
           </div>
         )}
         {rta === 0 && !monthClosed && (
-          <div className="rounded-card border border-line bg-accent-wash text-muted px-8 py-4 text-center">
-            <p className="text-2xl font-bold leading-none">✓</p>
+          <div className="rounded-card border border-line bg-accent-wash text-muted px-5 py-2.5 text-center">
+            <p className="text-xl font-bold leading-none">✓</p>
             <p className="eyebrow text-muted mt-1">All Money Assigned</p>
           </div>
         )}
         {rta < 0 && (
-          <div className="rounded-card border border-danger/40 bg-danger/15 text-danger px-8 py-4 text-center">
-            <p className="tabular text-2xl font-bold">{formatUSD(rta)}</p>
+          <div className="rounded-card border border-danger/40 bg-danger/15 text-danger px-5 py-2.5 text-center">
+            <p className="tabular text-xl font-bold">{formatUSD(rta)}</p>
             <p className="eyebrow text-danger">More Assigned Than You Have</p>
           </div>
         )}
@@ -374,15 +381,14 @@ export default async function MoneyBudgetPage({
           summary scrolled out of view almost immediately anyway. One column
           for everyone: no `lg:order-*` reassignment, and the table gets the
           whole width. */}
-      <div className="grid gap-8">
-        {/* Capped at the 20rem the right-hand column used to give it. Its rows
-            are `justify-between` label/value pairs, so at the page's full
-            1536px each figure would sit a hand's width from its own label —
-            the same wasted space this change set out to remove, pointed the
-            other way. Full width below `sm`, where a phone IS ~20rem. */}
-        <div className="sm:max-w-xs">
-          <BudgetSummary month={current} />
-        </div>
+      <div className="grid gap-5">
+        {/* Full width now. It was capped at 20rem because its rows were
+            `justify-between` label/value pairs, which at 1536px put each
+            figure a hand's width from its own label. BudgetSummary stacks the
+            label ABOVE its figure in four columns instead, so the cap is no
+            longer what protects it — and the page stops carrying a narrow
+            card with an empty two thirds beside it. */}
+        <BudgetSummary month={current} />
 
         <div className="min-w-0">
           {/* Undo/Redo + Recent Moves (budget-phase-two Task 4) render
