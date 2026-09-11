@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import AppShell from '@/components/AppShell'
 import MoneyNav from '@/components/MoneyNav'
 import ReceiptInbox, { type InboxItem } from '@/components/ReceiptInbox'
-import { proposeReceiptMatches, type ReceiptCandidateTxn } from '@/lib/receiptMatch'
+import { proposeReceiptMatches, matchDateFor, type ReceiptCandidateTxn } from '@/lib/receiptMatch'
 
 export const dynamic = 'force-dynamic'
 
@@ -82,23 +82,36 @@ export default async function ReceiptInboxPage() {
     vendor: string | null; amount_cents: number | null; spent_on: string | null
     attachments: { filename: string; mimeType: string; path: string; size: number }[]
     primary_path: string | null
-  }[]).map((r) => ({
-    id: r.id,
-    subject: r.subject,
-    fromEmail: r.from_email,
-    receivedAt: r.received_at,
-    vendor: r.vendor,
-    amountCents: r.amount_cents,
-    spentOn: r.spent_on,
-    // A url of null means the file is gone from storage. Rendering the name
-    // as dead text says so; a link that goes nowhere does not.
-    attachments: (r.attachments ?? []).map((a) => ({ ...a, url: signed.get(a.path) ?? null })),
-    primaryPath: r.primary_path,
-    matches:
-      r.amount_cents !== null && r.spent_on !== null
-        ? proposeReceiptMatches({ amountCents: r.amount_cents, spentOn: r.spent_on }, txns).slice(0, 5)
-        : [],
-  }))
+  }[]).map((r) => {
+    // The date to match on, which is NOT always the one on the document: an
+    // order confirmation carries a future delivery date, normalizeSpentOn
+    // refuses it, and spent_on lands null. This used to short-circuit to an
+    // empty list, so a receipt whose charge sat in the ledger to the cent
+    // could never be paired however many statements were imported.
+    const when = matchDateFor(r.spent_on, r.received_at)
+    return {
+      id: r.id,
+      subject: r.subject,
+      fromEmail: r.from_email,
+      receivedAt: r.received_at,
+      vendor: r.vendor,
+      amountCents: r.amount_cents,
+      spentOn: r.spent_on,
+      // True when `when` fell back to the arrival date. Passed through so the
+      // inbox can SAY so — an inferred date is weaker evidence, and Dan is the
+      // one confirming the pairing.
+      dateInferred: when?.inferred ?? false,
+      matchDate: when?.date ?? null,
+      // A url of null means the file is gone from storage. Rendering the name
+      // as dead text says so; a link that goes nowhere does not.
+      attachments: (r.attachments ?? []).map((a) => ({ ...a, url: signed.get(a.path) ?? null })),
+      primaryPath: r.primary_path,
+      matches:
+        r.amount_cents !== null && when !== null
+          ? proposeReceiptMatches({ amountCents: r.amount_cents, spentOn: when.date }, txns).slice(0, 5)
+          : [],
+    }
+  })
 
   return (
     <AppShell current="money" wide>

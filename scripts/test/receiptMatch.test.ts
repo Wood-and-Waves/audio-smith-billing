@@ -79,3 +79,52 @@ test('equally close rows come back in a stable order', () => {
   const r2 = proposeReceiptMatches({ amountCents: 1399, spentOn: '2026-06-08' }, [b, a])
   assert.deepEqual(r1.map((x) => x.txnId), r2.map((x) => x.txnId))
 })
+
+// --- which date to match on ---
+//
+// Dan, 2026-09-11: a $193.90 NuPhy order confirmation arrived with no date the
+// parser would trust (the email carried a future delivery date, which
+// normalizeSpentOn rightly refuses). Its charge was already in the ledger to
+// the cent, one day later — and the receipts page returned an empty match list
+// before the matcher ever ran, so importing statements could never fix it.
+
+import { matchDateFor } from '../../lib/receiptMatch.ts'
+
+test('a date read off the document is used as-is, and is not inferred', () => {
+  assert.deepEqual(
+    matchDateFor('2026-09-10', '2026-09-09T14:00:00Z'),
+    { date: '2026-09-10', inferred: false },
+  )
+})
+
+test('with no date on the document, the day the email arrived stands in', () => {
+  assert.deepEqual(
+    matchDateFor(null, '2026-09-09T14:00:00Z'),
+    { date: '2026-09-09', inferred: true },
+  )
+})
+
+// An email at 8pm Chicago is stored as the next day in UTC. Slicing the ISO
+// string would date the receipt a day late — harmless for matching, wrong on
+// screen.
+test('the arrival date is Dan’s day, not UTC’s', () => {
+  assert.deepEqual(
+    matchDateFor(null, '2026-09-10T02:30:00Z'), // 9:30pm Chicago on the 9th
+    { date: '2026-09-09', inferred: true },
+  )
+})
+
+test('no date anywhere is null, not today', () => {
+  assert.equal(matchDateFor(null, null), null)
+})
+
+test('an unreadable arrival timestamp is null, never Invalid Date', () => {
+  assert.equal(matchDateFor(null, 'not a timestamp'), null)
+})
+
+test('a malformed document date falls back rather than being trusted', () => {
+  assert.deepEqual(
+    matchDateFor('2026-13-45', '2026-09-09T14:00:00Z'),
+    { date: '2026-09-09', inferred: true },
+  )
+})
