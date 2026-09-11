@@ -85,6 +85,41 @@ status.
   receipts gate via `expensesMissingReceipts` — all filter internally so every
   caller stays in lockstep. Public surfaces: `/i/[token]` page + pdf route,
   emails. `/money*` is Dan-only and not in `proxy.ts` PUBLIC_PREFIXES.
+- **`--prod` must swap EVERY half of the world, and a script must prove it.**
+  `.env.local` mixes projects on purpose: `NEXT_PUBLIC_SUPABASE_URL` and
+  `SUPABASE_SERVICE_ROLE_KEY` are the DEV project, `DATABASE_URL_PROD` is
+  production. A `--prod` run that swapped only the database uploaded 115 receipt
+  PDFs into dev storage and wrote their paths into the prod database
+  (2026-09-10). Every check passed, because each half was consistent with
+  itself; only the deployed app could see the contradiction. Any script that
+  writes FILES as well as rows derives its storage URL from
+  `DATABASE_URL_PROD`'s own project ref, demands
+  `SUPABASE_SERVICE_ROLE_KEY_PROD` rather than reusing the dev key, and
+  **compares the two project refs before doing anything** — see
+  `scripts/import/receipt-backfill.mjs`.
+- **Never swallow an error whose absence looks like an empty state.**
+  `createSignedUrls` had its error discarded, so a signing failure rendered a
+  ledger with no receipt glyphs — identical to a ledger that simply has no
+  receipts. Four fixes shipped on four wrong theories before the error was
+  printed and named the cause in one reload. If a failure and a legitimate
+  "nothing here" look the same on screen, the error must be logged or shown.
+- **Verify as the USER, not as the service role.** A service-role probe
+  bypasses the storage policy and the RLS the browser goes through, so it can
+  confirm a thing that is broken for Dan. When a screen cannot be observed
+  directly, INSTRUMENT IT — put the answer on the page, get one screenshot —
+  rather than inferring from source a third time.
+- **`window.open` after an `await` is silently blocked** in every browser: the
+  call is no longer inside the user's gesture, so it reads as a popup. No error,
+  no tab. Attachment links on `/money/receipts` never once opened because of
+  this. Sign URLs on the SERVER and render a real `<a href>`; `createSignedUrls`
+  does a whole page in one round trip.
+- **`receipt_original` with no `receipt_path` is NORMAL, not a broken pair.** A
+  PDF receipt — emailed or backfilled — has no rasterized copy to put in an
+  `<img>`. MoneyRegister assumed the pair was always written together and
+  rendered an empty span, so 95 rows carrying a real receipt showed nothing at
+  all. A PDF opens in the lightbox, which draws its first page with
+  `receiptCapture`'s `pdfFirstPageImage` — an `<iframe>` renders blank on iOS
+  Safari and is not an option.
 - **Vercel "sensitive" env vars pull as the literal `<ENCRYPTED>`** — a
   `vercel env pull` can never prove or disprove a credential's value. Verify
   by making the system DO the thing (a real upload, a cron run); a morning
@@ -425,11 +460,11 @@ status.
 
 ## Current state (2026-09-10) & where things are written
 
-- **Prod migrations through 0052. 1,121 tests.** Nothing is pending: no
+- **Prod migrations through 0052. 1,130 tests.** Nothing is pending: no
   migration waiting, no branch open.
 - **Receipts were backfilled 2026-09-10** (0052 + `scripts/import/receipt-backfill.mjs`).
-  34 bank rows gained a receipt ($1,017.93); 2026 coverage went 6 rows -> 40.
-  16 items sit in `/money/receipts` for hand filing.
+  **89 bank rows carry a receipt; 2026 coverage went 6 rows -> 95 of 323.** One
+  item waits in `/money/receipts`.
   - **The bundles are TEXT, not scans — there is no OCR anywhere in this.** When
     Dan bills Streamline he sends ONE PDF: invoice, an expense spreadsheet, then
     a page per receipt. `lib/expenseManifest.ts` reads that spreadsheet, and its
@@ -438,9 +473,13 @@ status.
   - It takes POSITIONED cells, not text lines. The Ride column is empty on most
     sheets, so `The Well $19.98 United $60.00` is ambiguous flattened — only x
     says whether that second amount is Ride or Baggage. Anchors are read off
-    each page: the sheets sit at different scales, and PwC heads its first
-    column "Expenses Total" while the rest say "Food Total". IMC carries an
-    HOURS block to the LEFT that must not be swept into a vendor name.
+    each page: the sheets sit at different scales, PwC heads its first column
+    "Expenses Total" while the rest say "Food Total", and IMC carries an HOURS
+    block to the LEFT that must not be swept into a vendor name.
+  - **A bundle with no spreadsheet files from the page map alone** and says so.
+    The spreadsheet was only ever a CROSS-CHECK; requiring it parked four
+    bundles that needed no help. `collapseRepeatedPages` folds a receipt printed
+    across consecutive pages into one — PepsiCo's five read as nine otherwise.
   - **His sheet names the PLACE, the bank names the MERCHANT** — "HMS" files
     against "Brioche Dorée", "Garrets" against "GPS O'Hare Terminal 1". Both
     right, and the reason matching is on amount and never on name.
@@ -450,13 +489,18 @@ status.
   - `lib/receiptAutoFile.ts` files only an unambiguous match;
     `lib/receiptPairing.ts` dissolves the common tie by pairing SETS (two $24.38
     receipts against exactly two free $24.38 charges) — counts must match
-    exactly or it pairs nothing.
+    exactly or it pairs nothing. Dan chose that, told the cost.
   - `RECEIPT_MATCH_DAYS` stays 10. Measured: 4 and 10 give identical results,
     because the candidate set is already bounded by the show's window.
   - **Only Streamline reimburses everything.** Every other client reimburses
     travel and settles the rest by per diem, so their bundles carry a few
-    airline/baggage documents and no spreadsheet — those queue WHOLE. A
-    non-Streamline show having no meal receipts is correct, not a gap.
+    airline/baggage documents and no spreadsheet. A non-Streamline show having
+    no meal receipts is correct, not a gap.
+  - Two bundles were read BY HAND into the JSON's `items` (Chosen Con's sheet
+    lives in Google Sheets; SBC used expense software once). Hand-read items get
+    the same self-check: they must sum to a stated total or nothing files.
+    **Dan invoices and tracks expenses in THIS app now, so no future bundle
+    arrives as a third-party document at all.**
   - Five 2026 shows have no expense email at all (#363, #364, #365, #377, #383).
 - **Jan-July 2026 shows were backfilled 2026-09-10** (data only, no
   migration). Those months had invoices from the Google Sheet load and NO

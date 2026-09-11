@@ -514,6 +514,54 @@ somehow scoped, which ICS cannot do (one feed, one set of events). Worth
 asking whether that is fine or whether the cron/email route is better for
 that reason alone.
 
+## Deductible vs reimbursed in the CSV export (2026-09-09, offered, unapproved)
+
+His question that started it: *"How does my accountant know which transactions
+are reimbursed and which are deducible?"* The app knows both and neither
+reaches `app/money/reports/export/route.ts`:
+
+- **Deductible** is `ledger_categories.deductible` (2026: 321 rows / $12,647
+  true, 2 rows / $1,110 false).
+- **Reimbursed** is `ledger_transaction_expenses` joined to `expenses.billable`.
+
+The tax picture behind it, confirmed against his invoices 2026-09-10 and worth
+not re-deriving: **only Streamline reimburses everything.** Every other client
+reimburses travel and settles the rest by **per diem** — Signature #382 bills
+`Perdiem $344.00` plus baggage and Ubers with no meal line, and Crescent paid a
+separate $360 advance ahead of CEXPO. So per-diem money is income he keeps and
+the meals it funds are a cost he bears, which is a different tax shape from a
+reimbursed Streamline meal (a wash). Two columns would say so.
+
+Offered twice, never approved. Do not build unasked.
+
+## Receipts still unattached after the 2026 backfill (2026-09-10)
+
+Not bugs, and mostly not fixable — recorded so they are not re-investigated:
+
+- **Prepaid spend.** Five Starbucks receipts and a Hudson have no bank row
+  because a single **$25.00 Starbucks card reload** on 2026-05-04 covers them.
+  The ledger sees the reload; the receipts are what he spent off it. Nothing to
+  attach them to, ever.
+- **Client-paid travel.** Four CEXPO Ubers and three PepsiCo Ubers have no
+  charge on his card at all.
+- **#364 Peyton has no expense bundle** and never did: that invoice billed no
+  travel and no expenses.
+- **237 of his 323 2026 expenses still have no receipt**, and most never will —
+  subscriptions, the prepaid card, and meals on non-Streamline shows he was
+  never submitting because per diem covered them.
+
+## An emailed bundle should explode in the INBOX too (2026-09-10)
+
+Migration 0052 added `receipt_inbox.part` so one Gmail message can yield many
+rows, and the backfill uses it. `syncReceiptInbox` does NOT: a client who emails
+a bundle rather than a single receipt still lands as one row with one
+`primary_path`. The machinery to split it already exists in
+`scripts/import/receipt-backfill.mjs` (page map + `pdf-lib` page extraction);
+wiring it into the live sync is the remaining half.
+
+Lower value than it looks: **Dan invoices and tracks expenses in this app now**,
+so bundles arrive from clients rather than from his own workflow.
+
 ## W-9 on file + attach-to-invoice checkbox + annual refresh reminder (2026-08-19, Dan)
 
 New clients ask for a W-9. Wanted: upload one to the app; a checkbox on the
