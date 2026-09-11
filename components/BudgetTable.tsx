@@ -222,7 +222,7 @@ export default function BudgetTable({
                 the synthetic "Hidden" section reads as just another group.
                 Same 3-up small-label idiom BudgetRow's own `sm:hidden` block
                 uses for a category row's own figures. */}
-            <div className="sm:hidden border-b border-line pb-1.5 mb-1">
+            <div className="sm:hidden rounded-field bg-surface py-2 mb-2">
               <h3 className="text-sm font-bold uppercase tracking-wider text-ink">{section.name}</h3>
               <div className="grid grid-cols-3 gap-2 mt-1">
                 <div>
@@ -245,15 +245,23 @@ export default function BudgetTable({
                 a hairline rule between two rows of numbers. Dan (2026-09-10):
                 "the category headers are pretty hidden". They were.
 
-                `-mx-3 px-3` is what lets the background bleed past the
-                content without moving anything: the padding cancels the
-                negative margin, so every column still lines up with the rows
-                beneath, which a plain `px-3` would have shifted. */}
-            <div className={`${GRID} -mx-3 px-3 py-2 mb-2 rounded-field bg-surface`}>
+                NO horizontal padding, so the band spans exactly the grid and
+                the group name starts where the category names start. It was
+                briefly `-mx-3 px-3` to let the background bleed into the
+                gutter, which lined the TEXT up correctly but left the band
+                itself hanging past the rows on the left.
+
+                `pr-2.5` on Available alone: that column is MovePopover's
+                pill, a button with its own `px-2.5`, so the figure inside it
+                sits 10px in from the column edge. A flush group total
+                therefore hangs to the right of every number it is summing —
+                the one column where matching the rows means NOT being
+                flush. */}
+            <div className={`${GRID} py-2 mb-2 rounded-field bg-surface`}>
               <h3 className="text-sm font-bold uppercase tracking-wider text-ink">{section.name}</h3>
               <span className="tabular text-right text-xs text-muted">{formatUSD(sums.assigned)}</span>
               <span className="tabular text-right text-xs text-muted">{formatUSD(sums.activity)}</span>
-              <span className="tabular text-right text-xs text-muted">{formatUSD(sums.available)}</span>
+              <span className="tabular text-right text-xs text-muted pr-2.5">{formatUSD(sums.available)}</span>
             </div>
             <div className="divide-y divide-line">
               {visible.map((e) => (

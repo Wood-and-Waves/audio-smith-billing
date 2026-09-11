@@ -36,8 +36,13 @@ export default function BudgetSummary({ month }: { month: MonthBudget }) {
           the vertical space. Stacking the label above its own figure is also
           what kills the old problem the 20rem cap existed to solve — a
           `justify-between` pair at full width put each number a hand's width
-          from its label. Two columns on a phone, four from `sm`. */}
-      <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3">
+          from its label.
+
+          FLEX, not a four-column grid: equal columns spread the four figures
+          across 1536px with a chasm between each, which is the same emptiness
+          in a different shape. Flowing them left with a fixed gap keeps them
+          together at any width and wraps on a phone. */}
+      <dl className="flex flex-wrap gap-x-12 gap-y-3">
         {lines.map((line) => (
           <div key={line.label}>
             <dt className="text-xs text-muted">{line.label}</dt>
