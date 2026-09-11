@@ -119,7 +119,12 @@ export function spendByCategory(
   }
   const rows = categories
     .filter((c) => (spent.get(c.id) ?? 0) !== 0)
-    .sort((a, b) => a.grp.localeCompare(b.grp) || a.sort - b.sort)
+    // By `sort`, not alphabetically. The budget orders its groups by the
+    // lowest sort among their members, so ordering here any other way
+    // guarantees the two screens disagree — which they did, until the
+    // categories were renumbered into bands (Income, running costs, tax,
+    // owner's money last). grp only breaks a tie between equal sorts.
+    .sort((a, b) => a.sort - b.sort || a.grp.localeCompare(b.grp))
     .map((category) => ({ category, spentCents: spent.get(category.id) as number }))
   return { rows, uncategorizedCents }
 }
@@ -146,7 +151,12 @@ export function incomeByCategory(
   }
   const rows = categories
     .filter((c) => (earned.get(c.id) ?? 0) !== 0)
-    .sort((a, b) => a.grp.localeCompare(b.grp) || a.sort - b.sort)
+    // By `sort`, not alphabetically. The budget orders its groups by the
+    // lowest sort among their members, so ordering here any other way
+    // guarantees the two screens disagree — which they did, until the
+    // categories were renumbered into bands (Income, running costs, tax,
+    // owner's money last). grp only breaks a tie between equal sorts.
+    .sort((a, b) => a.sort - b.sort || a.grp.localeCompare(b.grp))
     .map((category) => ({ category, earnedCents: earned.get(category.id) as number }))
   return { rows, uncategorizedCents }
 }

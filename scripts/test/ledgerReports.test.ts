@@ -195,3 +195,25 @@ test('a category refunded to exactly zero drops out rather than printing $0.00',
   ], refundCats)
   assert.equal(rows.find(r => r.category.id === 'tools'), undefined)
 })
+
+// --- ordering -----------------------------------------------------------------
+//
+// The budget orders its groups by the lowest sort among their members. The
+// report must do the same or the two screens disagree, which they did
+// (2026-09-10) — the report was alphabetical.
+
+const orderCats: ReportCategory[] = [
+  { id: 'owner', name: 'Temporary Transfer', grp: 'Owner Transactions', sort: 60, deductible: true },
+  { id: 'bills', name: 'Insurance', grp: 'Bills', sort: 10, deductible: true },
+  { id: 'tax', name: 'Taxes', grp: 'Taxes and Licenses', sort: 51, deductible: true },
+  { id: 'travel', name: 'Flights', grp: 'Travel and Meals', sort: 24, deductible: true },
+]
+
+test('groups come out in sort order, not alphabetical order', () => {
+  const txns: ReportTxn[] = orderCats.map((c, i) => ({
+    date: `2026-03-0${i + 1}`, amount_cents: -1000, kind: 'expense', category_id: c.id,
+  }))
+  const { rows } = spendByCategory(txns, orderCats)
+  assert.deepEqual(rows.map(r => r.category.grp),
+    ['Bills', 'Travel and Meals', 'Taxes and Licenses', 'Owner Transactions'])
+})
