@@ -216,7 +216,7 @@ export default function BudgetTable({
             cards already label each figure inline. Named after YNAB's own header
             row, which is what Dan reads this screen against. */}
         <div className={`${GRID} border-b border-line pb-1.5 mb-2`}>
-          <span className="eyebrow">Category</span>
+          <span className="eyebrow pl-2">Category</span>
           <span className="eyebrow text-right">Assigned</span>
           <span className="eyebrow text-right">Activity</span>
           <span className="eyebrow text-right">Available</span>
@@ -230,7 +230,7 @@ export default function BudgetTable({
                 the synthetic "Hidden" section reads as just another group.
                 Same 3-up small-label idiom BudgetRow's own `sm:hidden` block
                 uses for a category row's own figures. */}
-            <div className="sm:hidden rounded-field bg-surface py-2 mb-2">
+            <div className="sm:hidden rounded-field bg-surface py-2.5 px-2 mb-2">
               <h3 className="text-sm font-bold uppercase tracking-wider text-ink">{section.name}</h3>
               <div className="grid grid-cols-3 gap-2 mt-1">
                 <div>
@@ -265,8 +265,8 @@ export default function BudgetTable({
                 therefore hangs to the right of every number it is summing —
                 the one column where matching the rows means NOT being
                 flush. */}
-            <div className={`${GRID} py-2 mb-2 rounded-field bg-surface`}>
-              <h3 className="text-sm font-bold uppercase tracking-wider text-ink">{section.name}</h3>
+            <div className={`${GRID} py-2.5 mb-2 rounded-field bg-surface`}>
+              <h3 className="text-sm font-bold uppercase tracking-wider text-ink pl-2">{section.name}</h3>
               <span className="tabular text-right text-xs text-muted">{formatUSD(sums.assigned)}</span>
               <span className="tabular text-right text-xs text-muted">{formatUSD(sums.activity)}</span>
               <span className="tabular text-right text-xs text-muted pr-2.5">{formatUSD(sums.available)}</span>

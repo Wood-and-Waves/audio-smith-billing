@@ -22,44 +22,46 @@ import { BUDGET_GRID } from './BudgetTable'
  * do: reconcile against YNAB, cent for cent.
  */
 export default function BudgetSummary({ month }: { month: MonthBudget }) {
+  // Left Over from Last Month is gone (Dan, 2026-09-10). As a TOTAL row
+  // under the table it was the one figure that is not a column below — the
+  // other three are Assigned, Activity and Available summed — so it read as
+  // an intruder in a line that otherwise adds up in front of you.
   const lines: { label: string; cents: number }[] = [
-    { label: 'Left Over from Last Month', cents: month.leftOverCents },
-    { label: `Assigned in ${monthLabel(month.month)}`, cents: month.assignedCents },
+    { label: 'Assigned', cents: month.assignedCents },
     { label: 'Activity', cents: month.activityCents },
     { label: 'Available', cents: month.availableCents },
   ]
 
   return (
-    <div className="rounded-field bg-surface py-3">
-      {/* THE MONTH'S TOTAL ROW, on the table's own columns.
-          Assigned, Activity and Available are literally the three columns
-          below, summed — so they sit under them rather than floating in a
-          card of their own. That is also why the four figures read as a
-          running total left to right: left over, plus what was assigned,
-          less what was spent, equals what is available.
+    <div className="mt-2 pt-3 border-t-2 border-line">
+      {/* The month's TOTAL row, on the table's own columns and at the foot of
+          it, where a total belongs. Assigned, Activity and Available are the
+          three columns above, summed, so each figure sits under the one it
+          totals — BUDGET_GRID is shared with BudgetTable so a column width
+          cannot change in one place and break the alignment in the other.
 
           No horizontal padding, for the same reason the group bands have
-          none: any inset here and the figures stop lining up with the
-          numbers they total. Below `sm` the table's grid is hidden
-          entirely, so the phone gets a plain two-column stack instead. */}
+          none: any inset and the totals stop lining up with the numbers they
+          total. Available keeps the `pr-2.5` that matches MovePopover's pill.
+          Below `sm` the table's grid is hidden entirely, so the phone gets a
+          plain stack instead. */}
       <div className={BUDGET_GRID}>
-        <div>
-          <p className="text-xs text-muted">{lines[0].label}</p>
-          <p className="tabular text-base mt-0.5">{formatUSD(lines[0].cents)}</p>
-        </div>
-        {lines.slice(1).map((line, i) => (
+        <p className="text-sm font-bold uppercase tracking-wider text-ink pl-2">
+          {monthLabel(month.month)} total
+        </p>
+        {lines.map((line, i) => (
           <div key={line.label} className={i === 2 ? 'text-right pr-2.5' : 'text-right'}>
             <p className="text-xs text-muted">{line.label}</p>
-            <p className="tabular text-base mt-0.5">{formatUSD(line.cents)}</p>
+            <p className="tabular text-base font-semibold mt-0.5">{formatUSD(line.cents)}</p>
           </div>
         ))}
       </div>
 
-      <dl className="sm:hidden grid grid-cols-2 gap-x-6 gap-y-3">
+      <dl className="sm:hidden grid grid-cols-3 gap-x-4">
         {lines.map((line) => (
           <div key={line.label}>
             <dt className="text-xs text-muted">{line.label}</dt>
-            <dd className="tabular text-base mt-0.5">{formatUSD(line.cents)}</dd>
+            <dd className="tabular text-base font-semibold mt-0.5">{formatUSD(line.cents)}</dd>
           </div>
         ))}
       </dl>

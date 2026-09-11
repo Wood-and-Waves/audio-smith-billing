@@ -148,7 +148,10 @@ export default function BudgetRow({
   const [assignPending, setAssignPending] = useState(false)
   return (
     <div className="grid grid-cols-1 sm:grid-cols-[1fr_7rem_7rem_8rem] gap-x-4 gap-y-2 items-center py-2 text-sm">
-      <div className="min-w-0">
+      {/* pl-2 matches the inset every first column in this table carries,
+       * so a group band can have breathing room inside it without the name
+       * drifting out of line with the names beneath. */}
+      <div className="min-w-0 pl-2">
         {/* The name is this screen's primary content and must win any
          * squeeze — it carries no `truncate`/`min-w-0`, so its floor is its
          * own min-content (the widest single word), and anything narrower

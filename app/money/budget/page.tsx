@@ -382,13 +382,6 @@ export default async function MoneyBudgetPage({
           for everyone: no `lg:order-*` reassignment, and the table gets the
           whole width. */}
       <div className="grid gap-5">
-        {/* The month's total row, sitting on the TABLE's own columns.
-            Assigned, Activity and Available are those three columns summed,
-            so BudgetSummary shares BUDGET_GRID with BudgetTable and the
-            figures land under the numbers they total. It was a 20rem card,
-            then a full-width one — which only moved the empty space from the
-            right of the card to the right of the page. */}
-        <BudgetSummary month={current} />
 
         <div className="min-w-0">
           {/* Undo/Redo + Recent Moves (budget-phase-two Task 4) render
@@ -444,6 +437,11 @@ export default async function MoneyBudgetPage({
             assignableCategories={assignableCategories}
           />
         </div>
+        {/* At the FOOT of the table, where a total belongs — Dan asked for
+            it moved there (2026-09-10). It shares BUDGET_GRID with
+            BudgetTable, so its three figures land under the three columns
+            they sum. */}
+        <BudgetSummary month={current} />
       </div>
     </AppShell>
   )
