@@ -589,10 +589,10 @@ export default async function MoneyForecastPage() {
       })
     : null
 
-  // The same forecast, as something Dan can hand his accountant. Built here
-  // rather than in the button so the page stays the single place that knows
-  // what the assumptions ARE — the document prints them because every row
-  // depends on them and she may want to change one in the meeting.
+  // The same forecast, as something Dan can hand his accountant — the heading,
+  // the months, and nothing else. He asked for the assumption block and the
+  // notes gone: "I can explain everything." The screen below still shows the
+  // assumptions, which is where he reads them before walking in.
   const cashflowDocument: CashflowDocumentData | null = forecast === null ? null : {
     businessName: settingsRow?.business_name ?? 'Smith Audio, LLC',
     generatedOn: today,
@@ -611,18 +611,6 @@ export default async function MoneyForecastPage() {
       endingBalanceCents: m.endingBalanceCents,
       covered: m.covered,
       })),
-    assumptions: [
-      { label: 'Monthly take-home', value: formatUSD(takeHomeCents) },
-      {
-        label: 'Monthly overhead',
-        value: overheadOverrideCents !== null
-          ? `${formatUSD(overheadOverrideCents)} (override; computed ${formatUSD(computedOverheadCents)})`
-          : formatUSD(computedOverheadCents),
-      },
-      { label: 'Tax set-aside rate', value: `${(taxRateBp / 100).toFixed(2)}%` },
-      { label: 'Billing lag', value: `${billingLagDays} day${billingLagDays === 1 ? '' : 's'}` },
-      { label: 'Payment terms', value: "Net 30 — each client's own terms" },
-    ],
   }
 
   const overdueInflows = forecast?.inflows.filter((f) => f.overdue) ?? []

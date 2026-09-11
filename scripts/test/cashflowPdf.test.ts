@@ -42,11 +42,6 @@ const DATA: CashflowDocumentData = {
     { month: '2026-11', incomeCents: 0, overheadCents: 80000, taxCents: 0,
       drawCents: 750000, endingBalanceCents: -100000, covered: false },
   ],
-  assumptions: [
-    { label: 'Monthly take-home', value: '$7,500.00' },
-    { label: 'Monthly overhead', value: '$800.00' },
-    { label: 'Tax set-aside', value: '25%' },
-  ],
 }
 
 test('the heading names the business, the report and the span of months', () => {
@@ -61,13 +56,12 @@ test('it says when it was projected — a forecast is only true as of a date', (
   assert.ok(all.some(t => t.includes('September 10, 2026')))
 })
 
-test('the assumptions are printed, not hidden', () => {
-  const all = texts(buildCashflowPdf(PARTS, DATA))
-  assert.ok(all.includes('Assumptions'))
-  assert.ok(all.includes('Monthly take-home'))
-  assert.ok(all.includes('$7,500.00'))
-  assert.ok(all.includes('Tax set-aside'))
-  assert.ok(all.includes('25%'))
+test('nothing but the heading and the table — no assumptions, no notes', () => {
+  const all = texts(buildCashflowPdf(PARTS, DATA)).join(' ')
+  assert.doesNotMatch(all, /assumption/i)
+  assert.doesNotMatch(all, /take-home/i)
+  assert.doesNotMatch(all, /booked work/i)
+  assert.doesNotMatch(all, /distribution/i)
 })
 
 test('starting cash is stated before the first month', () => {

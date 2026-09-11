@@ -9,14 +9,15 @@
 // right-aligned under column heads. A month whose ending balance goes negative
 // is marked, because that is the single thing a reader must not miss.
 //
-// The ASSUMPTIONS are printed, not hidden. A forecast without them is a number
-// nobody can argue with, which is worse than useless in a meeting: every row
-// here depends on his take-home figure, his overhead figure and his tax rate,
-// and she may well want to change one.
+// It is DELIBERATELY bare: the heading, the columns, the months. No assumption
+// block, no notes. Dan asked for both gone (2026-09-10) — "I can explain
+// everything" — and he is in the room when this is read, which is the one
+// circumstance where a document does not have to defend itself.
 //
-// There are no explanatory notes at the foot. Dan asked for them gone
-// (2026-09-10): he is presenting this in person and would rather say it than
-// print it. The months it covers are chosen by the caller, not here.
+// What survives is the date it was projected, because a forecast is only true
+// as of a day and nobody in the room can supply that from memory a week later.
+//
+// The months it covers are chosen by the caller, not here.
 //
 // Like the P&L builder this imports NO pdf library. The primitives arrive as
 // PdfParts so the whole thing runs under `node --test`.
@@ -46,8 +47,6 @@ export type CashflowDocumentData = {
   /** Unreserved cash the walk starts from. */
   openingBalanceCents: number
   months: CashflowMonth[]
-  /** Printed verbatim: "Monthly take-home", "$7,500.00". */
-  assumptions: { label: string; value: string }[]
 }
 
 const INK = '#121212'
@@ -64,11 +63,7 @@ const S = {
   business: { fontSize: 15, fontWeight: 700, textAlign: 'center' as const },
   title: { fontSize: 12, textAlign: 'center' as const, marginTop: 4 },
   period: { fontSize: 10, textAlign: 'center' as const, marginTop: 2, color: MUTED },
-  asOf: { fontSize: 9, textAlign: 'center' as const, marginTop: 2, color: MUTED, marginBottom: 14 },
-
-  assumptionsHead: { fontSize: 10, fontWeight: 700, marginBottom: 3 },
-  assumption: { flexDirection: 'row' as const, justifyContent: 'space-between' as const, color: MUTED },
-  assumptionsBlock: { marginBottom: 14, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: LINE },
+  asOf: { fontSize: 9, textAlign: 'center' as const, marginTop: 2, color: MUTED, marginBottom: 18 },
 
   head: {
     flexDirection: 'row' as const, borderBottomWidth: 1, borderBottomColor: INK,
@@ -109,15 +104,7 @@ export function buildCashflowPdf(parts: PdfParts, data: CashflowDocumentData) {
   body.push(h(Text, { key: 'period', style: S.period },
     first && last ? `${monthLabel(first.month)} – ${monthLabel(last.month)}` : 'No months projected'))
   body.push(h(Text, { key: 'asof', style: S.asOf },
-    `Projected ${formatDateFull(data.generatedOn)} from booked work`))
-
-  if (data.assumptions.length > 0) {
-    body.push(h(View, { key: 'assume', style: S.assumptionsBlock },
-      h(Text, { key: 'assume-h', style: S.assumptionsHead }, 'Assumptions'),
-      ...data.assumptions.map((a, i) =>
-        h(View, { key: `a-${i}`, style: S.assumption },
-          h(Text, null, a.label), h(Text, null, a.value)))))
-  }
+    `Projected ${formatDateFull(data.generatedOn)}`))
 
   body.push(cells(['Month', 'Income', 'Overhead', 'Tax set-aside', 'Draw', 'Ending balance'],
     S.head, 'head'))
