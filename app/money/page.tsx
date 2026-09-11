@@ -670,25 +670,18 @@ export default async function MoneyPage({
       .map((r) => r.receipt_original as string),
   )]
   const pdfUrls = new Map<string, string>()
-  let receiptDiagnostic: string | null = null
   if (pdfPaths.length > 0) {
     const { data: signedPdfs, error: signError } = await supabase.storage
       .from('receipts').createSignedUrls(pdfPaths, 3600)
     for (const u of signedPdfs ?? []) {
       if (u.signedUrl && u.path) pdfUrls.set(u.path, u.signedUrl)
     }
-    // TEMPORARY (2026-09-10). Signing was silently swallowing its error, so a
-    // failure here looked exactly like "no receipts exist" — three fixes were
-    // shipped blind because of it. Remove once the cause is known.
-    receiptDiagnostic = `receipts: ${pdfPaths.length} pdf path(s), `
-      + `${pdfUrls.size} signed`
-      + (signError ? ` — SIGN ERROR: ${signError.message}` : '')
-      + (signedPdfs === null ? ' — signer returned null' : '')
-      + (pdfPaths.length > 0 ? ` — first: ${pdfPaths[0]}` : '')
-  } else {
-    receiptDiagnostic = `receipts: no rows had a PDF original `
-      + `(of ${preliminary.length} rows on screen)`
+    // Never swallow this. Discarding it is what hid a day's worth of failures:
+    // when signing fails every glyph disappears and the page looks exactly like
+    // a ledger with no receipts, which is indistinguishable from working.
+    if (signError) console.error('[money] signing receipt originals failed:', signError.message)
   }
+
   const transactions: LedgerTxnRow[] = preliminary.map((r) => ({
     ...r,
     receiptOriginalUrl: r.receipt_original ? pdfUrls.get(r.receipt_original) ?? null : null,
@@ -726,11 +719,6 @@ export default async function MoneyPage({
   return (
     <AppShell current="money" wide>
       <MoneyNav current="ledger" />
-      {receiptDiagnostic && (
-        <p className="mb-3 rounded-field border border-line px-3 py-2 text-xs text-muted">
-          {receiptDiagnostic}
-        </p>
-      )}
       <MoneyRegister
         account={account}
         categories={categories}
