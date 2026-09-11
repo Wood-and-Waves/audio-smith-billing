@@ -58,6 +58,42 @@ for (const k of ['GMAIL_CLIENT_ID', 'GMAIL_CLIENT_SECRET', 'GMAIL_REFRESH_TOKEN'
   if (!process.env[k]) throw new Error(`Missing ${k} in .env.local.`)
 }
 
+// THE FILES AND THE PATHS MUST LAND IN THE SAME PROJECT.
+//
+// This cost a day. `--prod` swapped the DATABASE to production while the
+// storage client still used NEXT_PUBLIC_SUPABASE_URL, which is the DEV
+// project — so 115 receipt PDFs were written to dev storage and their paths
+// into the prod database. Every check passed (the files existed, they signed,
+// the rows were right) because each half was consistent with itself. The app
+// showed nothing, because it looked in prod storage where the files were not.
+//
+// Comparing the two project refs is the check that would have caught it on the
+// first run, so it runs before anything else does.
+const storageUrl = prod
+  ? (process.env.SUPABASE_URL_PROD ?? `https://${(process.env.DATABASE_URL_PROD.match(/postgres\.([a-z]{20})/) ?? [])[1]}.supabase.co`)
+  : process.env.NEXT_PUBLIC_SUPABASE_URL
+const storageKey = prod
+  ? process.env.SUPABASE_SERVICE_ROLE_KEY_PROD
+  : process.env.SUPABASE_SERVICE_ROLE_KEY
+if (prod && !storageKey) {
+  throw new Error(
+    'Missing SUPABASE_SERVICE_ROLE_KEY_PROD. A --prod run writes FILES to storage as well as '
+    + 'rows to the database, and SUPABASE_SERVICE_ROLE_KEY belongs to the dev project — using it '
+    + 'would put the files in one project and their paths in another.',
+  )
+}
+
+const refOf = (s) => (String(s).match(/(?:postgres\.|https:\/\/)([a-z]{20})/) ?? [])[1] ?? null
+const dbRef = refOf(url)
+const storageRef = refOf(storageUrl)
+if (dbRef === null || storageRef === null || dbRef !== storageRef) {
+  throw new Error(
+    `Storage and the database are different projects: files would go to ${storageRef}, `
+    + `paths into ${dbRef}. Refusing to run.`,
+  )
+}
+console.log(`Project: ${dbRef} (storage and database agree)`)
+
 console.log(`Target: ${prod ? 'PRODUCTION' : 'local'}`)
 console.log(commit ? 'Mode:   COMMIT — this writes.\n' : 'Mode:   DRY RUN — nothing will be written.\n')
 
@@ -212,7 +248,7 @@ const bundles = plan.bundles
 
 const db = new pg.Client({ connectionString: url })
 await db.connect()
-const storage = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+const storage = createClient(storageUrl, storageKey)
 
 try {
   const { rows: users } = await db.query('select id, email from auth.users order by created_at limit 2')
