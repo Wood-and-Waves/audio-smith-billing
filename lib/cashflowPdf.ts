@@ -14,6 +14,10 @@
 // here depends on his take-home figure, his overhead figure and his tax rate,
 // and she may well want to change one.
 //
+// There are no explanatory notes at the foot. Dan asked for them gone
+// (2026-09-10): he is presenting this in person and would rather say it than
+// print it. The months it covers are chosen by the caller, not here.
+//
 // Like the P&L builder this imports NO pdf library. The primitives arrive as
 // PdfParts so the whole thing runs under `node --test`.
 
@@ -44,12 +48,6 @@ export type CashflowDocumentData = {
   months: CashflowMonth[]
   /** Printed verbatim: "Monthly take-home", "$7,500.00". */
   assumptions: { label: string; value: string }[]
-  /** Last month whose ending balance is still positive, or null. */
-  coveredThrough: string | null
-  /** Last month carrying booked work. Income after it is zero, not a forecast. */
-  bookedThrough: string | null
-  /** True when the balance never went negative inside the horizon. */
-  beyondHorizon: boolean
 }
 
 const INK = '#121212'
@@ -82,7 +80,6 @@ const S = {
     borderBottomColor: LINE, fontWeight: 700,
   },
   short: { color: SHORT },
-  note: { marginTop: 14, fontSize: 9, color: MUTED },
 }
 
 export function cashflowFilename(from: string, to: string): string {
@@ -98,6 +95,10 @@ export function buildCashflowPdf(parts: PdfParts, data: CashflowDocumentData) {
         key: `${key}-${i}`,
         style: { width: W[i], textAlign: i === 0 ? 'left' : 'right', ...(textStyle ?? {}) },
       }, v)))
+
+  // Outflows print negative so a row reads as a sum — but zero is zero, and
+  // "-$0.00" in a document going to an accountant just looks like a bug.
+  const outflow = (cents: number) => formatUSD(cents === 0 ? 0 : -cents)
 
   const body: unknown[] = []
   const first = data.months[0]
@@ -127,28 +128,12 @@ export function buildCashflowPdf(parts: PdfParts, data: CashflowDocumentData) {
     body.push(cells([
       monthLabel(m.month),
       formatUSD(m.incomeCents),
-      formatUSD(-m.overheadCents),
-      formatUSD(-m.taxCents),
-      formatUSD(-m.drawCents),
+      outflow(m.overheadCents),
+      outflow(m.taxCents),
+      outflow(m.drawCents),
       formatUSD(m.endingBalanceCents),
     ], S.row, `m-${i}`, m.covered ? undefined : S.short))
   })
-
-  const notes: string[] = []
-  if (data.bookedThrough !== null) {
-    notes.push(`Booked work runs through ${monthLabel(data.bookedThrough)}. Months after it show no `
-      + `income because none is booked yet — not because none is expected.`)
-  }
-  notes.push(data.beyondHorizon
-    ? 'The balance stays positive for the whole period shown.'
-    : data.coveredThrough !== null
-      ? `Cash covers the plan through ${monthLabel(data.coveredThrough)}; months in red fall short.`
-      : 'The plan is not covered even this month — see the first row.')
-  notes.push('Overhead and the tax set-aside are shown as outflows. Draw is the owner pay planned '
-    + 'for that month, which is a distribution and not a business expense.')
-
-  body.push(h(View, { key: 'notes', style: S.note },
-    ...notes.map((n, i) => h(Text, { key: `n-${i}`, style: { marginTop: i === 0 ? 0 : 3 } }, n))))
 
   return h(Document, null, h(Page, { size: 'LETTER', style: S.page }, ...(body as never[])))
 }

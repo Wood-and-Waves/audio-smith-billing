@@ -597,7 +597,12 @@ export default async function MoneyForecastPage() {
     businessName: settingsRow?.business_name ?? 'Smith Audio, LLC',
     generatedOn: today,
     openingBalanceCents: startingBalanceCents,
-    months: forecast.months.map((m) => ({
+    // Through the end of THIS YEAR only — Dan's accountant is asking whether
+    // enough is set aside for this tax year, so months beyond it are noise in
+    // that conversation. The screen still shows the full horizon.
+    months: forecast.months
+      .filter((m) => m.month <= `${today.slice(0, 4)}-12`)
+      .map((m) => ({
       month: m.month,
       incomeCents: m.incomeCents,
       overheadCents: m.overheadCents,
@@ -605,7 +610,7 @@ export default async function MoneyForecastPage() {
       drawCents: m.drawCents,
       endingBalanceCents: m.endingBalanceCents,
       covered: m.covered,
-    })),
+      })),
     assumptions: [
       { label: 'Monthly take-home', value: formatUSD(takeHomeCents) },
       {
@@ -618,9 +623,6 @@ export default async function MoneyForecastPage() {
       { label: 'Billing lag', value: `${billingLagDays} day${billingLagDays === 1 ? '' : 's'}` },
       { label: 'Payment terms', value: "Net 30 — each client's own terms" },
     ],
-    coveredThrough: forecast.coveredThrough,
-    bookedThrough: forecast.bookedThrough,
-    beyondHorizon: forecast.beyondHorizon,
   }
 
   const overdueInflows = forecast?.inflows.filter((f) => f.overdue) ?? []

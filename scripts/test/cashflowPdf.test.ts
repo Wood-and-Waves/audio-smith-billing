@@ -47,9 +47,6 @@ const DATA: CashflowDocumentData = {
     { label: 'Monthly overhead', value: '$800.00' },
     { label: 'Tax set-aside', value: '25%' },
   ],
-  coveredThrough: '2026-10',
-  bookedThrough: '2026-09',
-  beyondHorizon: false,
 }
 
 test('the heading names the business, the report and the span of months', () => {
@@ -97,34 +94,22 @@ test('a month that falls short is marked, because it is the one thing not to mis
   assert.ok(!shortTexts.includes('September 2026'), 'a covered month must not be marked')
 })
 
-test('it explains that months past the booked work are empty, not forecast to be empty', () => {
-  const all = texts(buildCashflowPdf(PARTS, DATA)).join(' ')
-  assert.match(all, /booked work runs through september 2026/i)
-  assert.match(all, /not because none is expected/i)
-})
-
-test('it says how far the cash covers the plan', () => {
-  const all = texts(buildCashflowPdf(PARTS, DATA)).join(' ')
-  assert.match(all, /covers the plan through october 2026/i)
-})
-
-test('a forecast that never runs out says so instead', () => {
-  const all = texts(buildCashflowPdf(PARTS, { ...DATA, beyondHorizon: true })).join(' ')
-  assert.match(all, /stays positive for the whole period/i)
-  assert.doesNotMatch(all, /covers the plan through/i)
-})
-
-test('the draw is named as a distribution, not an expense', () => {
-  const all = texts(buildCashflowPdf(PARTS, DATA)).join(' ')
-  assert.match(all, /distribution and not a business expense/i)
-})
-
 test('no months is a document, not a crash', () => {
-  const all = texts(buildCashflowPdf(PARTS, { ...DATA, months: [], bookedThrough: null }))
+  const all = texts(buildCashflowPdf(PARTS, { ...DATA, months: [] }))
   assert.ok(all.includes('No months projected'))
 })
 
 test('the filename carries the span', () => {
   assert.equal(cashflowFilename('2026-09', '2028-08'),
     'smith-audio-cash-flow-2026-09-to-2028-08.pdf')
+})
+
+test('a zero outflow prints as zero, not as minus zero', () => {
+  const all = texts(buildCashflowPdf(PARTS, {
+    ...DATA,
+    months: [{ month: '2026-10', incomeCents: 0, overheadCents: 80000, taxCents: 0,
+      drawCents: 750000, endingBalanceCents: 100000, covered: true }],
+  }))
+  assert.ok(all.includes('$0.00'), 'a zero set-aside should read $0.00')
+  assert.ok(!all.includes('-$0.00'), 'never minus zero')
 })
