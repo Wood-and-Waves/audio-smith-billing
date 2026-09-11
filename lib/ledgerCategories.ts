@@ -79,6 +79,12 @@ export const DEFAULT_CATEGORIES: CategorySeed[] = [
   c('Misc Business Expenses', 'Equipment and Supplies', 34),
   // Paying someone to do the books is professional services, not a tax.
   c('Tax Prep', 'Professional Services', 40),
+  // Payroll (0053). Officer Wages totals GROSS, not net: the payday row
+  // carries net pay and the tax-deposit row's employee-withholding leg
+  // carries the rest, which is what belongs on a P&L. Both are deductible —
+  // unlike a draw, which is what every dollar Dan has taken out so far is.
+  c('Officer Wages', 'Payroll', 45),
+  c('Employer Payroll Taxes', 'Payroll', 46),
   c('State License Fee', 'Taxes and Licenses', 50),
   c('Taxes', 'Taxes and Licenses', 51, false),
   // Profit he is KEEPING. It should never carry a transaction — it was called

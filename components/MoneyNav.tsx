@@ -33,6 +33,7 @@ const ITEMS = [
   { key: 'budget', href: '/money/budget', label: 'Budget' },
   { key: 'matches', href: '/money/matches', label: 'Matches' },
   { key: 'receipts', href: '/money/receipts', label: 'Receipts' },
+  { key: 'payroll', href: '/money/payroll', label: 'Payroll' },
   { key: 'forecast', href: '/money/forecast', label: 'Forecast' },
   { key: 'reports', href: '/money/reports', label: 'Reports' },
   { key: 'categories', href: '/money/categories', label: 'Categories' },

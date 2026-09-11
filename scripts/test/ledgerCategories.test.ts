@@ -42,9 +42,12 @@ test('the groups are banded, and read down a P&L in the right order', () => {
     lowest.set(cat.grp, Math.min(lowest.get(cat.grp) ?? Infinity, cat.sort))
   }
   const order = [...lowest.entries()].sort((a, b) => a[1] - b[1]).map(([g]) => g)
+  // Payroll joined at band 45 with migration 0053 — between the fees paid to
+  // other people and the tax the business owes, which is where an accountant
+  // reads officer compensation.
   assert.deepEqual(order, [
     'Income', 'Bills', 'Travel and Meals', 'Equipment and Supplies',
-    'Professional Services', 'Taxes and Licenses', 'Owner Transactions',
+    'Professional Services', 'Payroll', 'Taxes and Licenses', 'Owner Transactions',
   ])
 })
 
