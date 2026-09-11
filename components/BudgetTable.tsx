@@ -61,7 +61,15 @@ export function matchesBudgetFilter(row: CategoryMonth, filter: BudgetFilter): b
 // which is what fills that gap with the same 3-up small-label idiom
 // BudgetRow uses for a row's own figures). The rest of GRID's classes are
 // harmless while hidden and take over once `sm:grid` turns display back on.
-const GRID = 'hidden sm:grid grid-cols-[1fr_7rem_7rem_8rem] gap-x-4 items-center'
+/**
+ * The table's column template, exported so BudgetSummary can sit on the SAME
+ * columns. Its three figures ARE this table's three columns summed, so they
+ * belong under them — and one shared constant is what stops the two drifting
+ * apart the first time a width changes.
+ */
+export const BUDGET_GRID = 'hidden sm:grid grid-cols-[1fr_7rem_7rem_8rem] gap-x-4 items-center'
+
+const GRID = BUDGET_GRID
 
 /**
  * The month's category rows, grouped by `grp` and ordered by each group's

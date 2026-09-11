@@ -382,12 +382,12 @@ export default async function MoneyBudgetPage({
           for everyone: no `lg:order-*` reassignment, and the table gets the
           whole width. */}
       <div className="grid gap-5">
-        {/* Full width now. It was capped at 20rem because its rows were
-            `justify-between` label/value pairs, which at 1536px put each
-            figure a hand's width from its own label. BudgetSummary stacks the
-            label ABOVE its figure in four columns instead, so the cap is no
-            longer what protects it — and the page stops carrying a narrow
-            card with an empty two thirds beside it. */}
+        {/* The month's total row, sitting on the TABLE's own columns.
+            Assigned, Activity and Available are those three columns summed,
+            so BudgetSummary shares BUDGET_GRID with BudgetTable and the
+            figures land under the numbers they total. It was a 20rem card,
+            then a full-width one — which only moved the empty space from the
+            right of the card to the right of the page. */}
         <BudgetSummary month={current} />
 
         <div className="min-w-0">

@@ -2,6 +2,7 @@ import { monthLabel } from '@/lib/dates'
 import { formatUSD } from '@/lib/money'
 import type { MonthBudget } from '@/lib/budget'
 import AutoAssignButton from './AutoAssignButton'
+import { BUDGET_GRID } from './BudgetTable'
 
 /**
  * The right-hand month summary, Dan's own order: Left Over from Last Month,
@@ -29,20 +30,32 @@ export default function BudgetSummary({ month }: { month: MonthBudget }) {
   ]
 
   return (
-    <div className="rounded-card border border-line bg-surface px-5 py-4">
-      {/* Four figures ACROSS, not down. As a narrow stacked card this was a
-          tall block with two thirds of the page empty beside it; as label-
-          over-value columns it reads in one glance and gives the table back
-          the vertical space. Stacking the label above its own figure is also
-          what kills the old problem the 20rem cap existed to solve — a
-          `justify-between` pair at full width put each number a hand's width
-          from its label.
+    <div className="rounded-field bg-surface py-3">
+      {/* THE MONTH'S TOTAL ROW, on the table's own columns.
+          Assigned, Activity and Available are literally the three columns
+          below, summed — so they sit under them rather than floating in a
+          card of their own. That is also why the four figures read as a
+          running total left to right: left over, plus what was assigned,
+          less what was spent, equals what is available.
 
-          FLEX, not a four-column grid: equal columns spread the four figures
-          across 1536px with a chasm between each, which is the same emptiness
-          in a different shape. Flowing them left with a fixed gap keeps them
-          together at any width and wraps on a phone. */}
-      <dl className="flex flex-wrap gap-x-12 gap-y-3">
+          No horizontal padding, for the same reason the group bands have
+          none: any inset here and the figures stop lining up with the
+          numbers they total. Below `sm` the table's grid is hidden
+          entirely, so the phone gets a plain two-column stack instead. */}
+      <div className={BUDGET_GRID}>
+        <div>
+          <p className="text-xs text-muted">{lines[0].label}</p>
+          <p className="tabular text-base mt-0.5">{formatUSD(lines[0].cents)}</p>
+        </div>
+        {lines.slice(1).map((line, i) => (
+          <div key={line.label} className={i === 2 ? 'text-right pr-2.5' : 'text-right'}>
+            <p className="text-xs text-muted">{line.label}</p>
+            <p className="tabular text-base mt-0.5">{formatUSD(line.cents)}</p>
+          </div>
+        ))}
+      </div>
+
+      <dl className="sm:hidden grid grid-cols-2 gap-x-6 gap-y-3">
         {lines.map((line) => (
           <div key={line.label}>
             <dt className="text-xs text-muted">{line.label}</dt>
@@ -51,18 +64,18 @@ export default function BudgetSummary({ month }: { month: MonthBudget }) {
         ))}
       </dl>
 
+      {/* Clustered, not `justify-between`: stretched across the full width
+          this put "Underfunded" at one edge and its figure at the other,
+          which is the same wasted span the summary itself was fixed for.
+          The button belongs beside the number it acts on. */}
       {month.underfundedCents !== 0 && (
-        <>
-          <hr className="my-3 border-line" />
-          <dl className="text-sm">
-            <div className="flex items-baseline justify-between gap-3">
-              <dt className="text-muted">Underfunded</dt>
-              <dd className="tabular text-right">{formatUSD(month.underfundedCents)}</dd>
-            </div>
-          </dl>
-
-          {month.underfundedCents > 0 && <AutoAssignButton month={month.month} underfundedCents={month.underfundedCents} />}
-        </>
+        <div className="mt-3 pt-3 border-t border-line flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+          <span className="text-muted">Underfunded</span>
+          <span className="tabular">{formatUSD(month.underfundedCents)}</span>
+          {month.underfundedCents > 0 && (
+            <AutoAssignButton month={month.month} underfundedCents={month.underfundedCents} />
+          )}
+        </div>
       )}
     </div>
   )
