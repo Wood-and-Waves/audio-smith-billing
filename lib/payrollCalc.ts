@@ -202,3 +202,56 @@ export function projectYear(input: YearProjectionInput): YearProjection {
 
   return { paychecks, totals }
 }
+
+/** The figures a recorded paycheck carries, however they were arrived at. */
+export type RunFigures = {
+  grossCents: number
+  fedWithholdingCents: number
+  ssEmployeeCents: number
+  medicareEmployeeCents: number
+  addlMedicareCents: number
+  ilWithholdingCents: number
+  ssEmployerCents: number
+  medicareEmployerCents: number
+  futaCents: number
+  ilSutaCents: number
+  netCents: number
+}
+
+/**
+ * Refuse a paycheck that cannot be true, with a message a human can act on.
+ * Returns null when the figures hold.
+ *
+ * The database carries the same net-vs-gross check, deliberately — this one
+ * exists so a typo comes back as a sentence instead of a Postgres constraint
+ * name, and so it can be tested without a database. The two must move
+ * together: if this is relaxed and 0053's check is not, a row this accepts
+ * still fails on insert.
+ */
+export function validateRunFigures(f: RunFigures): string | null {
+  const named: [string, number][] = [
+    ['Gross pay', f.grossCents],
+    ['Federal withholding', f.fedWithholdingCents],
+    ['Social Security withheld', f.ssEmployeeCents],
+    ['Medicare withheld', f.medicareEmployeeCents],
+    ['Additional Medicare', f.addlMedicareCents],
+    ['Illinois withholding', f.ilWithholdingCents],
+    ['Employer Social Security', f.ssEmployerCents],
+    ['Employer Medicare', f.medicareEmployerCents],
+    ['FUTA', f.futaCents],
+    ['Illinois unemployment', f.ilSutaCents],
+    ['Net pay', f.netCents],
+  ]
+  for (const [label, value] of named) {
+    if (!Number.isInteger(value)) return `${label} must be a whole number of cents.`
+    if (value < 0) return `${label} cannot be negative.`
+  }
+
+  const withheld = f.fedWithholdingCents + f.ssEmployeeCents + f.medicareEmployeeCents
+    + f.addlMedicareCents + f.ilWithholdingCents
+  if (withheld > f.grossCents) return 'More is withheld than the paycheck is worth.'
+  if (f.netCents !== f.grossCents - withheld) {
+    return 'Net pay does not equal gross less what was withheld.'
+  }
+  return null
+}

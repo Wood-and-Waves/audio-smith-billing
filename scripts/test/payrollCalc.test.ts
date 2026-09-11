@@ -216,3 +216,51 @@ test('a projection with no periods is empty, not a division by zero', () => {
   assert.deepEqual(year.paychecks, [])
   assert.equal(year.totals.grossCents, 0)
 })
+
+// --- the recorded figures, however they were arrived at ---
+
+import { validateRunFigures, type RunFigures } from '../../lib/payrollCalc.ts'
+
+const figures = (over: Partial<RunFigures> = {}): RunFigures => ({
+  grossCents: 583_333,
+  fedWithholdingCents: 50_000,
+  ssEmployeeCents: 36_167,
+  medicareEmployeeCents: 8_458,
+  addlMedicareCents: 0,
+  ilWithholdingCents: 28_875,
+  ssEmployerCents: 36_167,
+  medicareEmployerCents: 8_458,
+  futaCents: 3_500,
+  ilSutaCents: 23_042,
+  netCents: 459_833,
+  ...over,
+})
+
+test('figures that hold together are accepted', () => {
+  assert.equal(validateRunFigures(figures()), null)
+})
+
+test('what computePaycheck produces always validates', () => {
+  const p = computePaycheck(base())
+  assert.equal(validateRunFigures(p), null)
+})
+
+test('net pay that does not match gross less withholding is refused', () => {
+  const message = validateRunFigures(figures({ netCents: 459_834 }))
+  assert.match(String(message), /Net pay/)
+})
+
+test('withholding more than the paycheck is worth is refused', () => {
+  const message = validateRunFigures(figures({ fedWithholdingCents: 900_000, netCents: 0 }))
+  assert.match(String(message), /More is withheld/)
+})
+
+test('a negative figure is refused, and named', () => {
+  const message = validateRunFigures(figures({ ilSutaCents: -1 }))
+  assert.match(String(message), /Illinois unemployment/)
+})
+
+test('a fractional cent is refused rather than silently rounded', () => {
+  const message = validateRunFigures(figures({ futaCents: 3_500.5 }))
+  assert.match(String(message), /whole number/)
+})
