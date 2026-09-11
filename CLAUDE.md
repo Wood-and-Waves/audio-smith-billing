@@ -372,9 +372,17 @@ status.
   (`app/money/page.tsx` mirrors it, opening-balance injection included).
   If the two ever disagree, one of the assemblies drifted: fix that, never
   the display.
-- **`npm run parity`** = live YNAB (API, budget id pinned) vs the app's own
-  arithmetic. First hit ZERO 2026-08-24 (25/25 categories; RTA off by
-  exactly the known $1.01 Novo remainder). This is September's arbiter.
+- **YNAB parity is RETIRED (2026-09-11), on Dan's call.** `npm run parity`
+  compared the app against live YNAB and was the switch-off gate; it first hit
+  zero on 2026-08-24 (25/25 categories). It is gone because Dan has switched
+  off: the chart of accounts was deliberately restructured (Tax Prep moved to
+  Professional Services, Retained Earnings renamed Cash Reserve, the groups
+  re-banded) and the app's budget is only part-assigned, so the two books will
+  never agree again and every difference it reported was CORRECT. A gate that
+  can only fail is noise. Recover the script from git history if a one-off
+  comparison is ever wanted. **The YNAB API token can be revoked** — nothing
+  in the repo reads `YNAB_API_TOKEN`/`YNAB_BUDGET_ID` any more, and it is
+  account-wide (it can see the personal and Wood-and-Waves budgets).
 
 ## Splits & pending (Wave C) — rules that must not drift
 
@@ -401,7 +409,7 @@ status.
   of the three it is, in a comment, before the query.
 - **`entered_at IS NULL` = UNREVIEWED, a review marker and NOTHING else**
   (Dan reversed Wave C on 2026-08-25). An imported row counts in the budget,
-  reports, P&L, forecast and parity the moment it lands; Enter only clears
+  reports, P&L and forecast the moment it lands; Enter only clears
   the marker. The gate was two `continue` lines in `lib/ledgerSplits.ts`'s
   two explode helpers — every category-shaped consumer goes through those,
   which is why the reversal lives there and nowhere else. Consequence that
@@ -456,7 +464,7 @@ status.
   Owner Investment $2,512.60 / Temporary Transfer $400.00 to mirror
   YNAB's own split row (the old warning was against splitting WITHOUT
   merging — that double-counts $400; merge-then-split is the sanctioned
-  path, parity re-run after).
+  path).
 
 ## Current state (2026-09-10) & where things are written
 
@@ -614,10 +622,10 @@ status.
   bits) remains. Deliberately absent: emailing either file, and a balance sheet.
 - **What is waiting on DAN, not on code:** he has entered **2 of his budget
   targets** (Tax Prep $500 by 2027-04-01, State License Fee $75) and the rest
-  remain. September is budgeted in both tools and now agrees except for
-  transactions the app has not imported yet — `npm run parity` at month end is
-  still the YNAB switch-off test. His ledger-era invoices are fully reconciled,
-  21 of 21.
+  remain. YNAB was switched off on 2026-09-11 and the parity check retired with
+  it, so the app's own budget is now the only book — there is no second system
+  to catch an assignment he has not made yet. His ledger-era invoices are fully
+  reconciled, 21 of 21.
 
 ## Superseded: state as of 2026-08-25
 
