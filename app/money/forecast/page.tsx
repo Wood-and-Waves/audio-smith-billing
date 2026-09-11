@@ -11,6 +11,8 @@ import { explodeForReports, type ReportTxnForExplode } from '@/lib/ledgerSplits'
 import { assembleBudget } from '@/app/money/budget/data'
 import AppShell from '@/components/AppShell'
 import MoneyNav from '@/components/MoneyNav'
+import DownloadCashflowButton from '@/components/DownloadCashflowButton'
+import { type CashflowDocumentData } from '@/lib/cashflowPdf'
 import ForecastTable from '@/components/ForecastTable'
 
 export const dynamic = 'force-dynamic'
@@ -382,7 +384,7 @@ export default async function MoneyForecastPage() {
           // Explicit columns, never '*' — this screen has no business reading
           // remit_to/ach_details/etc, and a widened select would hand more of
           // the settings row to this page than the forecast has any use for.
-          .select('monthly_take_home_cents, monthly_overhead_cents, billing_lag_days, tax_setaside_bp, home_state')
+          .select('monthly_take_home_cents, monthly_overhead_cents, billing_lag_days, tax_setaside_bp, home_state, business_name')
           .eq('owner_id', user.id)
           .maybeSingle()
       : Promise.resolve(null),
@@ -587,6 +589,40 @@ export default async function MoneyForecastPage() {
       })
     : null
 
+  // The same forecast, as something Dan can hand his accountant. Built here
+  // rather than in the button so the page stays the single place that knows
+  // what the assumptions ARE — the document prints them because every row
+  // depends on them and she may want to change one in the meeting.
+  const cashflowDocument: CashflowDocumentData | null = forecast === null ? null : {
+    businessName: settingsRow?.business_name ?? 'Smith Audio, LLC',
+    generatedOn: today,
+    openingBalanceCents: startingBalanceCents,
+    months: forecast.months.map((m) => ({
+      month: m.month,
+      incomeCents: m.incomeCents,
+      overheadCents: m.overheadCents,
+      taxCents: m.taxCents,
+      drawCents: m.drawCents,
+      endingBalanceCents: m.endingBalanceCents,
+      covered: m.covered,
+    })),
+    assumptions: [
+      { label: 'Monthly take-home', value: formatUSD(takeHomeCents) },
+      {
+        label: 'Monthly overhead',
+        value: overheadOverrideCents !== null
+          ? `${formatUSD(overheadOverrideCents)} (override; computed ${formatUSD(computedOverheadCents)})`
+          : formatUSD(computedOverheadCents),
+      },
+      { label: 'Tax set-aside rate', value: `${(taxRateBp / 100).toFixed(2)}%` },
+      { label: 'Billing lag', value: `${billingLagDays} day${billingLagDays === 1 ? '' : 's'}` },
+      { label: 'Payment terms', value: "Net 30 — each client's own terms" },
+    ],
+    coveredThrough: forecast.coveredThrough,
+    bookedThrough: forecast.bookedThrough,
+    beyondHorizon: forecast.beyondHorizon,
+  }
+
   const overdueInflows = forecast?.inflows.filter((f) => f.overdue) ?? []
   const bookedShowsTotalCents = forecast?.showProjections.reduce((sum, sp) => sum + sp.totalCents, 0) ?? 0
   // Since 2026-09-09 the table runs the WHOLE horizon — the walk no longer
@@ -618,7 +654,10 @@ export default async function MoneyForecastPage() {
   return (
     <AppShell current="money" wide>
       <MoneyNav current="forecast" />
-      <h1 className="display text-3xl font-bold mb-8">Forecast</h1>
+      <div className="flex flex-wrap items-baseline justify-between gap-3 mb-8">
+        <h1 className="display text-3xl font-bold">Forecast</h1>
+        {cashflowDocument !== null && <DownloadCashflowButton data={cashflowDocument} />}
+      </div>
 
       {forecast === null ? (
         <p className="text-muted border-l-2 border-line pl-4 py-2 max-w-md">
