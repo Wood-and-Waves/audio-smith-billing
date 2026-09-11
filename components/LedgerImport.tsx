@@ -102,16 +102,31 @@ export default function LedgerImport({
           selected", a caption) that read as none-of-this-is-a-button (Dan).
           Same sr-only-input-inside-a-label trick as ExpenseLog's picker. */}
       <label className={pending ? undefined : 'cursor-pointer'}>
-        {/* QFX, QBO and OFX are one format — Chase's own export menu offers
-            all three and they differ only by INTU.BID, which parseOfx
-            ignores. Leaving .qbo off `accept` greyed it out in Finder (Dan),
-            so the one file type his bank hands him that always downloads
-            cleanly was the one he couldn't pick. The Intuit MIME types are
-            for the browsers that send those instead of an extension. */}
+        {/* THERE IS NO `accept` HERE, DELIBERATELY. Do not add one back to
+            tidy up the desktop picker — it has broken file selection twice.
+
+            QFX, QBO and OFX are one format: Chase's export menu offers all
+            three and they differ only by INTU.BID, which parseOfx ignores.
+            So the filter was never load-bearing, only a convenience.
+
+            First break, on macOS: leaving .qbo off the list greyed it out in
+            Finder, so the one export that always downloads cleanly was the
+            one Dan couldn't pick. Adding .qbo fixed that.
+
+            Second break, iPadOS 2026-09-11: listing .qbo did NOT help. iOS
+            does not match the extension string — it resolves every accept
+            entry to a UTI and enables only files matching one. A UTI for
+            .ofx/.qfx/.qbo exists only if an installed app declares it, and
+            nothing on a bare iPad does. All six entries resolved to nothing,
+            the allow-list came back EMPTY, and every file in Downloads was
+            greyed out — not just the statement.
+
+            Picking the wrong file is already handled below: onPick reads it
+            and importOfx returns an error that gets shown. A readable error
+            is a better failure than a picker that lets you choose nothing. */}
         <input
           ref={inputRef}
           type="file"
-          accept=".ofx,.qfx,.qbo,application/x-ofx,application/vnd.intu.qfx,application/vnd.intu.qbo"
           disabled={pending}
           onChange={(e) => onPick(e.target.files)}
           className="sr-only peer"
